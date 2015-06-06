@@ -45,7 +45,7 @@ extern "C" int main(int argc, const char *argv[]) {
 #ifdef __APPLE__
     char *sandbox_error=0;
     sandbox_init(kSBXProfileNoWriteExceptTemporary, SANDBOX_NAMED, &sandbox_error);
-    INFO("render: sandbox init: ", sandbox_error ? sandbox_error : "succses");
+    INFO("render: sandbox init: ", sandbox_error ? sandbox_error : "success");
 #endif
 
     process_api->HandleMessagesLoop();

@@ -2,16 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!--- Required entitlements (in most cases shouldn't be changed) --->
     <key>application-identifier</key>
-    <string>$(AppIdentifierPrefix)$(CFBundleIdentifier)</string>
+    <string>9S723G94YQ.com.lucidfusionlabs.LTerminal</string>
     <key>keychain-access-groups</key>
     <array>
-        <string>$(AppIdentifierPrefix)$(CFBundleIdentifier)</string>
+        <string>9S723G94YQ.com.lucidfusionlabs.LTerminal</string>
     </array>
-    
-    <!--- Custom entitlements below --->
-
-
 </dict>
 </plist>
