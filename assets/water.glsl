@@ -1,7 +1,3 @@
-#ifdef GL_ES
-precision highp float;
-#endif
-
 const float PI = 3.1415926535897932;
 
 const float speed = 0.2;

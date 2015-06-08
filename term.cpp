@@ -32,7 +32,11 @@
 #endif
 
 namespace LFL {
+#ifdef LFL_MOBILE
+DEFINE_int   (peak_fps,   30,     "Peak FPS");
+#else
 DEFINE_int   (peak_fps,   60,     "Peak FPS");
+#endif
 DEFINE_bool  (draw_fps,   false,  "Draw FPS");
 DEFINE_string(login,      "",     "SSH user");
 DEFINE_string(ssh,        "",     "SSH to host");
@@ -150,6 +154,7 @@ struct SSHTerminalController : public MyTerminalController {
 struct ShellTerminalController : public MyTerminalController {
   Terminal *term=0;
   bool done=0;
+  int cursor_x=0;
   Shell shell;
   string buf, prompt="> ";
   ShellTerminalController() {
@@ -169,10 +174,19 @@ struct ShellTerminalController : public MyTerminalController {
   StringPiece Read() { return ""; }
   void IOCtlWindowSize(int w, int h) {}
   int Write(const char *b, int l) {
-    CHECK_EQ(1, l);
-    if      (*b == '\r') { shell.Run(buf); buf.clear();      if (term) term->Write("\r\n" + (done?"":prompt)); }
-    else if (*b == 0x7f) {                 buf.pop_back();   if (term) term->Write("\b \b"); }
-    else                 {                 buf.append(b, l); if (term) term->Write(StringPiece(b, l)); }
+    if (l > 1 && *b == '\x1b') {
+      string escape(b+1, l-1);
+      static map<string, Callback> escapes = {
+        { "OA", bind([&]{  }) },
+        { "OB", bind([&]{  }) },
+        { "OC", bind([&]{  }) },
+        { "OD", bind([&]{  }) },
+      };
+      if (!FindAndDispatch(escapes, escape)) { ERROR("unhandled escape: ", escape); return l; }
+    } else CHECK_EQ(1, l);
+    if      (*b == '\r') { shell.Run(buf); buf.clear();      cursor_x=0;  if (term) term->Write("\r\n" + (done?"":prompt)); }
+    else if (*b == 0x7f) {                 buf.pop_back();   cursor_x--;  if (term) term->Write("\b \b"); }
+    else                 {                 buf.append(b, l); cursor_x+=l; if (term) term->Write(StringPiece(b, l)); }
     return l;
   }
 };
@@ -264,12 +278,9 @@ int Frame(Window *W, unsigned clicks, unsigned mic_samples, bool cam_sample, int
     } else if ((draw = tw->read_pending)) tw->effects_buffer->Attach();
   }
   if (draw) {
-#ifdef LFL_MOBILE
     int keyboard_height = TouchDevice::GetKeyboardBox().h;
-    Box draw_box(0, keyboard_height, screen->width, screen->height - keyboard_height); 
-#else
-    Box draw_box = effects ? tw->effects_buffer->tex.Dimension() : W->Box();
-#endif
+    Box draw_box = effects ? tw->effects_buffer->tex.Dimension() :
+      Box(0, keyboard_height, screen->width, screen->height - keyboard_height); 
     tw->terminal->Draw(draw_box, true);
   }
   if (effects) {
@@ -321,6 +332,21 @@ void MyShaderCmd(const vector<string> &arg) {
   tw->activeshader = shader != shader_map.end() ? &shader->second : &app->video.shader_default;
   tw->UpdateTargetFPS();
 }
+#ifdef LFL_MOBILE
+void MyMobileMenuCmd(const vector<string> &arg) {
+}
+void MyMobileKeyPressCmd(const vector<string> &arg) {
+  static map<string, Callback> keys = {
+    { "left",   bind([&]{ static_cast<MyTerminalWindow*>(screen->user1)->terminal->CursorLeft();  }) },
+    { "right",  bind([&]{ static_cast<MyTerminalWindow*>(screen->user1)->terminal->CursorRight(); }) },
+    { "up",     bind([&]{ static_cast<MyTerminalWindow*>(screen->user1)->terminal->HistUp();      }) },
+    { "down",   bind([&]{ static_cast<MyTerminalWindow*>(screen->user1)->terminal->HistDown();    }) },
+    { "pgup",   bind([&]{ static_cast<MyTerminalWindow*>(screen->user1)->terminal->PageUp();      }) },
+    { "pgdown", bind([&]{ static_cast<MyTerminalWindow*>(screen->user1)->terminal->PageDown();    }) }
+  };
+  if (arg.size()) FindAndDispatch(keys, arg[0]);
+}
+#endif
 
 void MyInitFonts() {
   Video::InitFonts();
@@ -328,7 +354,6 @@ void MyInitFonts() {
   Singleton<AtlasFontEngine>::Get()->Init(FontDesc(console_font, "", 32));
   FLAGS_console_font = StrCat("atlas://", console_font);
 }
-
 void MyWindowInitCB(Window *W) {
   W->width = new_win_width;
   W->height = new_win_height;
@@ -374,10 +399,11 @@ extern "C" int main(int argc, const char *argv[]) {
   } else if (FLAGS_font_engine == "coretext") {
 #ifdef LFL_IPHONE
     FLAGS_default_font = "Menlo-Bold";
+    FLAGS_default_font_size = 10;
 #else
     FLAGS_default_font = "Monaco";
-#endif
     FLAGS_default_font_size = 15;
+#endif
   } else if (FLAGS_font_engine == "freetype") { 
     FLAGS_default_font = "VeraMoBd.ttf"; // "DejaVuSansMono-Bold.ttf";
     FLAGS_default_missing_glyph = 42;
@@ -414,7 +440,6 @@ extern "C" int main(int argc, const char *argv[]) {
     { "Alien", "shader alien" }, { "Fractal", "shader fractal" }, { "Shrooms", "shader shrooms" } };
   app->AddNativeMenu("Effects", effects_menu);
 
-#ifndef LFL_MOBILE
   Shader::Create("warper", screen->gd->vertex_shader, Asset::FileContents("warper.glsl"), ShaderDefines(1,0,1,0), &shader_map["warper"]);
   Shader::CreateShaderToy("water",    Asset::FileContents("water.glsl"),    &shader_map["water"]);
   Shader::CreateShaderToy("twistery", Asset::FileContents("twistery.glsl"), &shader_map["twistery"]);
@@ -425,7 +450,6 @@ extern "C" int main(int argc, const char *argv[]) {
   Shader::CreateShaderToy("alien",    Asset::FileContents("alien.glsl"),    &shader_map["alien"]);
   Shader::CreateShaderToy("fractal",  Asset::FileContents("fractal.glsl"),  &shader_map["fractal"]);
   Shader::CreateShaderToy("shrooms",  Asset::FileContents("shrooms.glsl"),  &shader_map["shrooms"]);
-#endif
 
   MyTerminalController *controller = 0;
   SSHTerminalController *ssh_controller = 0;
@@ -453,8 +477,15 @@ extern "C" int main(int argc, const char *argv[]) {
   string app_name = "LTerminal";
 #ifdef LFL_MOBILE
   app_name += "-mobile";
+  app->shell.command.push_back(Shell::Command("menu",     bind(&MyMobileMenuCmd,     _1)));
+  app->shell.command.push_back(Shell::Command("keypress", bind(&MyMobileKeyPressCmd, _1)));
+  vector<pair<string,string>> toolbar_menu = { { "fx\U0000FE0E", "menu Effects" }, { "ctrl\U0000FE0E", "keypress ctrl" },
+    { "\U000025C0", "keypress left" }, { "\U000025B6", "keypress right" }, { "\U000025B2", "keypress up" }, 
+    { "\U000025BC", "keypress down" }, { "\U000023EB", "keypress pgup" }, { "\U000023EC", "keypress pgdown" }, 
+    { "quit", "close" } };
   TouchDevice::CloseKeyboardAfterReturn(false);
   TouchDevice::OpenKeyboard();
+  TouchDevice::AddToolbar(toolbar_menu);
 #endif
   INFO("Starting ", app_name, " ", FLAGS_default_font, " (w=", tw->terminal->font->fixed_width,
        ", h=", tw->terminal->font->Height(), ")");

@@ -28,5 +28,9 @@
   <true/>
   <key>UILaunchImageFile</key>
   <string>Default</string>
+  <key>UIStatusBarHidden</key>
+  <true/>
+  <key>UIViewControllerBasedStatusBarAppearance</key>
+  <false/>
 </dict>
 </plist>
