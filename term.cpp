@@ -81,8 +81,10 @@ void MyHoverLinkCB(TextGUI::Link *link) {
 struct MyTerminalController : public ByteSink {
   virtual int Open(Terminal*) = 0;
   virtual StringPiece Read() = 0;
+  virtual void Close() {}
   virtual bool FrameOnKeyboardInput() const { return false; }
   static void ChangeCurrent(MyTerminalController*);
+  static MyTerminalController *NewShellTerminalController(const string &m);
 };
 
 struct PTYTerminalController : public MyTerminalController {
@@ -118,15 +120,42 @@ struct PTYTerminalController : public MyTerminalController {
 };
 
 struct SSHTerminalController : public MyTerminalController {
+  bool ctrl_down=0;
   Connection *conn=0;
   Callback connected_cb;
-  string read_buf, ret_buf;
+  string read_buf, ret_buf, ended_msg="\r\nSSH session ended.\r\n\r\n\r\n";
   SSHTerminalController() : connected_cb(bind(&SSHTerminalController::ConnectedCB, this)) {}
 
-  void ConnectedCB() { app->scheduler.AddWaitForeverSocket(conn->socket, SocketSet::READABLE, 0); }
-  void ReadCB(Connection *c, const StringPiece &b) { read_buf.append(b.data(), b.size()); }
   void IOCtlWindowSize(int w, int h) { if (conn) SSHClient::SetTerminalWindowSize(conn, w, h); }
-  int Write(const char *b, int l) { 
+  void ConnectedCB() { app->scheduler.AddWaitForeverSocket(conn->socket, SocketSet::READABLE, 0); }
+  void ClosedCB() {
+    CHECK(conn);
+    MyTerminalController::ChangeCurrent(MyTerminalController::NewShellTerminalController(ended_msg));
+    app->scheduler.DelWaitForeverSocket(conn->socket);
+    app->scheduler.Wakeup(0);
+    conn = 0;
+  }
+  void ReadCB(Connection *c, const StringPiece &b) { 
+    if (b.empty()) ClosedCB();
+    else read_buf.append(b.data(), b.size());
+  }
+  StringPiece Read() {
+    if (conn && conn->state == Connection::Connected && NBReadable(conn->socket)) {
+      if (conn->Read() < 0)                        { ERROR(conn->Name(), ": Read");       Close(); return ""; }
+      if (conn->rl && conn->query->Read(conn) < 0) { ERROR(conn->Name(), ": query read"); Close(); return ""; }
+    }
+    swap(read_buf, ret_buf);
+    read_buf.clear();
+    return ret_buf; 
+  }
+  int Write(const char *b, int l) {
+#ifdef LFL_MOBILE
+    char buf[1];
+    if (l == 1 && ctrl_down && !(ctrl_down = false)) {
+      TouchDevice::ToggleToolbarButton("ctrl");
+      b = &(buf[0] = Key::CtrlModified(*reinterpret_cast<const unsigned char *>(b)));
+    }
+#endif
     if (!conn || conn->state != Connection::Connected) return -1;
     return SSHClient::WriteChannelData(conn, StringPiece(b, l));
   }
@@ -140,14 +169,10 @@ struct SSHTerminalController : public MyTerminalController {
                     }));
     return -1;
   }
-  StringPiece Read() {
-    if (conn && conn->state == Connection::Connected && NBReadable(conn->socket)) {
-      if (conn->Read() < 0)                        { ERROR(conn->Name(), ": Read");       conn->SetError(); return ""; }
-      if (conn->rl && conn->query->Read(conn) < 0) { ERROR(conn->Name(), ": query read"); conn->SetError(); return ""; }
-    }
-    swap(read_buf, ret_buf);
-    read_buf.clear();
-    return ret_buf; 
+  void Close() {
+    if (!conn || conn->state != Connection::Connected) return;
+    conn->SetError();
+    network_thread->Write(new Callback([=](){ app->network.ConnClose(Singleton<SSHClient>::Get(), conn, NULL); }));
   }
 };
 
@@ -156,8 +181,8 @@ struct ShellTerminalController : public MyTerminalController {
   bool done=0;
   int cursor_x=0;
   Shell shell;
-  string buf, prompt="> ";
-  ShellTerminalController() {
+  string buf, prompt="> ", ssh_usage="\r\nusage: ssh -l user host[:port]", header;
+  ShellTerminalController(const string &hdr) : header(StrCat(hdr, "LTerminal 1.0", ssh_usage, "\r\n\r\n")) {
     shell.command.push_back(Shell::Command("ssh", bind(&ShellTerminalController::MySSHCmd, this, _1)));
   }
   void MySSHCmd(const vector<string> &arg) {
@@ -165,14 +190,14 @@ struct ShellTerminalController : public MyTerminalController {
     for (; ind < arg.size() && arg[ind][0] == '-'; ind += 2) if (arg[ind] == "-l") FLAGS_login = arg[ind+1];
     if (ind < arg.size()) FLAGS_ssh = arg[ind];
     if (FLAGS_login.empty() || FLAGS_ssh.empty()) {
-      if (term) term->Write("\r\nusage: ssh -l user host[:port]");
+      if (term) term->Write(ssh_usage);
     } else if ((done=1)) MyTerminalController::ChangeCurrent(new SSHTerminalController());
   }
 
   bool FrameOnKeyboardInput() const { return true; }
-  int Open(Terminal *T) { (term=T)->Write(prompt); return -1; }
-  StringPiece Read() { return ""; }
   void IOCtlWindowSize(int w, int h) {}
+  int Open(Terminal *T) { (term=T)->Write(StrCat(header, prompt)); return -1; }
+  StringPiece Read() { return ""; }
   int Write(const char *b, int l) {
     if (l > 1 && *b == '\x1b') {
       string escape(b+1, l-1);
@@ -239,11 +264,15 @@ struct MyTerminalWindow {
   void UpdateTargetFPS() {
     effects_mode = CustomShader() || screen->console->animating;
     int target_fps = effects_mode ? FLAGS_peak_fps : 0;
-    if (target_fps != screen->target_fps) app->scheduler.UpdateTargetFPS(target_fps);
+    if (target_fps != screen->target_fps) {
+      app->scheduler.UpdateTargetFPS(target_fps);
+      if (target_fps) app->scheduler.Wakeup(0);
+    }
   }
   bool CustomShader() const { return activeshader != &app->video.shader_default; }
 };
 
+MyTerminalController *MyTerminalController::NewShellTerminalController(const string &m) { return new ShellTerminalController(m); }
 void MyTerminalController::ChangeCurrent(MyTerminalController *controller) {
   static unique_ptr<MyTerminalController> previous_controller;
   MyTerminalWindow *tw = (MyTerminalWindow*)screen->user1;
@@ -333,8 +362,7 @@ void MyShaderCmd(const vector<string> &arg) {
   tw->UpdateTargetFPS();
 }
 #ifdef LFL_MOBILE
-void MyMobileMenuCmd(const vector<string> &arg) {
-}
+void MyMobileMenuCmd(const vector<string> &arg) { if (arg.size()) app->LaunchNativeMenu(arg[0]); }
 void MyMobileKeyPressCmd(const vector<string> &arg) {
   static map<string, Callback> keys = {
     { "left",   bind([&]{ static_cast<MyTerminalWindow*>(screen->user1)->terminal->CursorLeft();  }) },
@@ -342,10 +370,17 @@ void MyMobileKeyPressCmd(const vector<string> &arg) {
     { "up",     bind([&]{ static_cast<MyTerminalWindow*>(screen->user1)->terminal->HistUp();      }) },
     { "down",   bind([&]{ static_cast<MyTerminalWindow*>(screen->user1)->terminal->HistDown();    }) },
     { "pgup",   bind([&]{ static_cast<MyTerminalWindow*>(screen->user1)->terminal->PageUp();      }) },
-    { "pgdown", bind([&]{ static_cast<MyTerminalWindow*>(screen->user1)->terminal->PageDown();    }) }
-  };
+    { "pgdown", bind([&]{ static_cast<MyTerminalWindow*>(screen->user1)->terminal->PageDown();    }) } };
   if (arg.size()) FindAndDispatch(keys, arg[0]);
 }
+void MyMobileKeyToggleCmd(const vector<string> &arg) {
+  static map<string, Callback> keys = {
+    { "ctrl", bind([&]{
+      MyTerminalWindow *w = static_cast<MyTerminalWindow*>(screen->user1);
+      if (auto ssh = dynamic_cast<SSHTerminalController*>(w->controller.get())) ssh->ctrl_down = !ssh->ctrl_down; }) } };
+  if (arg.size()) FindAndDispatch(keys, arg[0]);
+}
+void MyMobileCloseCmd(const vector<string> &arg) { static_cast<MyTerminalWindow*>(screen->user1)->controller->Close(); }
 #endif
 
 void MyInitFonts() {
@@ -459,7 +494,7 @@ extern "C" int main(int argc, const char *argv[]) {
   } else {
 #if defined(WIN32) || defined(LFL_MOBILE)
     app->network.Enable(Singleton<SSHClient>::Get());
-    controller = new ShellTerminalController();
+    controller = new ShellTerminalController("");
 #else
     controller = new PTYTerminalController();
 #endif
@@ -477,9 +512,11 @@ extern "C" int main(int argc, const char *argv[]) {
   string app_name = "LTerminal";
 #ifdef LFL_MOBILE
   app_name += "-mobile";
-  app->shell.command.push_back(Shell::Command("menu",     bind(&MyMobileMenuCmd,     _1)));
-  app->shell.command.push_back(Shell::Command("keypress", bind(&MyMobileKeyPressCmd, _1)));
-  vector<pair<string,string>> toolbar_menu = { { "fx\U0000FE0E", "menu Effects" }, { "ctrl\U0000FE0E", "keypress ctrl" },
+  app->shell.command.push_back(Shell::Command("menu",      bind(&MyMobileMenuCmd,      _1)));
+  app->shell.command.push_back(Shell::Command("keypress",  bind(&MyMobileKeyPressCmd,  _1)));
+  app->shell.command.push_back(Shell::Command("togglekey", bind(&MyMobileKeyToggleCmd, _1)));
+  app->shell.command.push_back(Shell::Command("close",     bind(&MyMobileCloseCmd,     _1)));
+  vector<pair<string,string>> toolbar_menu = { { "fx", "menu Effects" }, { "ctrl", "togglekey ctrl" },
     { "\U000025C0", "keypress left" }, { "\U000025B6", "keypress right" }, { "\U000025B2", "keypress up" }, 
     { "\U000025BC", "keypress down" }, { "\U000023EB", "keypress pgup" }, { "\U000023EC", "keypress pgdown" }, 
     { "quit", "close" } };
