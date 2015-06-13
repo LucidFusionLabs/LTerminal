@@ -112,6 +112,6 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
 	float r=1.-length(max(abs(fragCoord.xy / iResolution.xy*2.-1.)-.5,0.)); 
 	painting*=r;
 	
-    vec4 tc = texture2D(iChannel0, fragCoord.xy/iResolution.xy);
-	fragColor = (tc + vec4(painting, 1.)) / 2.0;
+  vec4 sc = SampleChannel(iChannel0);
+	fragColor = (sc + vec4(painting, 1.)) / 2.0;
 }

@@ -5,13 +5,13 @@ vec2 getDistortion(vec2 uv, float d, float t) {
 }
 
 vec4 getDistortedTexture(sampler2D iChannel, vec2 uv) {
-	vec4 rgb = texture2D(iChannel, uv);
+	vec4 rgb = SampleChannelAtPoint(iChannel, uv);
 	return rgb;
 }
 
 void mainImage( out vec4 fragColor, in vec2 fragCoord )
 {
-	vec2 uv = fragCoord.xy / iResolution.xy;
+	vec2 uv = SamplePoint();
 	float t = iGlobalTime;
 	vec2 mid = vec2(0.5,0.5);
 	vec2 focus = iMouse.xy / iResolution.xy;

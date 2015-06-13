@@ -69,6 +69,6 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord ) {
 			c + e*mbluramount*b);
 	}
 	col /= blursamples;
-    vec4 tc = texture2D(iChannel0, fragCoord.xy/iResolution.xy);
-	fragColor = (tc + vec4(col, 1.0)) / 2.0;
+  vec4 sc = SampleChannel(iChannel0);
+	fragColor = (sc + vec4(col, 1.0)) / 2.0;
 }

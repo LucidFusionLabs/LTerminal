@@ -15,7 +15,7 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
 
   float speed = 5.0;
 
-  vec2 uv = fragCoord.xy / iResolution.xy;
+  vec2 uv = SamplePoint();
 
   float time= speed * iGlobalTime;
   float prevTime= speed * (iGlobalTime-1.0);
@@ -39,7 +39,7 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
   
   for (int i=0; i<steps; i++)
   {
-     color += texture2D(iChannel0, uv);
+     color += SampleChannelAtPoint(iChannel0, uv);
 	 uv += delta * factor;
   }
 	

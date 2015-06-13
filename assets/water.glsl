@@ -38,7 +38,7 @@ float time = iGlobalTime*1.3;
 
 void mainImage( out vec4 fragColor, in vec2 fragCoord )
 {
-vec2 p = vec2(fragCoord.x/iResolution.x, iResolution.y - fragCoord.y/iResolution.y), c1 = p, c2 = p;
+vec2 p = SamplePointFlipY(), c1 = p, c2 = p;
 float cc1 = col(c1);
 
 c2.x += iResolution.x/delta;
@@ -58,6 +58,6 @@ float ddy = dy - reflectionCutOff;
 if (ddx > 0. && ddy > 0.)
 	alpha = pow(alpha, ddx*ddy*reflectionIntence);
 	
-vec4 col = texture2D(iChannel0,c1)*(alpha);
+vec4 col = SampleChannelAtPoint(iChannel0,c1)*(alpha);
 fragColor = col;
 }

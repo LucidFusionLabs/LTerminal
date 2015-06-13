@@ -52,7 +52,7 @@ unordered_map<string, Shader> shader_map;
 Browser *image_browser;
 NetworkThread *network_thread;
 ProcessAPIServer *render_process;
-int new_win_width = 80*10, new_win_height = 25*17;
+int new_win_width = 80*9, new_win_height = 25*20, downscale_effects = 1;
 
 void MyNewLinkCB(const shared_ptr<TextGUI::Link> &link) {
   const char *args = FindChar(link->link.c_str() + 6, isint2<'?', ':'>);
@@ -85,6 +85,62 @@ struct MyTerminalController : public ByteSink {
   virtual bool FrameOnKeyboardInput() const { return false; }
   static void ChangeCurrent(MyTerminalController*);
   static MyTerminalController *NewShellTerminalController(const string &m);
+};
+
+struct MyTerminalWindow {
+  unique_ptr<MyTerminalController> controller;
+  unique_ptr<Terminal> terminal;
+  Shader *activeshader;
+  int font_size;
+  bool effects_mode=0, read_pending=0, join_read_pending=0, effects_init=0;
+  FrameBuffer *effects_buffer=0;
+  MyTerminalWindow(MyTerminalController *C) :
+    controller(C), activeshader(&app->video.shader_default), font_size(FLAGS_default_font_size) {}
+
+  void Open() {
+    terminal = unique_ptr<Terminal>(new Terminal(controller.get(), screen, Fonts::Get(FLAGS_default_font, "", font_size)));
+    terminal->new_link_cb = MyNewLinkCB;
+    terminal->hover_link_cb = MyHoverLinkCB;
+    terminal->active = true;
+    terminal->SetDimension(80, 25);
+#ifdef FUZZ_DEBUG
+    for (int i=0; i<256; i++) {
+      INFO("fuzz i = ", i);
+      for (int j=0; j<256; j++)
+        for (int k=0; k<256; k++)
+          terminal->Write(string(1, i), 1, 1);
+    }
+    terminal->Newline(1);
+    terminal->Write("Hello world.", 1, 1);
+#else
+    app->scheduler.AddWaitForeverMouse();
+    OpenController();
+#endif
+  }
+  void OpenController() {
+    int fd = controller->Open(terminal.get());
+    if (fd != -1) app->scheduler.AddWaitForeverSocket(fd, SocketSet::READABLE, 0);
+    if (int len = FLAGS_command.size()) CHECK_EQ(len+1, controller->Write(StrCat(FLAGS_command, "\n").data(), len+1));
+    if (controller->FrameOnKeyboardInput()) app->scheduler.AddWaitForeverKeyboard();
+    else                                    app->scheduler.DelWaitForeverKeyboard();
+  }
+  int Read() {
+    StringPiece s = controller->Read();
+    if (s.len) {
+      terminal->Write(s);
+      read_pending = 1;
+    }
+    return s.len;
+  }
+  void UpdateTargetFPS() {
+    effects_mode = CustomShader() || screen->console->animating;
+    int target_fps = effects_mode ? FLAGS_peak_fps : 0;
+    if (target_fps != screen->target_fps) {
+      app->scheduler.UpdateTargetFPS(target_fps);
+      if (target_fps) app->scheduler.Wakeup(0);
+    }
+  }
+  bool CustomShader() const { return activeshader != &app->video.shader_default; }
 };
 
 struct PTYTerminalController : public MyTerminalController {
@@ -164,8 +220,8 @@ struct SSHTerminalController : public MyTerminalController {
       (new Callback([&,term](){
                     conn = Singleton<SSHClient>::Get()->Open
                     (FLAGS_ssh, SSHClient::ResponseCB(bind(&SSHTerminalController::ReadCB, this, _1, _2)), &connected_cb);
-                    SSHClient::SetUser(conn, FLAGS_login);
-                    SSHClient::SetTerminalWindowSize(conn, term->term_width, term->term_height);
+                    if (conn) SSHClient::SetUser(conn, FLAGS_login);
+                    if (conn) SSHClient::SetTerminalWindowSize(conn, term->term_width, term->term_height);
                     }));
     return -1;
   }
@@ -181,7 +237,7 @@ struct ShellTerminalController : public MyTerminalController {
   bool done=0;
   int cursor_x=0;
   Shell shell;
-  string buf, prompt="> ", ssh_usage="\r\nusage: ssh -l user host[:port]", header;
+  string buf, read_buf, ret_buf, prompt="> ", ssh_usage="\r\nusage: ssh -l user host[:port]", header;
   ShellTerminalController(const string &hdr) : header(StrCat(hdr, "LTerminal 1.0", ssh_usage, "\r\n\r\n")) {
     shell.command.push_back(Shell::Command("ssh", bind(&ShellTerminalController::MySSHCmd, this, _1)));
   }
@@ -197,7 +253,12 @@ struct ShellTerminalController : public MyTerminalController {
   bool FrameOnKeyboardInput() const { return true; }
   void IOCtlWindowSize(int w, int h) {}
   int Open(Terminal *T) { (term=T)->Write(StrCat(header, prompt)); return -1; }
-  StringPiece Read() { return ""; }
+  StringPiece Read() { swap(read_buf, ret_buf); read_buf.clear(); return ret_buf; }
+  void ReadCB(const StringPiece &b) { 
+    MyTerminalWindow *tw = (MyTerminalWindow*)screen->user1;
+    if (tw->effects_mode) read_buf.append(b.data(), b.size());
+    else if (term) term->Write(b);
+  }
   int Write(const char *b, int l) {
     if (l > 1 && *b == '\x1b') {
       string escape(b+1, l-1);
@@ -209,67 +270,11 @@ struct ShellTerminalController : public MyTerminalController {
       };
       if (!FindAndDispatch(escapes, escape)) { ERROR("unhandled escape: ", escape); return l; }
     } else CHECK_EQ(1, l);
-    if      (*b == '\r') { shell.Run(buf); buf.clear();      cursor_x=0;  if (term) term->Write("\r\n" + (done?"":prompt)); }
-    else if (*b == 0x7f) {                 buf.pop_back();   cursor_x--;  if (term) term->Write("\b \b"); }
-    else                 {                 buf.append(b, l); cursor_x+=l; if (term) term->Write(StringPiece(b, l)); }
+    if      (*b == '\r') { shell.Run(buf); buf.clear();      cursor_x=0;  ReadCB("\r\n" + (done?"":prompt)); }
+    else if (*b == 0x7f) {                 buf.pop_back();   cursor_x--;  ReadCB("\b \b"); }
+    else                 {                 buf.append(b, l); cursor_x+=l; ReadCB(StringPiece(b, l)); }
     return l;
   }
-};
-
-struct MyTerminalWindow {
-  unique_ptr<MyTerminalController> controller;
-  unique_ptr<Terminal> terminal;
-  Shader *activeshader;
-  int font_size;
-  bool effects_mode=0, read_pending=0, join_read_pending=0, effects_init=0;
-  FrameBuffer *effects_buffer=0;
-  MyTerminalWindow(MyTerminalController *C) :
-    controller(C), activeshader(&app->video.shader_default), font_size(FLAGS_default_font_size) {}
-
-  void Open() {
-    terminal = unique_ptr<Terminal>(new Terminal(controller.get(), screen, Fonts::Get(FLAGS_default_font, "", font_size)));
-    terminal->new_link_cb = MyNewLinkCB;
-    terminal->hover_link_cb = MyHoverLinkCB;
-    terminal->active = true;
-    terminal->SetDimension(80, 25);
-#ifdef FUZZ_DEBUG
-    for (int i=0; i<256; i++) {
-      INFO("fuzz i = ", i);
-      for (int j=0; j<256; j++)
-        for (int k=0; k<256; k++)
-          terminal->Write(string(1, i), 1, 1);
-    }
-    terminal->Newline(1);
-    terminal->Write("Hello world.", 1, 1);
-#else
-    app->scheduler.AddWaitForeverMouse();
-    OpenController();
-#endif
-  }
-  void OpenController() {
-    int fd = controller->Open(terminal.get());
-    if (fd != -1) app->scheduler.AddWaitForeverSocket(fd, SocketSet::READABLE, 0);
-    if (int len = FLAGS_command.size()) CHECK_EQ(len+1, controller->Write(StrCat(FLAGS_command, "\n").data(), len+1));
-    if (controller->FrameOnKeyboardInput()) app->scheduler.AddWaitForeverKeyboard();
-    else                                    app->scheduler.DelWaitForeverKeyboard();
-  }
-  int Read() {
-    StringPiece s = controller->Read();
-    if (s.len) {
-      terminal->Write(s);
-      read_pending = 1;
-    }
-    return s.len;
-  }
-  void UpdateTargetFPS() {
-    effects_mode = CustomShader() || screen->console->animating;
-    int target_fps = effects_mode ? FLAGS_peak_fps : 0;
-    if (target_fps != screen->target_fps) {
-      app->scheduler.UpdateTargetFPS(target_fps);
-      if (target_fps) app->scheduler.Wakeup(0);
-    }
-  }
-  bool CustomShader() const { return activeshader != &app->video.shader_default; }
 };
 
 MyTerminalController *MyTerminalController::NewShellTerminalController(const string &m) { return new ShellTerminalController(m); }
@@ -286,38 +291,29 @@ int Frame(Window *W, unsigned clicks, unsigned mic_samples, bool cam_sample, int
   static const int join_read_size = 1024;
   static const Time join_read_interval(100), refresh_interval(33);
   MyTerminalWindow *tw = (MyTerminalWindow*)W->user1;
+  bool effects = tw->effects_mode;
   int read_size = tw->Read();
 #ifndef LFL_MOBILE
-  if (read_size && !(flag & LFApp::Frame::DontSkip)) {
-    bool join_read = read_size == join_read_size;
-    if (join_read) { tw->join_read_pending=1; if (app->scheduler.WakeupIn(0, join_read_interval)) return -1; }
-    else        if (!tw->join_read_pending) { if (app->scheduler.WakeupIn(0,   refresh_interval)) return -1; }
-  }
-  app->scheduler.ClearWakeupIn();
+  if (!effects) {
+    if (read_size && !(flag & LFApp::Frame::DontSkip)) {
+      bool join_read = read_size == join_read_size;
+      if (join_read) { tw->join_read_pending=1; if (app->scheduler.WakeupIn(0, join_read_interval)) return -1; }
+      else        if (!tw->join_read_pending) { if (app->scheduler.WakeupIn(0,   refresh_interval)) return -1; }
+    }
+    app->scheduler.ClearWakeupIn();
+  } else tw->read_pending = read_size;
 #endif
-  W->gd->DrawMode(DrawMode::_2D);
   W->gd->DisableBlend();
-  bool effects = tw->CustomShader(), draw = true;
-  if (effects) {
-    if (!tw->effects_buffer) {
-      tw->effects_buffer = new FrameBuffer();
-      tw->effects_buffer->Create(512, 512);
-      tw->effects_buffer->tex.Create(tw->effects_buffer->width, tw->effects_buffer->height);
-      tw->effects_buffer->Attach(tw->effects_buffer->tex.ID);
-    } else if ((draw = tw->read_pending)) tw->effects_buffer->Attach();
+  int keyboard_height = TouchDevice::GetKeyboardBox().h;
+  Box draw_box = Box(0, keyboard_height, screen->width, screen->height - keyboard_height); 
+  if (effects && downscale_effects > 1) {
+      W->gd->ViewPort(Box(screen->width/downscale_effects, screen->height/downscale_effects));
+      W->gd->DrawMode(DrawMode::_2D, screen->width/2, screen->height/2, true);
   }
-  if (draw) {
-    int keyboard_height = TouchDevice::GetKeyboardBox().h;
-    Box draw_box = effects ? tw->effects_buffer->tex.Dimension() :
-      Box(0, keyboard_height, screen->width, screen->height - keyboard_height); 
-    tw->terminal->Draw(draw_box, true);
-  }
+  tw->terminal->Draw(draw_box, true, effects ? tw->activeshader : NULL);
   if (effects) {
-    if (draw) tw->effects_buffer->Release();
-    tw->effects_buffer->tex.Bind();
-    glTimeResolutionShader(tw->activeshader, &tw->effects_buffer->tex);
-    screen->Box().Draw(tw->effects_buffer->tex.coord);
     screen->gd->UseShader(0);
+    if (downscale_effects) screen->gd->RestoreViewport(DrawMode::_2D);
   }
   W->DrawDialogs();
   if (FLAGS_draw_fps) Fonts::Default()->Draw(StringPrintf("FPS = %.2f", FPS()), point(W->width*.85, 0));
@@ -425,6 +421,9 @@ extern "C" int main(int argc, const char *argv[]) {
 #else
   FLAGS_font_engine = "freetype";
 #endif
+#ifdef LFL_MOBILE
+  // downscale_effects = TouchDevice::SetExtraScale(true);
+#endif
 
   if (app->Create(argc, argv, __FILE__)) { app->Free(); return -1; }
   if (!FLAGS_lfapp_network_.override) FLAGS_lfapp_network = 1;
@@ -434,7 +433,7 @@ extern "C" int main(int argc, const char *argv[]) {
   } else if (FLAGS_font_engine == "coretext") {
 #ifdef LFL_IPHONE
     FLAGS_default_font = "Menlo-Bold";
-    FLAGS_default_font_size = 10;
+    FLAGS_default_font_size = 12;
 #else
     FLAGS_default_font = "Monaco";
     FLAGS_default_font_size = 15;
@@ -475,7 +474,7 @@ extern "C" int main(int argc, const char *argv[]) {
     { "Alien", "shader alien" }, { "Fractal", "shader fractal" }, { "Shrooms", "shader shrooms" } };
   app->AddNativeMenu("Effects", effects_menu);
 
-  Shader::Create("warper", screen->gd->vertex_shader, Asset::FileContents("warper.glsl"), ShaderDefines(1,0,1,0), &shader_map["warper"]);
+  Shader::CreateShaderToy("warper",   Asset::FileContents("warper.glsl"),   &shader_map["warper"]);
   Shader::CreateShaderToy("water",    Asset::FileContents("water.glsl"),    &shader_map["water"]);
   Shader::CreateShaderToy("twistery", Asset::FileContents("twistery.glsl"), &shader_map["twistery"]);
   Shader::CreateShaderToy("fire",     Asset::FileContents("fire.glsl"),     &shader_map["fire"]);
@@ -525,7 +524,7 @@ extern "C" int main(int argc, const char *argv[]) {
   TouchDevice::AddToolbar(toolbar_menu);
 #endif
   INFO("Starting ", app_name, " ", FLAGS_default_font, " (w=", tw->terminal->font->fixed_width,
-       ", h=", tw->terminal->font->Height(), ")");
+       ", h=", tw->terminal->font->Height(), ", scale=", downscale_effects, ")");
 
   app->scheduler.Start();
   return app->Main();
