@@ -124,7 +124,7 @@ struct MyTerminalWindow {
     if (controller->FrameOnKeyboardInput()) app->scheduler.AddWaitForeverKeyboard();
     else                                    app->scheduler.DelWaitForeverKeyboard();
   }
-  int Read() {
+  int ReadAndUpdateTerminalFramebuffer() {
     StringPiece s = controller->Read();
     if (s.len) {
       terminal->Write(s);
@@ -291,8 +291,17 @@ int Frame(Window *W, unsigned clicks, unsigned mic_samples, bool cam_sample, int
   static const int join_read_size = 1024;
   static const Time join_read_interval(100), refresh_interval(33);
   MyTerminalWindow *tw = (MyTerminalWindow*)W->user1;
-  bool effects = tw->effects_mode;
-  int read_size = tw->Read();
+  bool effects = tw->effects_mode, downscale = effects && downscale_effects > 1;
+  Box draw_box = screen->Box();
+
+  if (downscale) W->gd->RestoreViewport(DrawMode::_2D);
+  tw->terminal->CheckResized(draw_box);
+  int read_size = tw->ReadAndUpdateTerminalFramebuffer();
+  if (downscale) {
+    float scale = tw->activeshader->scale = 1.0 / downscale_effects;
+    W->gd->ViewPort(Box(screen->width*scale, screen->height*scale));
+  }
+
 #ifndef LFL_MOBILE
   if (!effects) {
     if (read_size && !(flag & LFApp::Frame::DontSkip)) {
@@ -303,18 +312,11 @@ int Frame(Window *W, unsigned clicks, unsigned mic_samples, bool cam_sample, int
     app->scheduler.ClearWakeupIn();
   } else tw->read_pending = read_size;
 #endif
+
   W->gd->DisableBlend();
-  int keyboard_height = TouchDevice::GetKeyboardBox().h;
-  Box draw_box = Box(0, keyboard_height, screen->width, screen->height - keyboard_height); 
-  if (effects && downscale_effects > 1) {
-      W->gd->ViewPort(Box(screen->width/downscale_effects, screen->height/downscale_effects));
-      W->gd->DrawMode(DrawMode::_2D, screen->width/2, screen->height/2, true);
-  }
   tw->terminal->Draw(draw_box, true, effects ? tw->activeshader : NULL);
-  if (effects) {
-    screen->gd->UseShader(0);
-    if (downscale_effects) screen->gd->RestoreViewport(DrawMode::_2D);
-  }
+  if (effects) screen->gd->UseShader(0);
+
   W->DrawDialogs();
   if (FLAGS_draw_fps) Fonts::Default()->Draw(StringPrintf("FPS = %.2f", FPS()), point(W->width*.85, 0));
   if (FLAGS_screenshot.size()) ONCE(app->shell.screenshot(vector<string>(1, FLAGS_screenshot)); app->run=0;);
@@ -358,7 +360,10 @@ void MyShaderCmd(const vector<string> &arg) {
   tw->UpdateTargetFPS();
 }
 #ifdef LFL_MOBILE
-void MyMobileMenuCmd(const vector<string> &arg) { if (arg.size()) app->LaunchNativeMenu(arg[0]); }
+void MyMobileMenuCmd(const vector<string> &arg) {
+  MyShaderCmd(vector<string>{"none"});
+  if (arg.size()) app->LaunchNativeMenu(arg[0]);
+}
 void MyMobileKeyPressCmd(const vector<string> &arg) {
   static map<string, Callback> keys = {
     { "left",   bind([&]{ static_cast<MyTerminalWindow*>(screen->user1)->terminal->CursorLeft();  }) },
@@ -422,7 +427,7 @@ extern "C" int main(int argc, const char *argv[]) {
   FLAGS_font_engine = "freetype";
 #endif
 #ifdef LFL_MOBILE
-  // downscale_effects = TouchDevice::SetExtraScale(true);
+  downscale_effects = TouchDevice::SetExtraScale(true);
 #endif
 
   if (app->Create(argc, argv, __FILE__)) { app->Free(); return -1; }
