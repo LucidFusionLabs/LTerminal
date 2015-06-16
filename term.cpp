@@ -79,11 +79,12 @@ void MyHoverLinkCB(TextGUI::Link *link) {
 }
 
 struct MyTerminalController : public ByteSink {
+  virtual ~MyTerminalController() {}
   virtual int Open(Terminal*) = 0;
   virtual StringPiece Read() = 0;
   virtual void Close() {}
   virtual bool FrameOnKeyboardInput() const { return false; }
-  static void ChangeCurrent(MyTerminalController*);
+  static void ChangeCurrent(MyTerminalController *new_controller_in, unique_ptr<MyTerminalController> *old_controller_out);
   static MyTerminalController *NewShellTerminalController(const string &m);
 };
 
@@ -186,10 +187,11 @@ struct SSHTerminalController : public MyTerminalController {
   void ConnectedCB() { app->scheduler.AddWaitForeverSocket(conn->socket, SocketSet::READABLE, 0); }
   void ClosedCB() {
     CHECK(conn);
-    MyTerminalController::ChangeCurrent(MyTerminalController::NewShellTerminalController(ended_msg));
     app->scheduler.DelWaitForeverSocket(conn->socket);
     app->scheduler.Wakeup(0);
     conn = 0;
+    unique_ptr<MyTerminalController> self;
+    MyTerminalController::ChangeCurrent(MyTerminalController::NewShellTerminalController(ended_msg), &self);
   }
   void ReadCB(Connection *c, const StringPiece &b) { 
     if (b.empty()) ClosedCB();
@@ -220,8 +222,11 @@ struct SSHTerminalController : public MyTerminalController {
       (new Callback([&,term](){
                     conn = Singleton<SSHClient>::Get()->Open
                     (FLAGS_ssh, SSHClient::ResponseCB(bind(&SSHTerminalController::ReadCB, this, _1, _2)), &connected_cb);
-                    if (conn) SSHClient::SetUser(conn, FLAGS_login);
                     if (conn) SSHClient::SetTerminalWindowSize(conn, term->term_width, term->term_height);
+                    if (conn) SSHClient::SetUser(conn, FLAGS_login);
+#ifdef LFL_MOBILE
+                    if (conn) SSHClient::SetPasswordCB(conn, Vault::LoadPassword, Vault::SavePassword);
+#endif
                     }));
     return -1;
   }
@@ -235,19 +240,23 @@ struct SSHTerminalController : public MyTerminalController {
 struct ShellTerminalController : public MyTerminalController {
   Terminal *term=0;
   bool done=0;
-  int cursor_x=0;
   Shell shell;
+  UnbackedTextGUI cmd;
   string buf, read_buf, ret_buf, prompt="> ", ssh_usage="\r\nusage: ssh -l user host[:port]", header;
-  ShellTerminalController(const string &hdr) : header(StrCat(hdr, "LTerminal 1.0", ssh_usage, "\r\n\r\n")) {
+
+  ShellTerminalController(const string &hdr) : header(StrCat(hdr, "LTerminal 1.0", ssh_usage, "\r\n\r\n")), cmd(Fonts::Default()) {
     shell.command.push_back(Shell::Command("ssh", bind(&ShellTerminalController::MySSHCmd, this, _1)));
+    cmd.runcb = bind(&Shell::Run, shell, _1);
+    cmd.ReadHistory(LFAppDownloadDir(), "shell");
   }
+  virtual ~ShellTerminalController() { cmd.WriteHistory(LFAppDownloadDir(), "shell", ""); }
+
   void MySSHCmd(const vector<string> &arg) {
     int ind = 0;
     for (; ind < arg.size() && arg[ind][0] == '-'; ind += 2) if (arg[ind] == "-l") FLAGS_login = arg[ind+1];
     if (ind < arg.size()) FLAGS_ssh = arg[ind];
-    if (FLAGS_login.empty() || FLAGS_ssh.empty()) {
-      if (term) term->Write(ssh_usage);
-    } else if ((done=1)) MyTerminalController::ChangeCurrent(new SSHTerminalController());
+    if (FLAGS_login.empty() || FLAGS_ssh.empty()) { if (term) term->Write(ssh_usage); }
+    else done = 1;
   }
 
   bool FrameOnKeyboardInput() const { return true; }
@@ -263,27 +272,32 @@ struct ShellTerminalController : public MyTerminalController {
     if (l > 1 && *b == '\x1b') {
       string escape(b+1, l-1);
       static map<string, Callback> escapes = {
-        { "OA", bind([&]{  }) },
-        { "OB", bind([&]{  }) },
-        { "OC", bind([&]{  }) },
-        { "OD", bind([&]{  }) },
+        { "OA", bind([&]{ cmd.HistUp();   ReadCB(StrCat("\x0d", prompt, cmd.cmd_line.Text(), "\x1b[K")); }) },
+        { "OB", bind([&]{ cmd.HistDown(); ReadCB(StrCat("\x0d", prompt, cmd.cmd_line.Text(), "\x1b[K")); }) },
+        { "OC", bind([&]{ if (cmd.cursor.i.x < cmd.cmd_line.Size()) { ReadCB(string(1, cmd.cmd_line[cmd.cursor.i.x].Id())); cmd.CursorRight(); } }) },
+        { "OD", bind([&]{ if (cmd.cursor.i.x)                       { ReadCB("\x08");                                       cmd.CursorLeft();  } }) },
       };
-      if (!FindAndDispatch(escapes, escape)) { ERROR("unhandled escape: ", escape); return l; }
+      if (!FindAndDispatch(escapes, escape)) ERROR("unhandled escape: ", escape);
+      return l;
     } else CHECK_EQ(1, l);
-    if      (*b == '\r') { shell.Run(buf); buf.clear();      cursor_x=0;  ReadCB("\r\n" + (done?"":prompt)); }
-    else if (*b == 0x7f) {                 buf.pop_back();   cursor_x--;  ReadCB("\b \b"); }
-    else                 {                 buf.append(b, l); cursor_x+=l; ReadCB(StringPiece(b, l)); }
+
+    bool cursor_last = cmd.cursor.i.x == cmd.cmd_line.Size();
+    if      (*b == '\r') { if (1) { cmd.Enter(); ReadCB("\r\n" + (done?"":prompt));                                     } }
+    else if (*b == 0x7f) { if (cmd.cursor.i.x) { ReadCB((cursor_last ? "\b \b" : "\x08\x1b[1P"));        cmd.Erase();   } }
+    else                 { if (1)              { ReadCB((cursor_last ? "" : "\x1b[1@") + string(1, *b)); cmd.Input(*b); } }
+
+    unique_ptr<MyTerminalController> self;
+    if (done) MyTerminalController::ChangeCurrent(new SSHTerminalController(), &self);
     return l;
   }
 };
 
 MyTerminalController *MyTerminalController::NewShellTerminalController(const string &m) { return new ShellTerminalController(m); }
-void MyTerminalController::ChangeCurrent(MyTerminalController *controller) {
-  static unique_ptr<MyTerminalController> previous_controller;
+void MyTerminalController::ChangeCurrent(MyTerminalController *new_controller_in, unique_ptr<MyTerminalController> *old_controller_out) {
   MyTerminalWindow *tw = (MyTerminalWindow*)screen->user1;
-  tw->terminal->sink = controller;
-  tw->controller.swap(previous_controller);
-  tw->controller = unique_ptr<MyTerminalController>(controller);
+  tw->terminal->sink = new_controller_in;
+  tw->controller.swap(*old_controller_out);
+  tw->controller = unique_ptr<MyTerminalController>(new_controller_in);
   tw->OpenController();
 }
 
@@ -365,13 +379,14 @@ void MyMobileMenuCmd(const vector<string> &arg) {
   if (arg.size()) app->LaunchNativeMenu(arg[0]);
 }
 void MyMobileKeyPressCmd(const vector<string> &arg) {
+  MyTerminalWindow *tw = static_cast<MyTerminalWindow*>(screen->user1);
   static map<string, Callback> keys = {
-    { "left",   bind([&]{ static_cast<MyTerminalWindow*>(screen->user1)->terminal->CursorLeft();  }) },
-    { "right",  bind([&]{ static_cast<MyTerminalWindow*>(screen->user1)->terminal->CursorRight(); }) },
-    { "up",     bind([&]{ static_cast<MyTerminalWindow*>(screen->user1)->terminal->HistUp();      }) },
-    { "down",   bind([&]{ static_cast<MyTerminalWindow*>(screen->user1)->terminal->HistDown();    }) },
-    { "pgup",   bind([&]{ static_cast<MyTerminalWindow*>(screen->user1)->terminal->PageUp();      }) },
-    { "pgdown", bind([&]{ static_cast<MyTerminalWindow*>(screen->user1)->terminal->PageDown();    }) } };
+    { "left",   bind([=]{ tw->terminal->CursorLeft();  if (tw->controller->FrameOnKeyboardInput()) app->scheduler.Wakeup(0); }) },
+    { "right",  bind([=]{ tw->terminal->CursorRight(); if (tw->controller->FrameOnKeyboardInput()) app->scheduler.Wakeup(0); }) },
+    { "up",     bind([=]{ tw->terminal->HistUp();      if (tw->controller->FrameOnKeyboardInput()) app->scheduler.Wakeup(0); }) },
+    { "down",   bind([=]{ tw->terminal->HistDown();    if (tw->controller->FrameOnKeyboardInput()) app->scheduler.Wakeup(0); }) },
+    { "pgup",   bind([=]{ tw->terminal->PageUp();      if (tw->controller->FrameOnKeyboardInput()) app->scheduler.Wakeup(0); }) },
+    { "pgdown", bind([=]{ tw->terminal->PageDown();    if (tw->controller->FrameOnKeyboardInput()) app->scheduler.Wakeup(0); }) } };
   if (arg.size()) FindAndDispatch(keys, arg[0]);
 }
 void MyMobileKeyToggleCmd(const vector<string> &arg) {
@@ -393,7 +408,7 @@ void MyInitFonts() {
 void MyWindowInitCB(Window *W) {
   W->width = new_win_width;
   W->height = new_win_height;
-  W->caption = "Terminal";
+  W->caption = app->name;
   W->frame_cb = Frame;
   W->binds = binds;
 }
@@ -416,6 +431,7 @@ void MyWindowClosedCB(Window *W) {
 using namespace LFL;
 
 extern "C" int main(int argc, const char *argv[]) {
+  app->name = "LTerminal";
   app->logfilename = StrCat(LFAppDownloadDir(), "lterm.txt");
   binds = new BindMap();
   MyWindowInitCB(screen);
@@ -513,9 +529,7 @@ extern "C" int main(int argc, const char *argv[]) {
   new_win_height = tw->terminal->font->Height()     * tw->terminal->term_height;
   tw->terminal->Draw(screen->Box(), false);
 
-  string app_name = "LTerminal";
 #ifdef LFL_MOBILE
-  app_name += "-mobile";
   app->shell.command.push_back(Shell::Command("menu",      bind(&MyMobileMenuCmd,      _1)));
   app->shell.command.push_back(Shell::Command("keypress",  bind(&MyMobileKeyPressCmd,  _1)));
   app->shell.command.push_back(Shell::Command("togglekey", bind(&MyMobileKeyToggleCmd, _1)));
@@ -528,7 +542,7 @@ extern "C" int main(int argc, const char *argv[]) {
   TouchDevice::OpenKeyboard();
   TouchDevice::AddToolbar(toolbar_menu);
 #endif
-  INFO("Starting ", app_name, " ", FLAGS_default_font, " (w=", tw->terminal->font->fixed_width,
+  INFO("Starting ", app->name, " ", FLAGS_default_font, " (w=", tw->terminal->font->fixed_width,
        ", h=", tw->terminal->font->Height(), ", scale=", downscale_effects, ")");
 
   app->scheduler.Start();
