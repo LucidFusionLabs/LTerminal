@@ -30,9 +30,8 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
 		wave_width = abs(1.0 / (150.0 * uv.y));
 		wave_color += vec3(wave_width * 1.9, wave_width, wave_width * 1.5);
 	}
-	
+
 	final_color = bg_color + wave_color;
-	
-    vec4 tc = texture2D(iChannel0, fragCoord.xy/iResolution.xy);
-	fragColor = (tc + vec4(final_color, 1.0)) / 2.0;
+  vec4 sc = SampleChannel(iChannel0);
+  fragColor = (sc + vec4(final_color, 1.0)) / 2.0;
 }

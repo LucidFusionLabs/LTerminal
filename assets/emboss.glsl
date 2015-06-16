@@ -16,19 +16,19 @@ C_Sample SampleMaterial(const in vec2 vUV, sampler2D sampler,  const in vec2 vTe
 {
 	C_Sample result;
 	
-	vec2 vInvTextureSize = vec2(1.0) / vTextureSize;
+	vec2 vInvTextureSize = vec2(1.0) / vTextureSize, vMaxUV = vTextureSize / iResolution.xy;
 	
-	vec3 cSampleNegXNegY = texture2D(sampler, vUV + (vec2(-1.0, -1.0)) * vInvTextureSize.xy).rgb;
-	vec3 cSampleZerXNegY = texture2D(sampler, vUV + (vec2( 0.0, -1.0)) * vInvTextureSize.xy).rgb;
-	vec3 cSamplePosXNegY = texture2D(sampler, vUV + (vec2( 1.0, -1.0)) * vInvTextureSize.xy).rgb;
+	vec3 cSampleNegXNegY = SampleChannelAtPointAndModulus(sampler, vUV + (vec2(-1.0, -1.0)) * vInvTextureSize.xy, vMaxUV).rgb;
+	vec3 cSampleZerXNegY = SampleChannelAtPointAndModulus(sampler, vUV + (vec2( 0.0, -1.0)) * vInvTextureSize.xy, vMaxUV).rgb;
+	vec3 cSamplePosXNegY = SampleChannelAtPointAndModulus(sampler, vUV + (vec2( 1.0, -1.0)) * vInvTextureSize.xy, vMaxUV).rgb;
 	
-	vec3 cSampleNegXZerY = texture2D(sampler, vUV + (vec2(-1.0, 0.0)) * vInvTextureSize.xy).rgb;
-	vec3 cSampleZerXZerY = texture2D(sampler, vUV + (vec2( 0.0, 0.0)) * vInvTextureSize.xy).rgb;
-	vec3 cSamplePosXZerY = texture2D(sampler, vUV + (vec2( 1.0, 0.0)) * vInvTextureSize.xy).rgb;
+	vec3 cSampleNegXZerY = SampleChannelAtPointAndModulus(sampler, vUV + (vec2(-1.0, 0.0)) * vInvTextureSize.xy, vMaxUV).rgb;
+	vec3 cSampleZerXZerY = SampleChannelAtPointAndModulus(sampler, vUV + (vec2( 0.0, 0.0)) * vInvTextureSize.xy, vMaxUV).rgb;
+	vec3 cSamplePosXZerY = SampleChannelAtPointAndModulus(sampler, vUV + (vec2( 1.0, 0.0)) * vInvTextureSize.xy, vMaxUV).rgb;
 	
-	vec3 cSampleNegXPosY = texture2D(sampler, vUV + (vec2(-1.0,  1.0)) * vInvTextureSize.xy).rgb;
-	vec3 cSampleZerXPosY = texture2D(sampler, vUV + (vec2( 0.0,  1.0)) * vInvTextureSize.xy).rgb;
-	vec3 cSamplePosXPosY = texture2D(sampler, vUV + (vec2( 1.0,  1.0)) * vInvTextureSize.xy).rgb;
+	vec3 cSampleNegXPosY = SampleChannelAtPointAndModulus(sampler, vUV + (vec2(-1.0,  1.0)) * vInvTextureSize.xy, vMaxUV).rgb;
+	vec3 cSampleZerXPosY = SampleChannelAtPointAndModulus(sampler, vUV + (vec2( 0.0,  1.0)) * vInvTextureSize.xy, vMaxUV).rgb;
+	vec3 cSamplePosXPosY = SampleChannelAtPointAndModulus(sampler, vUV + (vec2( 1.0,  1.0)) * vInvTextureSize.xy, vMaxUV).rgb;
 
 	// convert to linear	
 	vec3 cLSampleNegXNegY = cSampleNegXNegY * cSampleNegXNegY;
@@ -98,7 +98,7 @@ C_Sample SampleMaterial(const in vec2 vUV, sampler2D sampler,  const in vec2 vTe
 
 void mainImage( out vec4 fragColor, in vec2 fragCoord )
 {	
-	vec2 vUV = fragCoord.xy / iResolution.xy;
+	vec2 vUV = SamplePoint();
 	
 	C_Sample materialSample;
 		
