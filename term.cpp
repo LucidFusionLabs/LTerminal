@@ -67,7 +67,9 @@ void MyNewLinkCB(const shared_ptr<TextGUI::Link> &link) {
     } else return;
   }
   image_url += BlankNull(args);
+#ifndef WIN32
   if (network_thread) network_thread->Write(new Callback([=]() { link->image = image_browser->doc.parser->OpenImage(image_url); }));
+#endif
 }
 
 void MyHoverLinkCB(TextGUI::Link *link) {
@@ -85,7 +87,10 @@ struct MyTerminalController : public ByteSink {
   virtual void Close() {}
   virtual bool FrameOnKeyboardInput() const { return false; }
   static void ChangeCurrent(MyTerminalController *new_controller_in, unique_ptr<MyTerminalController> *old_controller_out);
-  static MyTerminalController *NewShellTerminalController(const string &m);
+  static MyTerminalController *NewDefaultTerminalController();
+  static MyTerminalController *NewShellTerminalController(const string &m);  
+  static MyTerminalController *NewSSHTerminalController();
+  static void InitSSHTerminalController() { ONCE({ app->network.Enable(Singleton<SSHClient>::Get()); }); }
 };
 
 struct MyTerminalWindow {
@@ -127,10 +132,7 @@ struct MyTerminalWindow {
   }
   int ReadAndUpdateTerminalFramebuffer() {
     StringPiece s = controller->Read();
-    if (s.len) {
-      terminal->Write(s);
-      read_pending = 1;
-    }
+    if (s.len) { terminal->Write(s); read_pending = 1; }
     return s.len;
   }
   void UpdateTargetFPS() {
@@ -144,6 +146,7 @@ struct MyTerminalWindow {
   bool CustomShader() const { return activeshader != &app->video.shader_default; }
 };
 
+#ifndef WIN32
 struct PTYTerminalController : public MyTerminalController {
   int fd = -1;
   ProcessPipe process;
@@ -152,13 +155,12 @@ struct PTYTerminalController : public MyTerminalController {
   virtual ~PTYTerminalController() { if (process.in) app->scheduler.DelWaitForeverSocket(fileno(process.in)); }
   int Write(const char *b, int l) { return write(fd, b, l); }
   void IOCtlWindowSize(int w, int h) {
-#ifndef _WIN32
+
     struct winsize ws;
     memzero(ws);
     ws.ws_col = w;
     ws.ws_row = h;
     ioctl(fd, TIOCSWINSZ, &ws);
-#endif
   }
   int Open(Terminal*) {
     setenv("TERM", "screen", 1);
@@ -175,6 +177,7 @@ struct PTYTerminalController : public MyTerminalController {
     return read_buf.data;
   }
 };
+#endif
 
 struct SSHTerminalController : public MyTerminalController {
   bool ctrl_down=0;
@@ -204,7 +207,7 @@ struct SSHTerminalController : public MyTerminalController {
     }
     swap(read_buf, ret_buf);
     read_buf.clear();
-    return ret_buf; 
+    return ret_buf;
   }
   int Write(const char *b, int l) {
 #ifdef LFL_MOBILE
@@ -243,6 +246,12 @@ struct ShellTerminalController : public MyTerminalController {
   Shell shell;
   UnbackedTextGUI cmd;
   string buf, read_buf, ret_buf, prompt="> ", ssh_usage="\r\nusage: ssh -l user host[:port]", header;
+  map<string, Callback> escapes = {
+    { "OA", bind([&] { cmd.HistUp();   ReadCB(StrCat("\x0d", prompt, cmd.cmd_line.Text(), "\x1b[K")); }) },
+    { "OB", bind([&] { cmd.HistDown(); ReadCB(StrCat("\x0d", prompt, cmd.cmd_line.Text(), "\x1b[K")); }) },
+    { "OC", bind([&] { if (cmd.cursor.i.x < cmd.cmd_line.Size()) { ReadCB(string(1, cmd.cmd_line[cmd.cursor.i.x].Id())); cmd.CursorRight(); } }) },
+    { "OD", bind([&] { if (cmd.cursor.i.x)                       { ReadCB("\x08");                                       cmd.CursorLeft();  } }) },
+  };
 
   ShellTerminalController(const string &hdr) : header(StrCat(hdr, "LTerminal 1.0", ssh_usage, "\r\n\r\n")), cmd(Fonts::Default()) {
     shell.command.push_back(Shell::Command("ssh", bind(&ShellTerminalController::MySSHCmd, this, _1)));
@@ -263,7 +272,7 @@ struct ShellTerminalController : public MyTerminalController {
   void IOCtlWindowSize(int w, int h) {}
   int Open(Terminal *T) { (term=T)->Write(StrCat(header, prompt)); return -1; }
   StringPiece Read() { swap(read_buf, ret_buf); read_buf.clear(); return ret_buf; }
-  void ReadCB(const StringPiece &b) { 
+  void ReadCB(const StringPiece &b) {
     MyTerminalWindow *tw = (MyTerminalWindow*)screen->user1;
     if (tw->effects_mode) read_buf.append(b.data(), b.size());
     else if (term) term->Write(b);
@@ -271,12 +280,6 @@ struct ShellTerminalController : public MyTerminalController {
   int Write(const char *b, int l) {
     if (l > 1 && *b == '\x1b') {
       string escape(b+1, l-1);
-      static map<string, Callback> escapes = {
-        { "OA", bind([&]{ cmd.HistUp();   ReadCB(StrCat("\x0d", prompt, cmd.cmd_line.Text(), "\x1b[K")); }) },
-        { "OB", bind([&]{ cmd.HistDown(); ReadCB(StrCat("\x0d", prompt, cmd.cmd_line.Text(), "\x1b[K")); }) },
-        { "OC", bind([&]{ if (cmd.cursor.i.x < cmd.cmd_line.Size()) { ReadCB(string(1, cmd.cmd_line[cmd.cursor.i.x].Id())); cmd.CursorRight(); } }) },
-        { "OD", bind([&]{ if (cmd.cursor.i.x)                       { ReadCB("\x08");                                       cmd.CursorLeft();  } }) },
-      };
       if (!FindAndDispatch(escapes, escape)) ERROR("unhandled escape: ", escape);
       return l;
     } else CHECK_EQ(1, l);
@@ -287,18 +290,27 @@ struct ShellTerminalController : public MyTerminalController {
     else                 { if (1)              { ReadCB((cursor_last ? "" : "\x1b[1@") + string(1, *b)); cmd.Input(*b); } }
 
     unique_ptr<MyTerminalController> self;
-    if (done) MyTerminalController::ChangeCurrent(new SSHTerminalController(), &self);
+    if (done) MyTerminalController::ChangeCurrent(MyTerminalController::NewSSHTerminalController(), &self);
     return l;
   }
 };
 
-MyTerminalController *MyTerminalController::NewShellTerminalController(const string &m) { return new ShellTerminalController(m); }
 void MyTerminalController::ChangeCurrent(MyTerminalController *new_controller_in, unique_ptr<MyTerminalController> *old_controller_out) {
   MyTerminalWindow *tw = (MyTerminalWindow*)screen->user1;
   tw->terminal->sink = new_controller_in;
   tw->controller.swap(*old_controller_out);
   tw->controller = unique_ptr<MyTerminalController>(new_controller_in);
   tw->OpenController();
+}
+
+MyTerminalController *MyTerminalController::NewSSHTerminalController()                  { InitSSHTerminalController(); return new SSHTerminalController(); }
+MyTerminalController *MyTerminalController::NewShellTerminalController(const string &m) { InitSSHTerminalController(); return new ShellTerminalController(m); }
+MyTerminalController *MyTerminalController::NewDefaultTerminalController() {
+#if defined(WIN32) || defined(LFL_MOBILE)
+  return NewShellTerminalController("");
+#else
+  return new PTYTerminalController();
+#endif
 }
 
 int Frame(Window *W, unsigned clicks, unsigned mic_samples, bool cam_sample, int flag) {
@@ -316,7 +328,7 @@ int Frame(Window *W, unsigned clicks, unsigned mic_samples, bool cam_sample, int
     W->gd->ViewPort(Box(screen->width*scale, screen->height*scale));
   }
 
-#ifndef LFL_MOBILE
+#if defined(__APPLE__) && !defined(LFL_MOBILE)
   if (!effects) {
     if (read_size && !(flag & LFApp::Frame::DontSkip)) {
       bool join_read = read_size == join_read_size;
@@ -327,6 +339,8 @@ int Frame(Window *W, unsigned clicks, unsigned mic_samples, bool cam_sample, int
   } else tw->read_pending = read_size;
 #endif
 
+
+  W->gd->DrawMode(DrawMode::_2D);
   W->gd->DisableBlend();
   tw->terminal->Draw(draw_box, true, effects ? tw->activeshader : NULL);
   if (effects) screen->gd->UseShader(0);
@@ -418,7 +432,7 @@ void MyWindowStartCB(Window *W) {
 }
 void MyWindowCloneCB(Window *W) {
   W->InitConsole();
-  W->user1 = new MyTerminalWindow(new PTYTerminalController());
+  W->user1 = new MyTerminalWindow(MyTerminalController::NewDefaultTerminalController());
   W->input_bind.push_back(W->binds);
   MyWindowStartCB(W);
 }
@@ -437,8 +451,10 @@ extern "C" int main(int argc, const char *argv[]) {
   MyWindowInitCB(screen);
   FLAGS_target_fps = 0;
   FLAGS_lfapp_video = FLAGS_lfapp_input = 1;
-#ifdef __APPLE__
+#if defined(__APPLE__)
   FLAGS_font_engine = "coretext";
+#elif defined(WIN32)
+  FLAGS_font_engine = "atlas";
 #else
   FLAGS_font_engine = "freetype";
 #endif
@@ -475,7 +491,7 @@ extern "C" int main(int argc, const char *argv[]) {
   app->shell.command.push_back(Shell::Command("colors", bind(&MyColorsCmd, _1)));
   app->shell.command.push_back(Shell::Command("shader", bind(&MyShaderCmd, _1)));
   if (FLAGS_lfapp_network) {
-#ifndef LFL_MOBILE
+#if !defined(LFL_MOBILE) && !defined(WIN32)
     render_process = new ProcessAPIServer();
     render_process->Start(StrCat(app->BinDir(), "lterm-sandbox-render"));
 #endif
@@ -484,7 +500,11 @@ extern "C" int main(int argc, const char *argv[]) {
   }
 
   app->create_win_f = bind(&Application::CreateNewWindow, app, &MyWindowCloneCB);
+#ifdef WIN32
+  app->input.paste_bind = Bind(Mouse::Button::_2);
+#else
   binds->Add(Bind('n', Key::Modifier::Cmd, Bind::CB(app->create_win_f)));
+#endif
   binds->Add(Bind('=', Key::Modifier::Cmd, Bind::CB(bind(&MyIncreaseFontCmd, vector<string>()))));
   binds->Add(Bind('-', Key::Modifier::Cmd, Bind::CB(bind(&MyDecreaseFontCmd, vector<string>()))));
   binds->Add(Bind('6', Key::Modifier::Cmd, Bind::CB(bind([&](){ Window::Get()->console->Toggle(); }))));
@@ -507,18 +527,8 @@ extern "C" int main(int argc, const char *argv[]) {
   Shader::CreateShaderToy("shrooms",  Asset::FileContents("shrooms.glsl"),  &shader_map["shrooms"]);
 
   MyTerminalController *controller = 0;
-  SSHTerminalController *ssh_controller = 0;
-  if (!FLAGS_ssh.empty()) {
-    app->network.Enable(Singleton<SSHClient>::Get());
-    controller = ssh_controller = new SSHTerminalController();
-  } else {
-#if defined(WIN32) || defined(LFL_MOBILE)
-    app->network.Enable(Singleton<SSHClient>::Get());
-    controller = new ShellTerminalController("");
-#else
-    controller = new PTYTerminalController();
-#endif
-  }
+  if (!FLAGS_ssh.empty()) controller = MyTerminalController::NewSSHTerminalController();
+  else                    controller = MyTerminalController::NewDefaultTerminalController();
   image_browser = new Browser();
   image_browser->doc.parser->render_process = render_process;
   MyTerminalWindow *tw = new MyTerminalWindow(controller);
