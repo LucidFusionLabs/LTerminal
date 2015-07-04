@@ -24,31 +24,32 @@
 #endif
 
 namespace LFL {
-unique_ptr<ProcessAPIClient> process_api;
+unique_ptr<ProcessAPIServer> process_api;
 }; // namespace LFL
 using namespace LFL;
 
 extern "C" int main(int argc, const char *argv[]) {
-    app->logfilename = StrCat(LFAppDownloadDir(), "lterm-render.txt");
-    if (app->Create(argc, argv, __FILE__)) { app->Free(); return -1; }
+  app->name = "LTerminalRenderSandbox";
+  app->logfilename = StrCat(LFAppDownloadDir(), "lterm-render.txt");
+  if (app->Create(argc, argv, __FILE__)) { app->Free(); return -1; }
 
-    int optind = Singleton<FlagMap>::Get()->optind;
-    if (optind >= argc) { fprintf(stderr, "Usage: %s [-flags] <socket-name>\n", argv[0]); return -1; }
-    // if (app->Init()) { app->Free(); return -1; }
-    app->assets.Init();
+  int optind = Singleton<FlagMap>::Get()->optind;
+  if (optind >= argc) { fprintf(stderr, "Usage: %s [-flags] <socket-name>\n", argv[0]); return -1; }
+  // if (app->Init()) { app->Free(); return -1; }
+  app->assets.Init();
 
-    // to cleanup crash leaked shm: for i in $( ipcs -m | grep "^m " | awk '{print $2}' ); do ipcrm -m $i; done
-    const string socket_name = StrCat(argv[optind]);
-    process_api = unique_ptr<ProcessAPIClient>(new ProcessAPIClient());
-    process_api->Start(StrCat(argv[optind]));
+  // to cleanup crash leaked shm: for i in $( ipcs -m | grep "^m " | awk '{print $2}' ); do ipcrm -m $i; done
+  const string socket_name = StrCat(argv[optind]);
+  process_api = unique_ptr<ProcessAPIServer>(new ProcessAPIServer());
+  process_api->Start(StrCat(argv[optind]));
 
 #ifdef __APPLE__
-    char *sandbox_error=0;
-    sandbox_init(kSBXProfileNoWriteExceptTemporary, SANDBOX_NAMED, &sandbox_error);
-    INFO("render: sandbox init: ", sandbox_error ? sandbox_error : "success");
+  char *sandbox_error=0;
+  sandbox_init(kSBXProfileNoWriteExceptTemporary, SANDBOX_NAMED, &sandbox_error);
+  INFO("render: sandbox init: ", sandbox_error ? sandbox_error : "success");
 #endif
 
-    process_api->HandleMessagesLoop();
-    INFO("render: exiting");
-    return 0;
+  process_api->HandleMessagesLoop();
+  INFO("render: exiting");
+  return 0;
 }

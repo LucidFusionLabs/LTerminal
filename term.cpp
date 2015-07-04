@@ -51,7 +51,7 @@ BindMap *binds;
 unordered_map<string, Shader> shader_map;
 Browser *image_browser;
 NetworkThread *network_thread;
-ProcessAPIServer *render_process;
+ProcessAPIClient *render_process;
 int new_win_width = 80*9, new_win_height = 25*20, downscale_effects = 1;
 
 void MyNewLinkCB(const shared_ptr<TextGUI::Link> &link) {
@@ -202,8 +202,8 @@ struct SSHTerminalController : public MyTerminalController {
   }
   StringPiece Read() {
     if (conn && conn->state == Connection::Connected && NBReadable(conn->socket)) {
-      if (conn->Read() < 0)                        { ERROR(conn->Name(), ": Read");       Close(); return ""; }
-      if (conn->rl && conn->query->Read(conn) < 0) { ERROR(conn->Name(), ": query read"); Close(); return ""; }
+      if (conn->Read() < 0)                          { ERROR(conn->Name(), ": Read");       Close(); return ""; }
+      if (conn->rl && conn->handler->Read(conn) < 0) { ERROR(conn->Name(), ": query read"); Close(); return ""; }
     }
     swap(read_buf, ret_buf);
     read_buf.clear();
@@ -492,8 +492,8 @@ extern "C" int main(int argc, const char *argv[]) {
   app->shell.command.push_back(Shell::Command("shader", bind(&MyShaderCmd, _1)));
   if (FLAGS_lfapp_network) {
 #if !defined(LFL_MOBILE) && !defined(WIN32)
-    render_process = new ProcessAPIServer();
-    render_process->Start(StrCat(app->BinDir(), "lterm-sandbox-render"));
+    render_process = new ProcessAPIClient();
+    render_process->StartServer(StrCat(app->BinDir(), "lterm-render-sandbox"));
 #endif
     CHECK((network_thread = app->CreateNetworkThread()));
     network_thread->Write(new Callback([&](){ Video::CreateGLContext(screen); }));
