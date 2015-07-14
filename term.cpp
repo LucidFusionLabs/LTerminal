@@ -76,7 +76,8 @@ void MyHoverLinkCB(TextGUI::Link *link) {
   Texture *tex = link ? link->image.get() : 0;
   if (!tex) return;
   tex->Bind();
-  screen->gd->SetColor(Color::white - Color::Alpha(0.2));
+  screen->gd->EnableBlend();
+  screen->gd->SetColor(Color::white - Color::Alpha(0.25));
   Box::DelBorder(screen->Box(), screen->width*.2, screen->height*.2).Draw(tex->coord);
 }
 
@@ -153,9 +154,9 @@ struct PTYTerminalController : public MyTerminalController {
   ReadBuffer read_buf;
   PTYTerminalController() : read_buf(65536) {}
   virtual ~PTYTerminalController() { if (process.in) app->scheduler.DelWaitForeverSocket(fileno(process.in)); }
+
   int Write(const char *b, int l) { return write(fd, b, l); }
   void IOCtlWindowSize(int w, int h) {
-
     struct winsize ws;
     memzero(ws);
     ws.ws_col = w;
@@ -163,7 +164,7 @@ struct PTYTerminalController : public MyTerminalController {
     ioctl(fd, TIOCSWINSZ, &ws);
   }
   int Open(Terminal*) {
-    setenv("TERM", "screen", 1);
+    setenv("TERM", "xterm", 1);
     string shell = BlankNull(getenv("SHELL"));
     CHECK(!shell.empty());
     const char *av[] = { shell.c_str(), 0 };
@@ -372,9 +373,9 @@ void MyDecreaseFontCmd(const vector<string>&) { SetFontSize(((MyTerminalWindow*)
 void MyColorsCmd(const vector<string> &arg) {
   string colors_name = arg.size() ? arg[0] : "";
   MyTerminalWindow *tw = (MyTerminalWindow*)screen->user1;
-  if      (colors_name ==       "vga") tw->terminal->SetColors(Singleton<Terminal::StandardVGAColors>::Get());
-  else if (colors_name == "solarized") tw->terminal->SetColors(Singleton<Terminal::SolarizedColors>  ::Get());
-  tw->terminal->Redraw();
+  if      (colors_name ==       "vga") tw->terminal->ChangeColors(Singleton<Terminal::StandardVGAColors>::Get());
+  else if (colors_name == "solarized") tw->terminal->ChangeColors(Singleton<Terminal::SolarizedColors>  ::Get());
+  app->scheduler.Wakeup(0);
 }
 void MyShaderCmd(const vector<string> &arg) {
   string shader_name = arg.size() ? arg[0] : "";
@@ -386,6 +387,10 @@ void MyShaderCmd(const vector<string> &arg) {
   auto shader = shader_map.find(shader_name);
   tw->activeshader = shader != shader_map.end() ? &shader->second : &app->video.shader_default;
   tw->UpdateTargetFPS();
+}
+void MyEffectsControlsCmd(const vector<string> &arg) { 
+  app->shell.Run("slider shadertoy_blend 1.0 0.01");
+  app->scheduler.Wakeup(0);
 }
 #ifdef LFL_MOBILE
 void MyMobileMenuCmd(const vector<string> &arg) {
@@ -509,10 +514,20 @@ extern "C" int main(int argc, const char *argv[]) {
   binds->Add(Bind('-', Key::Modifier::Cmd, Bind::CB(bind(&MyDecreaseFontCmd, vector<string>()))));
   binds->Add(Bind('6', Key::Modifier::Cmd, Bind::CB(bind([&](){ Window::Get()->console->Toggle(); }))));
 
-  vector<pair<string,string>> effects_menu = { {"None", "shader none"}, {"Warper", "shader warper"},
-    { "Water", "shader water" }, { "Twistery", "shader twistery" }, { "Fire", "shader fire" },
-    { "Waves", "shader waves" }, { "Emboss", "shader emboss" }, { "Stormy", "shader stormy" },
-    { "Alien", "shader alien" }, { "Fractal", "shader fractal" }, { "Shrooms", "shader shrooms" } };
+#ifndef LFL_MOBILE
+  vector<tuple<string, string, string>> view_menu = {
+#ifdef __APPLE__
+    { "=", "Zoom In", "" }, { "-", "Zoom Out", "" },
+#endif
+    { "", "VGA Colors", "colors vga", }, { "", "Solarized Colors", "colors solarized" } };
+  app->AddNativeMenu("View", view_menu);
+#endif
+  vector<tuple<string, string, string>> effects_menu = {
+    { "", "None",     "shader none"     }, { "", "Warper", "shader warper" }, { "", "Water", "shader water" },
+    { "", "Twistery", "shader twistery" }, { "", "Fire",   "shader fire"   }, { "", "Waves", "shader waves" },
+    { "", "Emboss",   "shader emboss"   }, { "", "Stormy", "shader stormy" }, { "", "Alien", "shader alien" },
+    { "", "Fractal",  "shader fractal"  }, { "", "Shrooms", "shader shrooms" },
+    { "", "<seperator>", "" }, { "", "Controls", "fxctl" } };
   app->AddNativeMenu("Effects", effects_menu);
 
   Shader::CreateShaderToy("warper",   Asset::FileContents("warper.glsl"),   &shader_map["warper"]);
@@ -539,6 +554,7 @@ extern "C" int main(int argc, const char *argv[]) {
   new_win_height = tw->terminal->font->Height()     * tw->terminal->term_height;
   tw->terminal->Draw(screen->Box(), false);
 
+  app->shell.command.push_back(Shell::Command("fxctl",     bind(&MyEffectsControlsCmd, _1)));
 #ifdef LFL_MOBILE
   app->shell.command.push_back(Shell::Command("menu",      bind(&MyMobileMenuCmd,      _1)));
   app->shell.command.push_back(Shell::Command("keypress",  bind(&MyMobileKeyPressCmd,  _1)));

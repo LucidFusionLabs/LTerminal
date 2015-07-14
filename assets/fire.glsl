@@ -31,6 +31,5 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord ) {
 	float q = fbm(p - iGlobalTime * 0.1);
 	vec2 r = vec2(fbm(p + q + iGlobalTime * 0.7 - p.x - p.y), fbm(p + q - iGlobalTime * 0.4));
 	vec3 c = mix(c1, c2, fbm(p + r)) + mix(c3, c4, r.x) - mix(c5, c6, r.y);
-  vec4 sc = SampleChannel(iChannel0);
-	fragColor = (sc + vec4(c * cos(1.57 * fragCoord.y / iResolution.y), 1.0)) / 2.0;
+	fragColor = BlendChannels(SampleChannel(iChannel0), vec4(c * cos(1.57 * fragCoord.y / iResolution.y), 1.0));
 }

@@ -112,6 +112,5 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
 	float r=1.-length(max(abs(fragCoord.xy / iResolution.xy*2.-1.)-.5,0.)); 
 	painting*=r;
 	
-  vec4 sc = SampleChannel(iChannel0);
-	fragColor = (sc + vec4(painting, 1.)) / 2.0;
+	fragColor = BlendChannels(SampleChannel(iChannel0), vec4(painting, 1.));
 }
