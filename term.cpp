@@ -356,9 +356,12 @@ int Frame(Window *W, unsigned clicks, unsigned mic_samples, bool cam_sample, int
 void SetFontSize(int n) {
   MyTerminalWindow *tw = (MyTerminalWindow*)screen->user1;
   tw->font_size = n;
-  tw->terminal->font = Fonts::Get(FLAGS_default_font, "", tw->font_size);
-  screen->Reshape(tw->terminal->font->FixedWidth() * tw->terminal->term_width,
-                  tw->terminal->font->Height()     * tw->terminal->term_height);
+  tw->terminal->font = Fonts::Get(FLAGS_default_font, "", tw->font_size, Color::white, Color::clear, FontDesc::Mono);
+  int new_width  = tw->terminal->font->FixedWidth() * tw->terminal->term_width;
+  int new_height = tw->terminal->font->Height()     * tw->terminal->term_height;
+  if (new_width != screen->width || new_height != screen->height) screen->Reshape(new_width, new_height);
+  else                                                            tw->terminal->Redraw();
+  INFO("Font: ", Fonts::DefaultFontEngine()->DebugString(tw->terminal->font));
 }
 void MyConsoleAnimating(Window *W) { 
   MyTerminalWindow *tw = (MyTerminalWindow*)screen->user1;
@@ -390,6 +393,13 @@ void MyShaderCmd(const vector<string> &arg) {
 }
 void MyEffectsControlsCmd(const vector<string> &arg) { 
   app->shell.Run("slider shadertoy_blend 1.0 0.01");
+  app->scheduler.Wakeup(0);
+}
+void MyChooseFontCmd(const vector<string> &arg) {
+  MyTerminalWindow *tw = static_cast<MyTerminalWindow*>(screen->user1);
+  if (arg.size() < 2) return app->LaunchNativeFontChooser(FontDesc(FLAGS_default_font, "", tw->font_size), "choosefont");
+  FLAGS_default_font = arg[0];
+  SetFontSize(atof(arg[1]));
   app->scheduler.Wakeup(0);
 }
 #ifdef LFL_MOBILE
@@ -519,7 +529,7 @@ extern "C" int main(int argc, const char *argv[]) {
 #ifdef __APPLE__
     { "=", "Zoom In", "" }, { "-", "Zoom Out", "" },
 #endif
-    { "", "VGA Colors", "colors vga", }, { "", "Solarized Colors", "colors solarized" } };
+    { "", "Fonts", "choosefont" }, { "", "VGA Colors", "colors vga", }, { "", "Solarized Colors", "colors solarized" } };
   app->AddNativeMenu("View", view_menu);
 #endif
   vector<tuple<string, string, string>> effects_menu = {
@@ -554,12 +564,13 @@ extern "C" int main(int argc, const char *argv[]) {
   new_win_height = tw->terminal->font->Height()     * tw->terminal->term_height;
   tw->terminal->Draw(screen->Box(), false);
 
-  app->shell.command.push_back(Shell::Command("fxctl",     bind(&MyEffectsControlsCmd, _1)));
+  app->shell.command.push_back(Shell::Command("fxctl",      bind(&MyEffectsControlsCmd, _1)));
+  app->shell.command.push_back(Shell::Command("choosefont", bind(&MyChooseFontCmd,      _1)));
 #ifdef LFL_MOBILE
-  app->shell.command.push_back(Shell::Command("menu",      bind(&MyMobileMenuCmd,      _1)));
-  app->shell.command.push_back(Shell::Command("keypress",  bind(&MyMobileKeyPressCmd,  _1)));
-  app->shell.command.push_back(Shell::Command("togglekey", bind(&MyMobileKeyToggleCmd, _1)));
-  app->shell.command.push_back(Shell::Command("close",     bind(&MyMobileCloseCmd,     _1)));
+  app->shell.command.push_back(Shell::Command("menu",       bind(&MyMobileMenuCmd,      _1)));
+  app->shell.command.push_back(Shell::Command("keypress",   bind(&MyMobileKeyPressCmd,  _1)));
+  app->shell.command.push_back(Shell::Command("togglekey",  bind(&MyMobileKeyToggleCmd, _1)));
+  app->shell.command.push_back(Shell::Command("close",      bind(&MyMobileCloseCmd,     _1)));
   vector<pair<string,string>> toolbar_menu = { { "fx", "menu Effects" }, { "ctrl", "togglekey ctrl" },
     { "\U000025C0", "keypress left" }, { "\U000025B6", "keypress right" }, { "\U000025B2", "keypress up" }, 
     { "\U000025BC", "keypress down" }, { "\U000023EB", "keypress pgup" }, { "\U000023EC", "keypress pgdown" }, 
