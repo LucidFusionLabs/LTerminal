@@ -22,6 +22,7 @@
 #include "lfapp/flow.h"
 #include "lfapp/gui.h"
 #include "lfapp/ipc.h"
+#include "lfapp/browser.h"
 #include "crawler/html.h"
 #include "crawler/document.h"
 
@@ -98,8 +99,8 @@ struct MyTerminalWindow {
   unique_ptr<MyTerminalController> controller;
   unique_ptr<Terminal> terminal;
   Shader *activeshader;
-  int font_size;
-  bool effects_mode=0, read_pending=0, join_read_pending=0, effects_init=0;
+  int font_size, join_read_pending=0;
+  bool effects_mode=0, read_pending=0, effects_init=0;
   FrameBuffer *effects_buffer=0;
   MyTerminalWindow(MyTerminalController *C) :
     controller(C), activeshader(&app->video.shader_default), font_size(FLAGS_default_font_size) {}
@@ -166,7 +167,7 @@ struct PTYTerminalController : public MyTerminalController {
   int Open(Terminal*) {
     setenv("TERM", "xterm", 1);
     string shell = BlankNull(getenv("SHELL"));
-    CHECK(!shell.empty());
+    if (shell.empty()) setenv("SHELL", (shell = "/bin/bash").c_str(), 1);
     const char *av[] = { shell.c_str(), 0 };
     CHECK_EQ(process.OpenPTY(av), 0);
     return (fd = fileno(process.out));
@@ -315,7 +316,6 @@ MyTerminalController *MyTerminalController::NewDefaultTerminalController() {
 }
 
 int Frame(Window *W, unsigned clicks, unsigned mic_samples, bool cam_sample, int flag) {
-  static const int join_read_size = 1024;
   static const Time join_read_interval(100), refresh_interval(33);
   MyTerminalWindow *tw = (MyTerminalWindow*)W->user1;
   bool effects = tw->effects_mode, downscale = effects && downscale_effects > 1;
@@ -332,14 +332,14 @@ int Frame(Window *W, unsigned clicks, unsigned mic_samples, bool cam_sample, int
 #if defined(__APPLE__) && !defined(LFL_MOBILE)
   if (!effects) {
     if (read_size && !(flag & LFApp::Frame::DontSkip)) {
-      bool join_read = read_size == join_read_size;
-      if (join_read) { tw->join_read_pending=1; if (app->scheduler.WakeupIn(0, join_read_interval)) return -1; }
-      else        if (!tw->join_read_pending) { if (app->scheduler.WakeupIn(0,   refresh_interval)) return -1; }
+      int *pending = &tw->join_read_pending;
+      bool join_read = read_size > 255;
+      if (join_read) { if (1            && ++(*pending)) { if (app->scheduler.WakeupIn(0, join_read_interval)) return -1; } }
+      else           { if ((*pending)<1 && ++(*pending)) { if (app->scheduler.WakeupIn(0,   refresh_interval)) return -1; } }
     }
     app->scheduler.ClearWakeupIn();
   } else tw->read_pending = read_size;
 #endif
-
 
   W->gd->DrawMode(DrawMode::_2D);
   W->gd->DisableBlend();
@@ -349,7 +349,7 @@ int Frame(Window *W, unsigned clicks, unsigned mic_samples, bool cam_sample, int
   W->DrawDialogs();
   if (FLAGS_draw_fps) Fonts::Default()->Draw(StringPrintf("FPS = %.2f", FPS()), point(W->width*.85, 0));
   if (FLAGS_screenshot.size()) ONCE(app->shell.screenshot(vector<string>(1, FLAGS_screenshot)); app->run=0;);
-  tw->read_pending = tw->join_read_pending = 0;
+  tw->join_read_pending = tw->read_pending = 0;
   return 0;
 }
 
@@ -442,7 +442,9 @@ void MyWindowInitCB(Window *W) {
   W->binds = binds;
 }
 void MyWindowStartCB(Window *W) {
-  ((MyTerminalWindow*)W->user1)->Open();
+  auto tw = (MyTerminalWindow*)W->user1;
+  tw->Open();
+  W->SetResizeIncrements(tw->terminal->font->FixedWidth(), tw->terminal->font->Height());
   W->console->animating_cb = bind(&MyConsoleAnimating, screen);
 }
 void MyWindowCloneCB(Window *W) {
