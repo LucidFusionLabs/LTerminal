@@ -22,6 +22,7 @@
 #include "lfapp/flow.h"
 #include "lfapp/gui.h"
 #include "lfapp/ipc.h"
+#include "lfapp/resolver.h"
 #include "lfapp/browser.h"
 #include "crawler/html.h"
 #include "crawler/document.h"
@@ -34,20 +35,21 @@
 
 namespace LFL {
 #ifdef LFL_MOBILE
-DEFINE_int   (peak_fps,   30,     "Peak FPS");
-#else
-DEFINE_int   (peak_fps,   60,     "Peak FPS");
+DEFINE_int   (peak_fps,    30,     "Peak FPS");
+#else                      
+DEFINE_int   (peak_fps,    60,     "Peak FPS");
+#ifndef WIN32
+DEFINE_bool  (interpreter, false,  "Launch interpreter instead of shell");
 #endif
-DEFINE_bool  (draw_fps,   false,  "Draw FPS");
-DEFINE_string(login,      "",     "SSH user");
-DEFINE_string(ssh,        "",     "SSH to host");
-DEFINE_string(command,    "",     "Execute initial command");
-DEFINE_string(screenshot, "",     "Screenshot and exit");
+#endif                     
+DEFINE_bool  (draw_fps,    false,  "Draw FPS");
+DEFINE_string(login,       "",     "SSH user");
+DEFINE_string(ssh,         "",     "SSH to host");
+DEFINE_string(command,     "",     "Execute initial command");
+DEFINE_string(screenshot,  "",     "Screenshot and exit");
 
-extern FlagOfType<string> FLAGS_default_font_;
-extern FlagOfType<bool>   FLAGS_lfapp_network_;
+extern FlagOfType<bool> FLAGS_lfapp_network_;
 
-Scene scene;
 BindMap *binds;
 unordered_map<string, Shader> shader_map;
 Browser *image_browser;
@@ -146,6 +148,11 @@ struct MyTerminalWindow {
     }
   }
   bool CustomShader() const { return activeshader != &app->video.shader_default; }
+  void ScrollHistory(bool up_or_down) {
+    if (up_or_down) terminal->ScrollUp();
+    else            terminal->ScrollDown();
+    app->scheduler.Wakeup(0);
+  }
 };
 
 #ifndef WIN32
@@ -169,7 +176,7 @@ struct PTYTerminalController : public MyTerminalController {
     string shell = BlankNull(getenv("SHELL"));
     if (shell.empty()) setenv("SHELL", (shell = "/bin/bash").c_str(), 1);
     const char *av[] = { shell.c_str(), 0 };
-    CHECK_EQ(process.OpenPTY(av), 0);
+    CHECK_EQ(process.OpenPTY(av, app->startdir.c_str()), 0);
     return (fd = fileno(process.out));
   }
   StringPiece Read() {
@@ -244,7 +251,7 @@ struct SSHTerminalController : public MyTerminalController {
 
 struct ShellTerminalController : public MyTerminalController {
   Terminal *term=0;
-  bool done=0;
+  bool done=0, blocking=0;
   Shell shell;
   UnbackedTextGUI cmd;
   string buf, read_buf, ret_buf, prompt="> ", ssh_usage="\r\nusage: ssh -l user host[:port]", header;
@@ -256,7 +263,9 @@ struct ShellTerminalController : public MyTerminalController {
   };
 
   ShellTerminalController(const string &hdr) : header(StrCat(hdr, "LTerminal 1.0", ssh_usage, "\r\n\r\n")), cmd(Fonts::Default()) {
-    shell.command.push_back(Shell::Command("ssh", bind(&ShellTerminalController::MySSHCmd, this, _1)));
+    shell.command.push_back(Shell::Command("ssh",      bind(&ShellTerminalController::MySSHCmd,      this, _1)));
+    shell.command.push_back(Shell::Command("nslookup", bind(&ShellTerminalController::MyNSLookupCmd, this, _1)));
+    shell.command.push_back(Shell::Command("help",     bind(&ShellTerminalController::MyHelpCmd,     this, _1)));
     cmd.runcb = bind(&Shell::Run, shell, _1);
     cmd.ReadHistory(LFAppDownloadDir(), "shell");
   }
@@ -269,7 +278,23 @@ struct ShellTerminalController : public MyTerminalController {
     if (FLAGS_login.empty() || FLAGS_ssh.empty()) { if (term) term->Write(ssh_usage); }
     else done = 1;
   }
+  void MyNSLookupCmd(const vector<string> &arg) {
+    if (arg.empty() || !network_thread) return;
+    if ((blocking = 1)) network_thread->Write(new Callback(bind(&ShellTerminalController::MyNetworkThreadNSLookup, this, arg[0])));
+  }
+  void MyNetworkThreadNSLookup(const string &host) {
+    Singleton<Resolver>::Get()->NSLookup(host, bind(&ShellTerminalController::MyNetworkThreadNSLookupResponse, this, host, _1, _2));
+  }
+  void MyNetworkThreadNSLookupResponse(const string &host, IPV4::Addr ipv4_addr, DNS::Response*) {
+    RunInMainThread(new Callback(bind(&ShellTerminalController::UnBlockWithResponse, this, StrCat("host = ", IPV4::Text(ipv4_addr)))));
+  }
+  void MyHelpCmd(const vector<string> &arg) {
+    ReadCB("\r\n\r\nLTerminal interpreter commands:\r\n\r\n"
+           "* ssh -l user host[:port]\r\n"
+           "* nslookup host\r\n");
+  }
 
+  void UnBlockWithResponse(const string &t) { if (!(blocking=0)) ReadCB(StrCat(t, "\r\n", prompt)); }
   bool FrameOnKeyboardInput() const { return true; }
   void IOCtlWindowSize(int w, int h) {}
   int Open(Terminal *T) { (term=T)->Write(StrCat(header, prompt)); return -1; }
@@ -287,7 +312,7 @@ struct ShellTerminalController : public MyTerminalController {
     } else CHECK_EQ(1, l);
 
     bool cursor_last = cmd.cursor.i.x == cmd.cmd_line.Size();
-    if      (*b == '\r') { if (1) { cmd.Enter(); ReadCB("\r\n" + (done?"":prompt));                                     } }
+    if      (*b == '\r') { if (1) { cmd.Enter(); ReadCB("\r\n" + ((!done && !blocking) ? prompt : ""));                 } }
     else if (*b == 0x7f) { if (cmd.cursor.i.x) { ReadCB((cursor_last ? "\b \b" : "\x08\x1b[1P"));        cmd.Erase();   } }
     else                 { if (1)              { ReadCB((cursor_last ? "" : "\x1b[1@") + string(1, *b)); cmd.Input(*b); } }
 
@@ -356,11 +381,12 @@ int Frame(Window *W, unsigned clicks, unsigned mic_samples, bool cam_sample, int
 void SetFontSize(int n) {
   MyTerminalWindow *tw = (MyTerminalWindow*)screen->user1;
   tw->font_size = n;
-  tw->terminal->font = Fonts::Get(FLAGS_default_font, "", tw->font_size, Color::white, Color::clear, FontDesc::Mono);
-  int new_width  = tw->terminal->font->FixedWidth() * tw->terminal->term_width;
-  int new_height = tw->terminal->font->Height()     * tw->terminal->term_height;
+  CHECK((tw->terminal->font = Fonts::Get(FLAGS_default_font, "", tw->font_size, Color::white, Color::clear, FontDesc::Mono)));
+  int font_width  = tw->terminal->font->FixedWidth(), new_width  = font_width  * tw->terminal->term_width;
+  int font_height = tw->terminal->font->Height(),     new_height = font_height * tw->terminal->term_height;
   if (new_width != screen->width || new_height != screen->height) screen->Reshape(new_width, new_height);
   else                                                            tw->terminal->Redraw();
+  screen->SetResizeIncrements(font_width, font_height);
   INFO("Font: ", Fonts::DefaultFontEngine()->DebugString(tw->terminal->font));
 }
 void MyConsoleAnimating(Window *W) { 
@@ -391,8 +417,13 @@ void MyShaderCmd(const vector<string> &arg) {
   tw->activeshader = shader != shader_map.end() ? &shader->second : &app->video.shader_default;
   tw->UpdateTargetFPS();
 }
-void MyEffectsControlsCmd(const vector<string> &arg) { 
+void MyEffectsControlsCmd(const vector<string>&) { 
   app->shell.Run("slider shadertoy_blend 1.0 0.01");
+  app->scheduler.Wakeup(0);
+}
+void MyTransparencyControlsCmd(const vector<string>&) {
+  static SliderDialog::UpdatedCB cb = SliderDialog::UpdatedCB(bind([=](Widget::Scrollbar *s){ Window::Get()->SetTransparency(s->Percent()); }, _1));
+  new SliderDialog("window transparency", cb, 0, 1.0, .025);
   app->scheduler.Wakeup(0);
 }
 void MyChooseFontCmd(const vector<string> &arg) {
@@ -428,12 +459,6 @@ void MyMobileKeyToggleCmd(const vector<string> &arg) {
 void MyMobileCloseCmd(const vector<string> &arg) { static_cast<MyTerminalWindow*>(screen->user1)->controller->Close(); }
 #endif
 
-void MyInitFonts() {
-  Video::InitFonts();
-  string console_font = "VeraMoBd.ttf";
-  Singleton<AtlasFontEngine>::Get()->Init(FontDesc(console_font, "", 32));
-  FLAGS_console_font = StrCat("atlas://", console_font);
-}
 void MyWindowInitCB(Window *W) {
   W->width = new_win_width;
   W->height = new_win_height;
@@ -468,39 +493,12 @@ extern "C" int main(int argc, const char *argv[]) {
   MyWindowInitCB(screen);
   FLAGS_target_fps = 0;
   FLAGS_lfapp_video = FLAGS_lfapp_input = 1;
-#if defined(__APPLE__)
-  FLAGS_font_engine = "coretext";
-#elif defined(WIN32)
-  FLAGS_font_engine = "atlas";
-#else
-  FLAGS_font_engine = "freetype";
-#endif
 #ifdef LFL_MOBILE
   downscale_effects = TouchDevice::SetExtraScale(true);
 #endif
 
   if (app->Create(argc, argv, __FILE__)) { app->Free(); return -1; }
   if (!FLAGS_lfapp_network_.override) FLAGS_lfapp_network = 1;
-
-  if (FLAGS_font_engine != "atlas") app->video.init_fonts_cb = &MyInitFonts;
-  if (FLAGS_default_font_.override) {
-  } else if (FLAGS_font_engine == "coretext") {
-#ifdef LFL_IPHONE
-    FLAGS_default_font = "Menlo-Bold";
-    FLAGS_default_font_size = 12;
-#else
-    FLAGS_default_font = "Monaco";
-    FLAGS_default_font_size = 15;
-#endif
-  } else if (FLAGS_font_engine == "freetype") { 
-    FLAGS_default_font = "VeraMoBd.ttf"; // "DejaVuSansMono-Bold.ttf";
-    FLAGS_default_missing_glyph = 42;
-  } else if (FLAGS_font_engine == "atlas") {
-    FLAGS_default_font = "VeraMoBd.ttf";
-    FLAGS_default_missing_glyph = 42;
-    // FLAGS_default_font_size = 32;
-  }
-  FLAGS_atlas_font_sizes = "32";
 
   if (app->Init()) { app->Free(); return -1; }
   app->window_init_cb = MyWindowInitCB;
@@ -520,18 +518,24 @@ extern "C" int main(int argc, const char *argv[]) {
 #ifdef WIN32
   app->input.paste_bind = Bind(Mouse::Button::_2);
 #else
-  binds->Add(Bind('n', Key::Modifier::Cmd, Bind::CB(app->create_win_f)));
-#endif
-  binds->Add(Bind('=', Key::Modifier::Cmd, Bind::CB(bind(&MyIncreaseFontCmd, vector<string>()))));
-  binds->Add(Bind('-', Key::Modifier::Cmd, Bind::CB(bind(&MyDecreaseFontCmd, vector<string>()))));
-  binds->Add(Bind('6', Key::Modifier::Cmd, Bind::CB(bind([&](){ Window::Get()->console->Toggle(); }))));
+  binds->Add(Bind('n',       Key::Modifier::Cmd, Bind::CB(app->create_win_f)));
+#endif                       
+  binds->Add(Bind('=',       Key::Modifier::Cmd, Bind::CB(bind(&MyIncreaseFontCmd, vector<string>()))));
+  binds->Add(Bind('-',       Key::Modifier::Cmd, Bind::CB(bind(&MyDecreaseFontCmd, vector<string>()))));
+  binds->Add(Bind('6',       Key::Modifier::Cmd, Bind::CB(bind([&](){ Window::Get()->console->Toggle(); }))));
+  binds->Add(Bind(Key::Up,   Key::Modifier::Cmd, Bind::CB(bind([&](){ if (screen->user1) static_cast<MyTerminalWindow*>(screen->user1)->ScrollHistory(1); }))));
+  binds->Add(Bind(Key::Down, Key::Modifier::Cmd, Bind::CB(bind([&](){ if (screen->user1) static_cast<MyTerminalWindow*>(screen->user1)->ScrollHistory(0); }))));
 
 #ifndef LFL_MOBILE
   vector<tuple<string, string, string>> view_menu = {
 #ifdef __APPLE__
     { "=", "Zoom In", "" }, { "-", "Zoom Out", "" },
 #endif
-    { "", "Fonts", "choosefont" }, { "", "VGA Colors", "colors vga", }, { "", "Solarized Colors", "colors solarized" } };
+    { "", "Fonts", "choosefont" },
+#ifndef LFL_MOBILE
+    { "", "Transparency", "transparency" },
+#endif
+    { "", "VGA Colors", "colors vga", }, { "", "Solarized Colors", "colors solarized" } };
   app->AddNativeMenu("View", view_menu);
 #endif
   vector<tuple<string, string, string>> effects_menu = {
@@ -554,8 +558,9 @@ extern "C" int main(int argc, const char *argv[]) {
   Shader::CreateShaderToy("shrooms",  Asset::FileContents("shrooms.glsl"),  &shader_map["shrooms"]);
 
   MyTerminalController *controller = 0;
-  if (!FLAGS_ssh.empty()) controller = MyTerminalController::NewSSHTerminalController();
-  else                    controller = MyTerminalController::NewDefaultTerminalController();
+  if      (FLAGS_interpreter)  controller = MyTerminalController::NewShellTerminalController("");
+  else if (!FLAGS_ssh.empty()) controller = MyTerminalController::NewSSHTerminalController();
+  else                         controller = MyTerminalController::NewDefaultTerminalController();
   image_browser = new Browser();
   image_browser->doc.parser->render_process = render_process;
   MyTerminalWindow *tw = new MyTerminalWindow(controller);
@@ -566,13 +571,14 @@ extern "C" int main(int argc, const char *argv[]) {
   new_win_height = tw->terminal->font->Height()     * tw->terminal->term_height;
   tw->terminal->Draw(screen->Box(), false);
 
-  app->shell.command.push_back(Shell::Command("fxctl",      bind(&MyEffectsControlsCmd, _1)));
-  app->shell.command.push_back(Shell::Command("choosefont", bind(&MyChooseFontCmd,      _1)));
-#ifdef LFL_MOBILE
-  app->shell.command.push_back(Shell::Command("menu",       bind(&MyMobileMenuCmd,      _1)));
-  app->shell.command.push_back(Shell::Command("keypress",   bind(&MyMobileKeyPressCmd,  _1)));
-  app->shell.command.push_back(Shell::Command("togglekey",  bind(&MyMobileKeyToggleCmd, _1)));
-  app->shell.command.push_back(Shell::Command("close",      bind(&MyMobileCloseCmd,     _1)));
+  app->shell.command.push_back(Shell::Command("fxctl",        bind(&MyEffectsControlsCmd,      _1)));
+  app->shell.command.push_back(Shell::Command("transparency", bind(&MyTransparencyControlsCmd, _1)));
+  app->shell.command.push_back(Shell::Command("choosefont",   bind(&MyChooseFontCmd,           _1)));
+#ifdef LFL_MOBILE                                                                            
+  app->shell.command.push_back(Shell::Command("menu",         bind(&MyMobileMenuCmd,           _1)));
+  app->shell.command.push_back(Shell::Command("keypress",     bind(&MyMobileKeyPressCmd,       _1)));
+  app->shell.command.push_back(Shell::Command("togglekey",    bind(&MyMobileKeyToggleCmd,      _1)));
+  app->shell.command.push_back(Shell::Command("close",        bind(&MyMobileCloseCmd,          _1)));
   vector<pair<string,string>> toolbar_menu = { { "fx", "menu Effects" }, { "ctrl", "togglekey ctrl" },
     { "\U000025C0", "keypress left" }, { "\U000025B6", "keypress right" }, { "\U000025B2", "keypress up" }, 
     { "\U000025BC", "keypress down" }, { "\U000023EB", "keypress pgup" }, { "\U000023EC", "keypress pgdown" }, 
