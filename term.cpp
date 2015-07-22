@@ -38,11 +38,9 @@ namespace LFL {
 DEFINE_int   (peak_fps,    30,     "Peak FPS");
 #else                      
 DEFINE_int   (peak_fps,    60,     "Peak FPS");
-#ifndef WIN32
-DEFINE_bool  (interpreter, false,  "Launch interpreter instead of shell");
-#endif
 #endif                     
 DEFINE_bool  (draw_fps,    false,  "Draw FPS");
+DEFINE_bool  (interpreter, false,  "Launch interpreter instead of shell");
 DEFINE_string(login,       "",     "SSH user");
 DEFINE_string(ssh,         "",     "SSH to host");
 DEFINE_string(command,     "",     "Execute initial command");
@@ -527,23 +525,25 @@ extern "C" int main(int argc, const char *argv[]) {
   binds->Add(Bind(Key::Down, Key::Modifier::Cmd, Bind::CB(bind([&](){ if (screen->user1) static_cast<MyTerminalWindow*>(screen->user1)->ScrollHistory(0); }))));
 
 #ifndef LFL_MOBILE
-  vector<tuple<string, string, string>> view_menu = {
+  vector<MenuItem> view_menu{
 #ifdef __APPLE__
-    { "=", "Zoom In", "" }, { "-", "Zoom Out", "" },
+    MenuItem{ "=", "Zoom In", "" }, MenuItem{ "-", "Zoom Out", "" },
 #endif
-    { "", "Fonts", "choosefont" },
+    MenuItem{ "", "Fonts", "choosefont" },
 #ifndef LFL_MOBILE
-    { "", "Transparency", "transparency" },
+    MenuItem{ "", "Transparency", "transparency" },
 #endif
-    { "", "VGA Colors", "colors vga", }, { "", "Solarized Colors", "colors solarized" } };
+    MenuItem{ "", "VGA Colors", "colors vga", }, MenuItem{ "", "Solarized Colors", "colors solarized" }
+  };
   app->AddNativeMenu("View", view_menu);
 #endif
-  vector<tuple<string, string, string>> effects_menu = {
-    { "", "None",     "shader none"     }, { "", "Warper", "shader warper" }, { "", "Water", "shader water" },
-    { "", "Twistery", "shader twistery" }, { "", "Fire",   "shader fire"   }, { "", "Waves", "shader waves" },
-    { "", "Emboss",   "shader emboss"   }, { "", "Stormy", "shader stormy" }, { "", "Alien", "shader alien" },
-    { "", "Fractal",  "shader fractal"  }, { "", "Shrooms", "shader shrooms" },
-    { "", "<seperator>", "" }, { "", "Controls", "fxctl" } };
+
+  vector<MenuItem> effects_menu{
+    MenuItem{ "", "None",     "shader none"     }, MenuItem{ "", "Warper", "shader warper" }, MenuItem{ "", "Water", "shader water" },
+    MenuItem{ "", "Twistery", "shader twistery" }, MenuItem{ "", "Fire",   "shader fire"   }, MenuItem{ "", "Waves", "shader waves" },
+    MenuItem{ "", "Emboss",   "shader emboss"   }, MenuItem{ "", "Stormy", "shader stormy" }, MenuItem{ "", "Alien", "shader alien" },
+    MenuItem{ "", "Fractal",  "shader fractal"  }, MenuItem{ "", "Shrooms", "shader shrooms" },
+    MenuItem{ "", "<seperator>", "" }, MenuItem{ "", "Controls", "fxctl" } };
   app->AddNativeMenu("Effects", effects_menu);
 
   Shader::CreateShaderToy("warper",   Asset::FileContents("warper.glsl"),   &shader_map["warper"]);
@@ -587,7 +587,7 @@ extern "C" int main(int argc, const char *argv[]) {
   TouchDevice::OpenKeyboard();
   TouchDevice::AddToolbar(toolbar_menu);
 #endif
-  INFO("Starting ", app->name, " ", FLAGS_default_font, " (w=", tw->terminal->font->fixed_width,
+  INFO("Starting ", app->name, " ", FLAGS_default_font, " (w=", tw->terminal->font->FixedWidth(),
        ", h=", tw->terminal->font->Height(), ", scale=", downscale_effects, ")");
 
   app->scheduler.Start();
