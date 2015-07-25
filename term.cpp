@@ -142,7 +142,7 @@ struct MyTerminalWindow {
     int target_fps = effects_mode ? FLAGS_peak_fps : 0;
     if (target_fps != screen->target_fps) {
       app->scheduler.UpdateTargetFPS(target_fps);
-      if (target_fps) app->scheduler.Wakeup(0);
+      app->scheduler.Wakeup(0);
     }
   }
   bool CustomShader() const { return activeshader != &app->video.shader_default; }
@@ -254,8 +254,8 @@ struct ShellTerminalController : public MyTerminalController {
   UnbackedTextGUI cmd;
   string buf, read_buf, ret_buf, prompt="> ", ssh_usage="\r\nusage: ssh -l user host[:port]", header;
   map<string, Callback> escapes = {
-    { "OA", bind([&] { cmd.HistUp();   ReadCB(StrCat("\x0d", prompt, cmd.cmd_line.Text(), "\x1b[K")); }) },
-    { "OB", bind([&] { cmd.HistDown(); ReadCB(StrCat("\x0d", prompt, cmd.cmd_line.Text(), "\x1b[K")); }) },
+    { "OA", bind([&] { cmd.HistUp();   ReadCB(StrCat("\x0d", prompt, String::ToUTF8(cmd.cmd_line.Text16()), "\x1b[K")); }) },
+    { "OB", bind([&] { cmd.HistDown(); ReadCB(StrCat("\x0d", prompt, String::ToUTF8(cmd.cmd_line.Text16()), "\x1b[K")); }) },
     { "OC", bind([&] { if (cmd.cursor.i.x < cmd.cmd_line.Size()) { ReadCB(string(1, cmd.cmd_line[cmd.cursor.i.x].Id())); cmd.CursorRight(); } }) },
     { "OD", bind([&] { if (cmd.cursor.i.x)                       { ReadCB("\x08");                                       cmd.CursorLeft();  } }) },
   };
@@ -379,7 +379,7 @@ int Frame(Window *W, unsigned clicks, unsigned mic_samples, bool cam_sample, int
 void SetFontSize(int n) {
   MyTerminalWindow *tw = (MyTerminalWindow*)screen->user1;
   tw->font_size = n;
-  CHECK((tw->terminal->font = Fonts::Get(FLAGS_default_font, "", tw->font_size, Color::white, Color::clear, FontDesc::Mono)));
+  CHECK((tw->terminal->font = Fonts::Get(FLAGS_default_font, "", tw->font_size, Color::white, Color::clear, FLAGS_default_font_flag)));
   int font_width  = tw->terminal->font->FixedWidth(), new_width  = font_width  * tw->terminal->term_width;
   int font_height = tw->terminal->font->Height(),     new_height = font_height * tw->terminal->term_height;
   if (new_width != screen->width || new_height != screen->height) screen->Reshape(new_width, new_height);
@@ -427,6 +427,7 @@ void MyTransparencyControlsCmd(const vector<string>&) {
 void MyChooseFontCmd(const vector<string> &arg) {
   MyTerminalWindow *tw = static_cast<MyTerminalWindow*>(screen->user1);
   if (arg.size() < 2) return app->LaunchNativeFontChooser(FontDesc(FLAGS_default_font, "", tw->font_size), "choosefont");
+  if (arg.size() > 2) FLAGS_default_font_flag = atoi(arg[2]);
   FLAGS_default_font = arg[0];
   SetFontSize(atof(arg[1]));
   app->scheduler.Wakeup(0);
