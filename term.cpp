@@ -171,8 +171,9 @@ struct PTYTerminalController : public MyTerminalController {
   }
   int Open(Terminal*) {
     setenv("TERM", "xterm", 1);
-    string shell = BlankNull(getenv("SHELL"));
+    string shell = BlankNull(getenv("SHELL")), lang = BlankNull(getenv("LANG"));
     if (shell.empty()) setenv("SHELL", (shell = "/bin/bash").c_str(), 1);
+    if (lang .empty()) setenv("LANG", "en_US.UTF-8", 1);
     const char *av[] = { shell.c_str(), 0 };
     CHECK_EQ(process.OpenPTY(av, app->startdir.c_str()), 0);
     return (fd = fileno(process.out));
