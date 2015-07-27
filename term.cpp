@@ -27,7 +27,7 @@
 #include "crawler/html.h"
 #include "crawler/document.h"
 
-#ifndef _WIN32
+#ifndef WIN32
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <termios.h>
@@ -488,7 +488,7 @@ using namespace LFL;
 
 extern "C" int main(int argc, const char *argv[]) {
   app->name = "LTerminal";
-  app->logfilename = StrCat(LFAppDownloadDir(), "lterm.txt");
+  // app->logfilename = StrCat(LFAppDownloadDir(), "lterm.txt");
   binds = new BindMap();
   MyWindowInitCB(screen);
   FLAGS_target_fps = 0;
@@ -499,6 +499,28 @@ extern "C" int main(int argc, const char *argv[]) {
 
   if (app->Create(argc, argv, __FILE__)) { app->Free(); return -1; }
   if (!FLAGS_lfapp_network_.override) FLAGS_lfapp_network = 1;
+#ifdef WIN32
+  Asset::cache["MenuAtlas1,0,0,0,0,0.0000.glyphs.matrix"]          = app->LoadResource(200);
+  Asset::cache["MenuAtlas1,0,0,0,0,0.0000.png"]                    = app->LoadResource(201);
+  Asset::cache["MenuAtlas2,0,0,0,0,0.0000.glyphs.matrix"]          = app->LoadResource(202);
+  Asset::cache["MenuAtlas2,0,0,0,0,0.0000.png"]                    = app->LoadResource(203);
+  Asset::cache["MobileAtlas,0,0,0,0,0.0000.glyphs.matrix"]         = app->LoadResource(204);
+  Asset::cache["MobileAtlas,0,0,0,0,0.0000.png"]                   = app->LoadResource(205);
+  Asset::cache["VeraMoBd.ttf,32,255,255,255,4.0000.glyphs.matrix"] = app->LoadResource(206);
+  Asset::cache["VeraMoBd.ttf,32,255,255,255,4.0000.png"]           = app->LoadResource(207);
+  Asset::cache["lfapp_vertex.glsl"]                                = app->LoadResource(208);
+  Asset::cache["lfapp_pixel.glsl"]                                 = app->LoadResource(209);
+  Asset::cache["alien.glsl"]                                       = app->LoadResource(210);
+  Asset::cache["emboss.glsl"]                                      = app->LoadResource(211);
+  Asset::cache["fire.glsl"]                                        = app->LoadResource(212);
+  Asset::cache["fractal.glsl"]                                     = app->LoadResource(213);
+  Asset::cache["shrooms.glsl"]                                     = app->LoadResource(214);
+  Asset::cache["stormy.glsl"]                                      = app->LoadResource(215);
+  Asset::cache["twistery.glsl"]                                    = app->LoadResource(216);
+  Asset::cache["warper.glsl"]                                      = app->LoadResource(217);
+  Asset::cache["water.glsl"]                                       = app->LoadResource(218);
+  Asset::cache["waves.glsl"]                                       = app->LoadResource(219);
+#endif
 
   if (app->Init()) { app->Free(); return -1; }
   app->window_init_cb = MyWindowInitCB;
