@@ -68,9 +68,7 @@ void MyNewLinkCB(const shared_ptr<TextGUI::Link> &link) {
     } else return;
   }
   image_url += BlankNull(args);
-#ifndef WIN32
   if (network_thread) network_thread->Write(new Callback([=]() { link->image = image_browser->doc.parser->OpenImage(image_url); }));
-#endif
 }
 
 void MyHoverLinkCB(TextGUI::Link *link) {
@@ -528,12 +526,13 @@ extern "C" int main(int argc, const char *argv[]) {
   app->shell.command.push_back(Shell::Command("colors", bind(&MyColorsCmd, _1)));
   app->shell.command.push_back(Shell::Command("shader", bind(&MyShaderCmd, _1)));
   if (FLAGS_lfapp_network) {
-#if !defined(LFL_MOBILE) && !defined(WIN32)
+#if !defined(LFL_MOBILE)
     render_process = new ProcessAPIClient();
-    render_process->StartServer(StrCat(app->BinDir(), "lterm-render-sandbox"));
+    render_process->StartServer(StrCat(app->BinDir(), "lterm-render-sandbox", LocalFile::ExecutableSuffix));
 #endif
     CHECK((network_thread = app->CreateNetworkThread()));
-    network_thread->Write(new Callback([&](){ Video::CreateGLContext(screen); }));
+    void *gl_context = Video::CreateGLContext(screen);
+    network_thread->Write(new Callback([=]() { Video::MakeGLContextCurrent(gl_context); }));
   }
 
   app->create_win_f = bind(&Application::CreateNewWindow, app, &MyWindowCloneCB);
