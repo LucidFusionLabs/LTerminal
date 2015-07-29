@@ -531,8 +531,8 @@ extern "C" int main(int argc, const char *argv[]) {
     render_process->StartServer(StrCat(app->BinDir(), "lterm-render-sandbox", LocalFile::ExecutableSuffix));
 #endif
     CHECK((network_thread = app->CreateNetworkThread()));
-    void *gl_context = Video::CreateGLContext(screen);
-    network_thread->Write(new Callback([=]() { Video::MakeGLContextCurrent(gl_context); }));
+    void *gl_context = Video::BeginGLContextCreate(screen);
+    network_thread->Write(new Callback([=]() { Video::CompleteGLContextCreate(screen, gl_context); }));
   }
 
   app->create_win_f = bind(&Application::CreateNewWindow, app, &MyWindowCloneCB);
