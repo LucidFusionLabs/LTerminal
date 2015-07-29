@@ -69,6 +69,5 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord ) {
 			c + e*mbluramount*b);
 	}
 	col /= blursamples;
-  vec4 sc = SampleChannel(iChannel0);
-	fragColor = (sc + vec4(col, 1.0)) / 2.0;
+	fragColor = BlendChannels(SampleChannel(iChannel0), vec4(col, 1.0));
 }

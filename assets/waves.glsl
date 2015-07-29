@@ -32,6 +32,5 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
 	}
 
 	final_color = bg_color + wave_color;
-  vec4 sc = SampleChannel(iChannel0);
-  fragColor = (sc + vec4(final_color, 1.0)) / 2.0;
+  fragColor = BlendChannels(SampleChannel(iChannel0), vec4(final_color, 1.0));
 }

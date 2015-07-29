@@ -104,7 +104,6 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
 	
 	// yellow lights
 	col+= pow(lig * .12, 15.) * vec3(1.,.9,.3) * (.8 + BLINKINGLIGHTS * sin(ti * 5. - uv.y * 10.) * .6);
-	
-  vec4 sc = SampleChannel(iChannel0);
-	fragColor = (sc + vec4(col, 1.0 )) / 2.0;
+
+	fragColor = BlendChannels(SampleChannel(iChannel0), vec4(col, 1.0));
 }
