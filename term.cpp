@@ -68,7 +68,8 @@ void MyNewLinkCB(const shared_ptr<TextGUI::Link> &link) {
     } else return;
   }
   image_url += BlankNull(args);
-  if (network_thread) network_thread->Write(new Callback([=]() { link->image = image_browser->doc.parser->OpenImage(image_url); }));
+  if (render_process && render_process->conn)
+    network_thread->Write(new Callback([=]() { link->image = image_browser->doc.parser->OpenImage(image_url); }));
 }
 
 void MyHoverLinkCB(TextGUI::Link *link) {
@@ -497,6 +498,8 @@ extern "C" int main(int argc, const char *argv[]) {
 
   if (app->Create(argc, argv, __FILE__)) { app->Free(); return -1; }
   if (!FLAGS_lfapp_network_.override) FLAGS_lfapp_network = 1;
+  app->video.splash_color = &Singleton<Terminal::SolarizedColors>::Get()->c[Terminal::Colors::bg_index];
+
 #ifdef WIN32
   Asset::cache["MenuAtlas1,0,0,0,0,0.0000.glyphs.matrix"]          = app->LoadResource(200);
   Asset::cache["MenuAtlas1,0,0,0,0,0.0000.png"]                    = app->LoadResource(201);
@@ -528,7 +531,7 @@ extern "C" int main(int argc, const char *argv[]) {
   if (FLAGS_lfapp_network) {
 #if !defined(LFL_MOBILE)
     render_process = new ProcessAPIClient();
-    render_process->StartServer(StrCat(app->BinDir(), "lterm-render-sandbox", LocalFile::ExecutableSuffix));
+    render_process->StartServer(StrCat(app->bindir, "lterm-render-sandbox", LocalFile::ExecutableSuffix));
 #endif
     CHECK((network_thread = app->CreateNetworkThread()));
     void *gl_context = Video::BeginGLContextCreate(screen);
