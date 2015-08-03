@@ -53,7 +53,14 @@ unordered_map<string, Shader> shader_map;
 Browser *image_browser;
 NetworkThread *network_thread;
 ProcessAPIClient *render_process;
-int new_win_width = 80*9, new_win_height = 25*20, downscale_effects = 1;
+#if defined(WIN32)
+int new_win_width = 80*8+16, new_win_height = 25*17+38;
+#elif defined(__APPLE__)
+int new_win_width = 80*9,    new_win_height = 25*20;
+#else
+int new_win_width = 80*10,    new_win_height = 25*18;
+#endif
+int downscale_effects = 1;
 
 void MyNewLinkCB(const shared_ptr<TextGUI::Link> &link) {
   const char *args = FindChar(link->link.c_str() + 6, isint2<'?', ':'>);
