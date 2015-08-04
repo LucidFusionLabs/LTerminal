@@ -144,7 +144,7 @@ struct MyTerminalWindow {
     return s.len;
   }
   void UpdateTargetFPS() {
-    effects_mode = CustomShader() || screen->console->animating;
+    effects_mode = CustomShader() || (screen->lfapp_console && screen->lfapp_console->animating);
     int target_fps = effects_mode ? FLAGS_peak_fps : 0;
     if (target_fps != screen->target_fps) {
       app->scheduler.UpdateTargetFPS(target_fps);
@@ -397,9 +397,9 @@ void SetFontSize(int n) {
 void MyConsoleAnimating(Window *W) { 
   MyTerminalWindow *tw = (MyTerminalWindow*)screen->user1;
   tw->UpdateTargetFPS();
-  if (!screen->console->animating) {
-    if (screen->console->active || tw->controller->FrameOnKeyboardInput()) app->scheduler.AddWaitForeverKeyboard();
-    else                                                                   app->scheduler.DelWaitForeverKeyboard();
+  if (!screen->lfapp_console || !screen->lfapp_console->animating) {
+    if ((screen->lfapp_console && screen->lfapp_console->active) || tw->controller->FrameOnKeyboardInput()) app->scheduler.AddWaitForeverKeyboard();
+    else                                                                                                    app->scheduler.DelWaitForeverKeyboard();
   }
 }
 void MyIncreaseFontCmd(const vector<string>&) { SetFontSize(((MyTerminalWindow*)screen->user1)->font_size + 1); }
@@ -476,10 +476,10 @@ void MyWindowStartCB(Window *W) {
   auto tw = (MyTerminalWindow*)W->user1;
   tw->Open();
   W->SetResizeIncrements(tw->terminal->font->FixedWidth(), tw->terminal->font->Height());
-  W->console->animating_cb = bind(&MyConsoleAnimating, screen);
+  if (W->lfapp_console) W->lfapp_console->animating_cb = bind(&MyConsoleAnimating, screen);
 }
 void MyWindowCloneCB(Window *W) {
-  W->InitConsole();
+  if (FLAGS_lfapp_console) W->InitLFAppConsole();
   W->user1 = new MyTerminalWindow(MyTerminalController::NewDefaultTerminalController());
   W->input_bind.push_back(W->binds);
   MyWindowStartCB(W);
@@ -508,26 +508,20 @@ extern "C" int main(int argc, const char *argv[]) {
   app->video.splash_color = &Singleton<Terminal::SolarizedColors>::Get()->c[Terminal::Colors::bg_index];
 
 #ifdef WIN32
-  Asset::cache["MenuAtlas1,0,0,0,0,0.0000.glyphs.matrix"]          = app->LoadResource(200);
-  Asset::cache["MenuAtlas1,0,0,0,0,0.0000.png"]                    = app->LoadResource(201);
-  Asset::cache["MenuAtlas2,0,0,0,0,0.0000.glyphs.matrix"]          = app->LoadResource(202);
-  Asset::cache["MenuAtlas2,0,0,0,0,0.0000.png"]                    = app->LoadResource(203);
-  Asset::cache["MobileAtlas,0,0,0,0,0.0000.glyphs.matrix"]         = app->LoadResource(204);
-  Asset::cache["MobileAtlas,0,0,0,0,0.0000.png"]                   = app->LoadResource(205);
-  Asset::cache["VeraMoBd.ttf,32,255,255,255,4.0000.glyphs.matrix"] = app->LoadResource(206);
-  Asset::cache["VeraMoBd.ttf,32,255,255,255,4.0000.png"]           = app->LoadResource(207);
-  Asset::cache["lfapp_vertex.glsl"]                                = app->LoadResource(208);
-  Asset::cache["lfapp_pixel.glsl"]                                 = app->LoadResource(209);
-  Asset::cache["alien.glsl"]                                       = app->LoadResource(210);
-  Asset::cache["emboss.glsl"]                                      = app->LoadResource(211);
-  Asset::cache["fire.glsl"]                                        = app->LoadResource(212);
-  Asset::cache["fractal.glsl"]                                     = app->LoadResource(213);
-  Asset::cache["shrooms.glsl"]                                     = app->LoadResource(214);
-  Asset::cache["stormy.glsl"]                                      = app->LoadResource(215);
-  Asset::cache["twistery.glsl"]                                    = app->LoadResource(216);
-  Asset::cache["warper.glsl"]                                      = app->LoadResource(217);
-  Asset::cache["water.glsl"]                                       = app->LoadResource(218);
-  Asset::cache["waves.glsl"]                                       = app->LoadResource(219);
+  Asset::cache["MenuAtlas,0,0,0,0,0.0000.glyphs.matrix"] = app->LoadResource(200);
+  Asset::cache["MenuAtlas,0,0,0,0,0.0000.png"]           = app->LoadResource(201);
+  Asset::cache["lfapp_vertex.glsl"]                      = app->LoadResource(202);
+  Asset::cache["lfapp_pixel.glsl"]                       = app->LoadResource(203);
+  Asset::cache["alien.glsl"]                             = app->LoadResource(204);
+  Asset::cache["emboss.glsl"]                            = app->LoadResource(205);
+  Asset::cache["fire.glsl"]                              = app->LoadResource(206);
+  Asset::cache["fractal.glsl"]                           = app->LoadResource(207);
+  Asset::cache["shrooms.glsl"]                           = app->LoadResource(208);
+  Asset::cache["stormy.glsl"]                            = app->LoadResource(209);
+  Asset::cache["twistery.glsl"]                          = app->LoadResource(210);
+  Asset::cache["warper.glsl"]                            = app->LoadResource(211);
+  Asset::cache["water.glsl"]                             = app->LoadResource(212);
+  Asset::cache["waves.glsl"]                             = app->LoadResource(213);
 #endif
 
   if (app->Init()) { app->Free(); return -1; }
@@ -553,7 +547,7 @@ extern "C" int main(int argc, const char *argv[]) {
 #endif                       
   binds->Add(Bind('=',       Key::Modifier::Cmd, Bind::CB(bind(&MyIncreaseFontCmd, vector<string>()))));
   binds->Add(Bind('-',       Key::Modifier::Cmd, Bind::CB(bind(&MyDecreaseFontCmd, vector<string>()))));
-  binds->Add(Bind('6',       Key::Modifier::Cmd, Bind::CB(bind([&](){ Window::Get()->console->Toggle(); }))));
+  binds->Add(Bind('6',       Key::Modifier::Cmd, Bind::CB(bind([&](){ app->shell.console(vector<string>()); }))));
   binds->Add(Bind(Key::Up,   Key::Modifier::Cmd, Bind::CB(bind([&](){ if (screen->user1) static_cast<MyTerminalWindow*>(screen->user1)->ScrollHistory(1); }))));
   binds->Add(Bind(Key::Down, Key::Modifier::Cmd, Bind::CB(bind([&](){ if (screen->user1) static_cast<MyTerminalWindow*>(screen->user1)->ScrollHistory(0); }))));
 
