@@ -54,7 +54,7 @@ Browser *image_browser;
 NetworkThread *network_thread;
 ProcessAPIClient *render_process;
 #if defined(WIN32)
-int new_win_width = 80*8+16, new_win_height = 25*17+38;
+int new_win_width = 80*8, new_win_height = 25*17;
 #elif defined(__APPLE__)
 int new_win_width = 80*9,    new_win_height = 25*20;
 #else
@@ -98,7 +98,9 @@ struct MyTerminalController : public ByteSink {
   static MyTerminalController *NewDefaultTerminalController();
   static MyTerminalController *NewShellTerminalController(const string &m);  
   static MyTerminalController *NewSSHTerminalController();
-  static void InitSSHTerminalController() { ONCE({ app->network.Enable(Singleton<SSHClient>::Get()); }); }
+  static void InitSSHTerminalController() {
+    ONCE({ network_thread->Write(new Callback([=]() { app->network.Enable(Singleton<SSHClient>::Get()); })); });
+  }
 };
 
 struct MyTerminalWindow {
@@ -419,7 +421,9 @@ void MyShaderCmd(const vector<string> &arg) {
     Replace(&tw->effects_buffer, (FrameBuffer*)0);
   }
   auto shader = shader_map.find(shader_name);
-  tw->activeshader = shader != shader_map.end() ? &shader->second : &app->video.shader_default;
+  bool found = shader != shader_map.end();
+  if (found && !shader->second.ID) Shader::CreateShaderToy(shader_name, Asset::FileContents(StrCat(shader_name, ".glsl")), &shader->second);
+  tw->activeshader = found ? &shader->second : &app->video.shader_default;
   tw->UpdateTargetFPS();
 }
 void MyEffectsControlsCmd(const vector<string>&) { 
@@ -504,7 +508,7 @@ extern "C" int main(int argc, const char *argv[]) {
 #endif
 
   if (app->Create(argc, argv, __FILE__)) { app->Free(); return -1; }
-  if (!FLAGS_lfapp_network_.override) FLAGS_lfapp_network = 1;
+  bool start_network_thread = !(FLAGS_lfapp_network_.override && !FLAGS_lfapp_network);
   app->video.splash_color = &Singleton<Terminal::SolarizedColors>::Get()->c[Terminal::Colors::bg_index];
 
 #ifdef WIN32
@@ -522,19 +526,24 @@ extern "C" int main(int argc, const char *argv[]) {
   Asset::cache["warper.glsl"]                            = app->LoadResource(211);
   Asset::cache["water.glsl"]                             = app->LoadResource(212);
   Asset::cache["waves.glsl"]                             = app->LoadResource(213);
+  if (FLAGS_lfapp_console) {
+    Asset::cache["VeraMoBd.ttf,32,255,255,255,4.0000.glyphs.matrix"] = app->LoadResource(214);
+    Asset::cache["VeraMoBd.ttf,32,255,255,255,4.0000.png"]           = app->LoadResource(215);
+  }
 #endif
 
   if (app->Init()) { app->Free(); return -1; }
+  CHECK(app->video.opengl_framebuffer);
   app->window_init_cb = MyWindowInitCB;
   app->window_closed_cb = MyWindowClosedCB;
   app->shell.command.push_back(Shell::Command("colors", bind(&MyColorsCmd, _1)));
   app->shell.command.push_back(Shell::Command("shader", bind(&MyShaderCmd, _1)));
-  if (FLAGS_lfapp_network) {
+  if (start_network_thread) {
 #if !defined(LFL_MOBILE)
     render_process = new ProcessAPIClient();
     render_process->StartServer(StrCat(app->bindir, "lterm-render-sandbox", LocalFile::ExecutableSuffix));
 #endif
-    CHECK((network_thread = app->CreateNetworkThread()));
+    CHECK((network_thread = app->CreateNetworkThread(false)));
     void *gl_context = Video::BeginGLContextCreate(screen);
     network_thread->Write(new Callback([=]() { Video::CompleteGLContextCreate(screen, gl_context); }));
   }
@@ -573,16 +582,10 @@ extern "C" int main(int argc, const char *argv[]) {
     MenuItem{ "", "<seperator>", "" }, MenuItem{ "", "Controls", "fxctl" } };
   app->AddNativeMenu("Effects", effects_menu);
 
-  Shader::CreateShaderToy("warper",   Asset::FileContents("warper.glsl"),   &shader_map["warper"]);
-  Shader::CreateShaderToy("water",    Asset::FileContents("water.glsl"),    &shader_map["water"]);
-  Shader::CreateShaderToy("twistery", Asset::FileContents("twistery.glsl"), &shader_map["twistery"]);
-  Shader::CreateShaderToy("fire",     Asset::FileContents("fire.glsl"),     &shader_map["fire"]);
-  Shader::CreateShaderToy("waves",    Asset::FileContents("waves.glsl"),    &shader_map["waves"]);
-  Shader::CreateShaderToy("emboss",   Asset::FileContents("emboss.glsl"),   &shader_map["emboss"]);
-  Shader::CreateShaderToy("stormy",   Asset::FileContents("stormy.glsl"),   &shader_map["stormy"]);
-  Shader::CreateShaderToy("alien",    Asset::FileContents("alien.glsl"),    &shader_map["alien"]);
-  Shader::CreateShaderToy("fractal",  Asset::FileContents("fractal.glsl"),  &shader_map["fractal"]);
-  Shader::CreateShaderToy("shrooms",  Asset::FileContents("shrooms.glsl"),  &shader_map["shrooms"]);
+  shader_map["warper"];  shader_map["water"];  shader_map["twistery"];
+  shader_map["fire"];    shader_map["waves"];  shader_map["emboss"];
+  shader_map["stormy"];  shader_map["alien"];  shader_map["fractal"];
+  shader_map["shrooms"];
 
   MyTerminalController *controller = 0;
   if      (FLAGS_interpreter)  controller = MyTerminalController::NewShellTerminalController("");
