@@ -99,7 +99,7 @@ struct MyTerminalController : public ByteSink {
   static MyTerminalController *NewShellTerminalController(const string &m);  
   static MyTerminalController *NewSSHTerminalController();
   static void InitSSHTerminalController() {
-    ONCE({ network_thread->Write(new Callback([=]() { app->network.Enable(Singleton<SSHClient>::Get()); })); });
+    ONCE({ if (network_thread) network_thread->Write(new Callback([=]() { app->network.Enable(Singleton<SSHClient>::Get()); })); });
   }
 };
 
@@ -544,8 +544,6 @@ extern "C" int main(int argc, const char *argv[]) {
     render_process->StartServer(StrCat(app->bindir, "lterm-render-sandbox", LocalFile::ExecutableSuffix));
 #endif
     CHECK((network_thread = app->CreateNetworkThread(false)));
-    void *gl_context = Video::BeginGLContextCreate(screen);
-    network_thread->Write(new Callback([=]() { Video::CompleteGLContextCreate(screen, gl_context); }));
   }
 
   app->create_win_f = bind(&Application::CreateNewWindow, app, &MyWindowCloneCB);
