@@ -496,7 +496,7 @@ void MyWindowClosedCB(Window *W) {
 }; // naemspace LFL
 using namespace LFL;
 
-extern "C" int main(int argc, const char *argv[]) {
+extern "C" void LFAppCreateCB() {
   app->name = "LTerminal";
   // app->logfilename = StrCat(LFAppDownloadDir(), "lterm.txt");
   binds = new BindMap();
@@ -506,8 +506,10 @@ extern "C" int main(int argc, const char *argv[]) {
 #ifdef LFL_MOBILE
   downscale_effects = TouchDevice::SetExtraScale(true);
 #endif
+}
 
-  if (app->Create(argc, argv, __FILE__)) { app->Free(); return -1; }
+extern "C" int main(int argc, const char *argv[]) {
+  if (app->Create(argc, argv, __FILE__, LFAppCreateCB)) { app->Free(); return -1; }
   bool start_network_thread = !(FLAGS_lfapp_network_.override && !FLAGS_lfapp_network);
   app->video.splash_color = &Singleton<Terminal::SolarizedColors>::Get()->c[Terminal::Colors::bg_index];
 
