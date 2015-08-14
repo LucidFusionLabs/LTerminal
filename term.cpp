@@ -361,7 +361,7 @@ int Frame(Window *W, unsigned clicks, unsigned mic_samples, bool cam_sample, int
     W->gd->ViewPort(Box(screen->width*scale, screen->height*scale));
   }
 
-#if defined(__APPLE__) && !defined(LFL_MOBILE)
+#if defined(__APPLE__) && !defined(LFL_MOBILE) && !defined(LFL_QT)
   if (!effects) {
     if (read_size && !(flag & LFApp::Frame::DontSkip)) {
       int *pending = &tw->join_read_pending;
@@ -409,8 +409,9 @@ void MyDecreaseFontCmd(const vector<string>&) { SetFontSize(((MyTerminalWindow*)
 void MyColorsCmd(const vector<string> &arg) {
   string colors_name = arg.size() ? arg[0] : "";
   MyTerminalWindow *tw = (MyTerminalWindow*)screen->user1;
-  if      (colors_name ==       "vga") tw->terminal->ChangeColors(Singleton<Terminal::StandardVGAColors>::Get());
-  else if (colors_name == "solarized") tw->terminal->ChangeColors(Singleton<Terminal::SolarizedColors>  ::Get());
+  if      (colors_name == "vga")             tw->terminal->ChangeColors(Singleton<Terminal::StandardVGAColors>   ::Get());
+  else if (colors_name == "solarized_dark")  tw->terminal->ChangeColors(Singleton<Terminal::SolarizedDarkColors> ::Get());
+  else if (colors_name == "solarized_light") tw->terminal->ChangeColors(Singleton<Terminal::SolarizedLightColors>::Get());
   app->scheduler.Wakeup(0);
 }
 void MyShaderCmd(const vector<string> &arg) {
@@ -511,7 +512,7 @@ extern "C" void LFAppCreateCB() {
 extern "C" int main(int argc, const char *argv[]) {
   if (app->Create(argc, argv, __FILE__, LFAppCreateCB)) { app->Free(); return -1; }
   bool start_network_thread = !(FLAGS_lfapp_network_.override && !FLAGS_lfapp_network);
-  app->video.splash_color = &Singleton<Terminal::SolarizedColors>::Get()->c[Terminal::Colors::bg_index];
+  app->video.splash_color = &Singleton<Terminal::SolarizedDarkColors>::Get()->c[Terminal::Colors::bg_index];
 
 #ifdef WIN32
   Asset::cache["MenuAtlas,0,0,0,0,0.0000.glyphs.matrix"] = app->LoadResource(200);
@@ -569,7 +570,7 @@ extern "C" int main(int argc, const char *argv[]) {
 #ifndef LFL_MOBILE
     MenuItem{ "", "Transparency", "transparency" },
 #endif
-    MenuItem{ "", "VGA Colors", "colors vga", }, MenuItem{ "", "Solarized Colors", "colors solarized" }
+    MenuItem{ "", "VGA Colors", "colors vga", }, MenuItem{ "", "Solarized Dark Colors", "colors solarized_dark" }, MenuItem { "", "Solarized Light Colors", "colors solarized_light" }
   };
   app->AddNativeMenu("View", view_menu);
 #endif
