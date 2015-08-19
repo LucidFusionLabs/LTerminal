@@ -2,12 +2,12 @@ LOCAL_PATH := $(call my-dir)
 
 include $(CLEAR_VARS)
 LOCAL_MODULE := term
-LOCAL_SRC_FILES := $(LOCAL_PATH)/../../../android/term/libterm.a
+LOCAL_SRC_FILES := $(LOCAL_PATH)/../../../android/term/liblterm.a
 include $(PREBUILT_STATIC_LIBRARY)
 
 include $(CLEAR_VARS)
 LOCAL_MODULE := lfapp
-LOCAL_SRC_FILES := $(LOCAL_PATH)/../../../android/term/term_lfapp_obj/libterm_lfapp.a
+LOCAL_SRC_FILES := $(LOCAL_PATH)/../../../android/term/lterm_lfapp_obj/liblterm_lfapp.a
 include $(PREBUILT_STATIC_LIBRARY)
 
 include $(CLEAR_VARS)
@@ -26,10 +26,20 @@ LOCAL_SRC_FILES := $(LOCAL_PATH)/../../../android/core/imports/libjpeg-turbo/.li
 include $(PREBUILT_STATIC_LIBRARY)
 
 include $(CLEAR_VARS)
+LOCAL_MODULE := libcrypto
+LOCAL_SRC_FILES := $(LOCAL_PATH)/../../../core/imports/OpenSSL-for-Android-Prebuilt/openssl-1.0.2/armeabi-v7a/lib/libcrypto.a
+include $(PREBUILT_STATIC_LIBRARY)
+
+include $(CLEAR_VARS)
+LOCAL_MODULE := libssl
+LOCAL_SRC_FILES := $(LOCAL_PATH)/../../../core/imports/OpenSSL-for-Android-Prebuilt/openssl-1.0.2/armeabi-v7a/lib/libssl.a
+include $(PREBUILT_STATIC_LIBRARY)
+
+include $(CLEAR_VARS)
 LOCAL_MODULE := lfjni
-LOCAL_SRC_FILES := $(LOCAL_PATH)/../../../lfapp/lfjni/lfjni.cpp
+LOCAL_SRC_FILES := $(LOCAL_PATH)/../../../core/lfapp/jni/lfjni.cpp
 LOCAL_LDLIBS := -lGLESv2 -lGLESv1_CM -llog -lz
-LOCAL_STATIC_LIBRARIES := term lfapp Box2D libpng libjpeg-turbo
+LOCAL_STATIC_LIBRARIES := term lfapp Box2D libpng libjpeg-turbo libssl libcrypto
 include $(BUILD_SHARED_LIBRARY)
 
 #include $(call all-subdir-makefiles)

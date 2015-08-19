@@ -209,8 +209,7 @@ struct SSHTerminalController : public MyTerminalController {
     app->scheduler.DelWaitForeverSocket(conn->socket);
     app->scheduler.Wakeup(0);
     conn = 0;
-    unique_ptr<MyTerminalController> self;
-    MyTerminalController::ChangeCurrent(MyTerminalController::NewShellTerminalController(ended_msg), &self);
+    Dispose();
   }
   void ReadCB(Connection *c, const StringPiece &b) { 
     if (b.empty()) ClosedCB();
@@ -238,13 +237,14 @@ struct SSHTerminalController : public MyTerminalController {
   }
   int Open(Terminal *term) {
     network_thread->Write
-      (new Callback([&,term](){
+      (new Callback([=](){
                     conn = Singleton<SSHClient>::Get()->Open
                     (FLAGS_ssh, SSHClient::ResponseCB(bind(&SSHTerminalController::ReadCB, this, _1, _2)), &connected_cb);
-                    if (conn) SSHClient::SetTerminalWindowSize(conn, term->term_width, term->term_height);
-                    if (conn) SSHClient::SetUser(conn, FLAGS_login);
+                    if (!conn) { Dispose(); return; }
+                    SSHClient::SetTerminalWindowSize(conn, term->term_width, term->term_height);
+                    SSHClient::SetUser(conn, FLAGS_login);
 #ifdef LFL_MOBILE
-                    if (conn) SSHClient::SetPasswordCB(conn, Vault::LoadPassword, Vault::SavePassword);
+                    SSHClient::SetPasswordCB(conn, Vault::LoadPassword, Vault::SavePassword);
 #endif
                     }));
     return -1;
@@ -253,6 +253,11 @@ struct SSHTerminalController : public MyTerminalController {
     if (!conn || conn->state != Connection::Connected) return;
     conn->SetError();
     network_thread->Write(new Callback([=](){ app->network.ConnClose(Singleton<SSHClient>::Get(), conn, NULL); }));
+  }
+  void Dispose() {
+    if (!MainThread()) return RunInMainThread(new Callback(bind(&SSHTerminalController::Dispose, this)));
+    unique_ptr<MyTerminalController> self;
+    MyTerminalController::ChangeCurrent(MyTerminalController::NewShellTerminalController(ended_msg), &self);
   }
 };
 
@@ -523,7 +528,7 @@ extern "C" int main(int argc, const char *argv[]) {
   Asset::cache["emboss.glsl"]                            = app->LoadResource(205);
   Asset::cache["fire.glsl"]                              = app->LoadResource(206);
   Asset::cache["fractal.glsl"]                           = app->LoadResource(207);
-  Asset::cache["shrooms.glsl"]                           = app->LoadResource(208);
+  Asset::cache["darkly.glsl"]                            = app->LoadResource(208);
   Asset::cache["stormy.glsl"]                            = app->LoadResource(209);
   Asset::cache["twistery.glsl"]                          = app->LoadResource(210);
   Asset::cache["warper.glsl"]                            = app->LoadResource(211);
@@ -579,14 +584,14 @@ extern "C" int main(int argc, const char *argv[]) {
     MenuItem{ "", "None",     "shader none"     }, MenuItem{ "", "Warper", "shader warper" }, MenuItem{ "", "Water", "shader water" },
     MenuItem{ "", "Twistery", "shader twistery" }, MenuItem{ "", "Fire",   "shader fire"   }, MenuItem{ "", "Waves", "shader waves" },
     MenuItem{ "", "Emboss",   "shader emboss"   }, MenuItem{ "", "Stormy", "shader stormy" }, MenuItem{ "", "Alien", "shader alien" },
-    MenuItem{ "", "Fractal",  "shader fractal"  }, MenuItem{ "", "Shrooms", "shader shrooms" },
+    MenuItem{ "", "Fractal",  "shader fractal"  }, MenuItem{ "", "Darkly", "shader darkly" },
     MenuItem{ "", "<seperator>", "" }, MenuItem{ "", "Controls", "fxctl" } };
   app->AddNativeMenu("Effects", effects_menu);
 
   shader_map["warper"];  shader_map["water"];  shader_map["twistery"];
   shader_map["fire"];    shader_map["waves"];  shader_map["emboss"];
   shader_map["stormy"];  shader_map["alien"];  shader_map["fractal"];
-  shader_map["shrooms"];
+  shader_map["darkly"];
 
   MyTerminalController *controller = 0;
   if      (FLAGS_interpreter)  controller = MyTerminalController::NewShellTerminalController("");
@@ -621,6 +626,5 @@ extern "C" int main(int argc, const char *argv[]) {
   INFO("Starting ", app->name, " ", FLAGS_default_font, " (w=", tw->terminal->font->FixedWidth(),
        ", h=", tw->terminal->font->Height(), ", scale=", downscale_effects, ")");
 
-  app->scheduler.Start();
   return app->Main();
 }
