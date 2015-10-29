@@ -34,33 +34,18 @@
 #endif
 
 namespace LFL {
-#ifdef LFL_MOBILE
-DEFINE_int   (peak_fps,    30,     "Peak FPS");
-#else                      
-DEFINE_int   (peak_fps,    60,     "Peak FPS");
-#endif                     
 DEFINE_bool  (draw_fps,    false,  "Draw FPS");
 DEFINE_bool  (interpreter, false,  "Launch interpreter instead of shell");
 DEFINE_string(login,       "",     "SSH user");
 DEFINE_string(ssh,         "",     "SSH to host");
 DEFINE_string(command,     "",     "Execute initial command");
 DEFINE_string(screenshot,  "",     "Screenshot and exit");
-
 extern FlagOfType<bool> FLAGS_lfapp_network_;
 
 BindMap *binds;
 unordered_map<string, Shader> shader_map;
 Browser *image_browser;
-NetworkThread *network_thread;
-ProcessAPIClient *render_process;
-#if defined(WIN32)
-int new_win_width = 80*8, new_win_height = 25*17;
-#elif defined(__APPLE__)
-int new_win_width = 80*9,    new_win_height = 25*20;
-#else
-int new_win_width = 80*10,    new_win_height = 25*18;
-#endif
-int downscale_effects = 1;
+int new_win_width = 80*Video::InitFontWidth(), new_win_height = 25*Video::InitFontHeight(), downscale_effects = 1;
 
 void MyNewLinkCB(const shared_ptr<TextGUI::Link> &link) {
   const char *args = FindChar(link->link.c_str() + 6, isint2<'?', ':'>);
@@ -75,8 +60,8 @@ void MyNewLinkCB(const shared_ptr<TextGUI::Link> &link) {
     } else return;
   }
   image_url += BlankNull(args);
-  if (render_process && render_process->conn)
-    network_thread->Write(new Callback([=]() { link->image = image_browser->doc.parser->OpenImage(image_url); }));
+  if (app->render_process && app->render_process->conn)
+    app->network_thread->Write(new Callback([=]() { link->image = image_browser->doc.parser->OpenImage(image_url); }));
 }
 
 void MyHoverLinkCB(TextGUI::Link *link) {
@@ -86,6 +71,7 @@ void MyHoverLinkCB(TextGUI::Link *link) {
   screen->gd->EnableBlend();
   screen->gd->SetColor(Color::white - Color::Alpha(0.25));
   Box::DelBorder(screen->Box(), screen->width*.2, screen->height*.2).Draw(tex->coord);
+  screen->gd->ClearDeferred();
 }
 
 struct MyTerminalController : public ByteSink {
@@ -99,7 +85,7 @@ struct MyTerminalController : public ByteSink {
   static MyTerminalController *NewShellTerminalController(const string &m);  
   static MyTerminalController *NewSSHTerminalController();
   static void InitSSHTerminalController() {
-    ONCE({ if (network_thread) network_thread->Write(new Callback([=]() { app->network.Enable(Singleton<SSHClient>::Get()); })); });
+    ONCE({ if (app->network_thread) app->network_thread->Write(new Callback([=]() { app->network->Enable(Singleton<SSHClient>::Get()); })); });
   }
 };
 
@@ -108,10 +94,9 @@ struct MyTerminalWindow {
   unique_ptr<Terminal> terminal;
   Shader *activeshader;
   int font_size, join_read_pending=0;
-  bool effects_mode=0, read_pending=0, effects_init=0;
   FrameBuffer *effects_buffer=0;
   MyTerminalWindow(MyTerminalController *C) :
-    controller(C), activeshader(&app->video.shader_default), font_size(FLAGS_default_font_size) {}
+    controller(C), activeshader(&app->video->shader_default), font_size(FLAGS_default_font_size) {}
 
   void Open() {
     terminal = unique_ptr<Terminal>(new Terminal(controller.get(), screen, Fonts::Get(FLAGS_default_font, "", font_size)));
@@ -142,18 +127,11 @@ struct MyTerminalWindow {
   }
   int ReadAndUpdateTerminalFramebuffer() {
     StringPiece s = controller->Read();
-    if (s.len) { terminal->Write(s); read_pending = 1; }
+    if (s.len) terminal->Write(s);
     return s.len;
   }
-  void UpdateTargetFPS() {
-    effects_mode = CustomShader() || (screen->lfapp_console && screen->lfapp_console->animating);
-    int target_fps = effects_mode ? FLAGS_peak_fps : 0;
-    if (target_fps != screen->target_fps) {
-      app->scheduler.UpdateTargetFPS(target_fps);
-      app->scheduler.Wakeup(0);
-    }
-  }
-  bool CustomShader() const { return activeshader != &app->video.shader_default; }
+  void UpdateTargetFPS() { app->scheduler.SetAnimating(CustomShader() || (screen->lfapp_console && screen->lfapp_console->animating)); }
+  bool CustomShader() const { return activeshader != &app->video->shader_default; }
   void ScrollHistory(bool up_or_down) {
     if (up_or_down) terminal->ScrollUp();
     else            terminal->ScrollDown();
@@ -162,6 +140,14 @@ struct MyTerminalWindow {
 };
 
 #ifndef WIN32
+struct ReadBuffer {
+  int size;
+  Time stamp;
+  string data;
+  ReadBuffer(int S=0) : size(S), stamp(Now()), data(S, 0) {}
+  void Reset() { stamp=Now(); data.resize(size); }
+};
+
 struct PTYTerminalController : public MyTerminalController {
   int fd = -1;
   ProcessPipe process;
@@ -217,8 +203,8 @@ struct SSHTerminalController : public MyTerminalController {
   }
   StringPiece Read() {
     if (conn && conn->state == Connection::Connected && NBReadable(conn->socket)) {
-      if (conn->Read() < 0)                          { ERROR(conn->Name(), ": Read");       Close(); return ""; }
-      if (conn->rl && conn->handler->Read(conn) < 0) { ERROR(conn->Name(), ": query read"); Close(); return ""; }
+      if (conn->Read() < 0)                                 { ERROR(conn->Name(), ": Read");       Close(); return ""; }
+      if (conn->rb.size() && conn->handler->Read(conn) < 0) { ERROR(conn->Name(), ": query read"); Close(); return ""; }
     }
     swap(read_buf, ret_buf);
     read_buf.clear();
@@ -236,7 +222,7 @@ struct SSHTerminalController : public MyTerminalController {
     return SSHClient::WriteChannelData(conn, StringPiece(b, l));
   }
   int Open(Terminal *term) {
-    network_thread->Write
+    app->network_thread->Write
       (new Callback([=](){
                     conn = Singleton<SSHClient>::Get()->Open
                     (FLAGS_ssh, SSHClient::ResponseCB(bind(&SSHTerminalController::ReadCB, this, _1, _2)), &connected_cb);
@@ -252,7 +238,7 @@ struct SSHTerminalController : public MyTerminalController {
   void Close() {
     if (!conn || conn->state != Connection::Connected) return;
     conn->SetError();
-    network_thread->Write(new Callback([=](){ app->network.ConnClose(Singleton<SSHClient>::Get(), conn, NULL); }));
+    app->network_thread->Write(new Callback([=](){ app->network->ConnClose(Singleton<SSHClient>::Get(), conn, NULL); }));
   }
   void Dispose() {
     if (!MainThread()) return RunInMainThread(new Callback(bind(&SSHTerminalController::Dispose, this)));
@@ -291,8 +277,8 @@ struct ShellTerminalController : public MyTerminalController {
     else done = 1;
   }
   void MyNSLookupCmd(const vector<string> &arg) {
-    if (arg.empty() || !network_thread) return;
-    if ((blocking = 1)) network_thread->Write(new Callback(bind(&ShellTerminalController::MyNetworkThreadNSLookup, this, arg[0])));
+    if (arg.empty() || !app->network_thread) return;
+    if ((blocking = 1)) app->network_thread->Write(new Callback(bind(&ShellTerminalController::MyNetworkThreadNSLookup, this, arg[0])));
   }
   void MyNetworkThreadNSLookup(const string &host) {
     Singleton<Resolver>::Get()->NSLookup(host, bind(&ShellTerminalController::MyNetworkThreadNSLookupResponse, this, host, _1, _2));
@@ -313,7 +299,7 @@ struct ShellTerminalController : public MyTerminalController {
   StringPiece Read() { swap(read_buf, ret_buf); read_buf.clear(); return ret_buf; }
   void ReadCB(const StringPiece &b) {
     MyTerminalWindow *tw = (MyTerminalWindow*)screen->user1;
-    if (tw->effects_mode) read_buf.append(b.data(), b.size());
+    if (screen->animating) read_buf.append(b.data(), b.size());
     else if (term) term->Write(b);
   }
   int Write(const char *b, int l) {
@@ -352,10 +338,10 @@ MyTerminalController *MyTerminalController::NewDefaultTerminalController() {
 #endif
 }
 
-int Frame(Window *W, unsigned clicks, unsigned mic_samples, bool cam_sample, int flag) {
+int Frame(Window *W, unsigned clicks, int flag) {
   static const Time join_read_interval(100), refresh_interval(33);
   MyTerminalWindow *tw = (MyTerminalWindow*)W->user1;
-  bool effects = tw->effects_mode, downscale = effects && downscale_effects > 1;
+  bool effects = screen->animating, downscale = effects && downscale_effects > 1;
   Box draw_box = screen->Box();
 
   if (downscale) W->gd->RestoreViewport(DrawMode::_2D);
@@ -366,17 +352,18 @@ int Frame(Window *W, unsigned clicks, unsigned mic_samples, bool cam_sample, int
     W->gd->ViewPort(Box(screen->width*scale, screen->height*scale));
   }
 
-#if defined(__APPLE__) && !defined(LFL_MOBILE) && !defined(LFL_QT)
   if (!effects) {
+#if defined(__APPLE__) && !defined(LFL_MOBILE) && !defined(LFL_QT)
     if (read_size && !(flag & LFApp::Frame::DontSkip)) {
       int *pending = &tw->join_read_pending;
       bool join_read = read_size > 255;
       if (join_read) { if (1            && ++(*pending)) { if (app->scheduler.WakeupIn(0, join_read_interval)) return -1; } }
       else           { if ((*pending)<1 && ++(*pending)) { if (app->scheduler.WakeupIn(0,   refresh_interval)) return -1; } }
+      *pending = 0;
     }
     app->scheduler.ClearWakeupIn();
-  } else tw->read_pending = read_size;
 #endif
+  }
 
   W->gd->DrawMode(DrawMode::_2D);
   W->gd->DisableBlend();
@@ -386,7 +373,6 @@ int Frame(Window *W, unsigned clicks, unsigned mic_samples, bool cam_sample, int
   W->DrawDialogs();
   if (FLAGS_draw_fps) Fonts::Default()->Draw(StringPrintf("FPS = %.2f", FPS()), point(W->width*.85, 0));
   if (FLAGS_screenshot.size()) ONCE(app->shell.screenshot(vector<string>(1, FLAGS_screenshot)); app->run=0;);
-  tw->join_read_pending = tw->read_pending = 0;
   return 0;
 }
 
@@ -429,7 +415,7 @@ void MyShaderCmd(const vector<string> &arg) {
   auto shader = shader_map.find(shader_name);
   bool found = shader != shader_map.end();
   if (found && !shader->second.ID) Shader::CreateShaderToy(shader_name, Asset::FileContents(StrCat(shader_name, ".glsl")), &shader->second);
-  tw->activeshader = found ? &shader->second : &app->video.shader_default;
+  tw->activeshader = found ? &shader->second : &app->video->shader_default;
   tw->UpdateTargetFPS();
 }
 void MyEffectsControlsCmd(const vector<string>&) { 
@@ -517,23 +503,23 @@ extern "C" void LFAppCreateCB() {
 extern "C" int main(int argc, const char *argv[]) {
   if (app->Create(argc, argv, __FILE__, LFAppCreateCB)) { app->Free(); return -1; }
   bool start_network_thread = !(FLAGS_lfapp_network_.override && !FLAGS_lfapp_network);
-  app->video.splash_color = &Singleton<Terminal::SolarizedDarkColors>::Get()->c[Terminal::Colors::bg_index];
+  app->splash_color = &Singleton<Terminal::SolarizedDarkColors>::Get()->c[Terminal::Colors::bg_index];
 
 #ifdef WIN32
-  Asset::cache["MenuAtlas,0,0,0,0,0.0000.glyphs.matrix"] = app->LoadResource(200);
-  Asset::cache["MenuAtlas,0,0,0,0,0.0000.png"]           = app->LoadResource(201);
-  Asset::cache["lfapp_vertex.glsl"]                      = app->LoadResource(202);
-  Asset::cache["lfapp_pixel.glsl"]                       = app->LoadResource(203);
-  Asset::cache["alien.glsl"]                             = app->LoadResource(204);
-  Asset::cache["emboss.glsl"]                            = app->LoadResource(205);
-  Asset::cache["fire.glsl"]                              = app->LoadResource(206);
-  Asset::cache["fractal.glsl"]                           = app->LoadResource(207);
-  Asset::cache["darkly.glsl"]                            = app->LoadResource(208);
-  Asset::cache["stormy.glsl"]                            = app->LoadResource(209);
-  Asset::cache["twistery.glsl"]                          = app->LoadResource(210);
-  Asset::cache["warper.glsl"]                            = app->LoadResource(211);
-  Asset::cache["water.glsl"]                             = app->LoadResource(212);
-  Asset::cache["waves.glsl"]                             = app->LoadResource(213);
+  Asset::cache["MenuAtlas,0,255,255,255,0.0000.glyphs.matrix"] = app->LoadResource(200);
+  Asset::cache["MenuAtlas,0,255,255,255,0.0000.png"]           = app->LoadResource(201);
+  Asset::cache["lfapp_vertex.glsl"]                            = app->LoadResource(202);
+  Asset::cache["lfapp_pixel.glsl"]                             = app->LoadResource(203);
+  Asset::cache["alien.glsl"]                                   = app->LoadResource(204);
+  Asset::cache["emboss.glsl"]                                  = app->LoadResource(205);
+  Asset::cache["fire.glsl"]                                    = app->LoadResource(206);
+  Asset::cache["fractal.glsl"]                                 = app->LoadResource(207);
+  Asset::cache["darkly.glsl"]                                  = app->LoadResource(208);
+  Asset::cache["stormy.glsl"]                                  = app->LoadResource(209);
+  Asset::cache["twistery.glsl"]                                = app->LoadResource(210);
+  Asset::cache["warper.glsl"]                                  = app->LoadResource(211);
+  Asset::cache["water.glsl"]                                   = app->LoadResource(212);
+  Asset::cache["waves.glsl"]                                   = app->LoadResource(213);
   if (FLAGS_lfapp_console) {
     Asset::cache["VeraMoBd.ttf,32,255,255,255,4.0000.glyphs.matrix"] = app->LoadResource(214);
     Asset::cache["VeraMoBd.ttf,32,255,255,255,4.0000.png"]           = app->LoadResource(215);
@@ -541,17 +527,18 @@ extern "C" int main(int argc, const char *argv[]) {
 #endif
 
   if (app->Init()) { app->Free(); return -1; }
-  CHECK(app->video.opengl_framebuffer);
+  CHECK(app->video->opengl_framebuffer);
   app->window_init_cb = MyWindowInitCB;
   app->window_closed_cb = MyWindowClosedCB;
   app->shell.command.push_back(Shell::Command("colors", bind(&MyColorsCmd, _1)));
   app->shell.command.push_back(Shell::Command("shader", bind(&MyShaderCmd, _1)));
   if (start_network_thread) {
+    app->network = new Network();
 #if !defined(LFL_MOBILE)
-    render_process = new ProcessAPIClient();
-    render_process->StartServer(StrCat(app->bindir, "lterm-render-sandbox", LocalFile::ExecutableSuffix));
+    app->render_process = new ProcessAPIClient();
+    app->render_process->StartServerProcess(StrCat(app->bindir, "lterm-render-sandbox", LocalFile::ExecutableSuffix));
 #endif
-    CHECK((network_thread = app->CreateNetworkThread(false)));
+    CHECK(app->CreateNetworkThread(false, true));
   }
 
   app->create_win_f = bind(&Application::CreateNewWindow, app, &MyWindowCloneCB);
@@ -598,7 +585,6 @@ extern "C" int main(int argc, const char *argv[]) {
   else if (!FLAGS_ssh.empty()) controller = MyTerminalController::NewSSHTerminalController();
   else                         controller = MyTerminalController::NewDefaultTerminalController();
   image_browser = new Browser();
-  image_browser->doc.parser->render_process = render_process;
   MyTerminalWindow *tw = new MyTerminalWindow(controller);
   screen->user1 = tw;
   MyWindowStartCB(screen);

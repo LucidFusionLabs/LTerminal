@@ -36,12 +36,12 @@ extern "C" int main(int argc, const char *argv[]) {
   int optind = Singleton<FlagMap>::Get()->optind;
   if (optind >= argc) { fprintf(stderr, "Usage: %s [-flags] <socket-name>\n", argv[0]); return -1; }
   // if (app->Init()) { app->Free(); return -1; }
-  app->assets.Init();
+  (app->assets = new Assets())->Init();
 
   // to cleanup crash leaked shm: for i in $( ipcs -m | grep "^m " | awk '{print $2}' ); do ipcrm -m $i; done
   const string socket_name = StrCat(argv[optind]);
   process_api = unique_ptr<ProcessAPIServer>(new ProcessAPIServer());
-  process_api->Start(StrCat(argv[optind]));
+  process_api->OpenSocket(StrCat(argv[optind]));
 
 #ifdef __APPLE__
   char *sandbox_error=0;
