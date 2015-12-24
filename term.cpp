@@ -24,8 +24,8 @@
 #include "lfapp/ipc.h"
 #include "lfapp/resolver.h"
 #include "lfapp/browser.h"
-#include "crawler/html.h"
-#include "crawler/document.h"
+#include "web/html.h"
+#include "web/document.h"
 
 #ifndef WIN32
 #include <sys/socket.h>
@@ -74,7 +74,7 @@ void MyHoverLinkCB(TextGUI::Link *link) {
   screen->gd->ClearDeferred();
 }
 
-struct MyTerminalController : public ByteSink {
+struct MyTerminalController : public Terminal::ByteSink {
   virtual ~MyTerminalController() {}
   virtual int Open(Terminal*) = 0;
   virtual StringPiece Read() = 0;
@@ -564,6 +564,7 @@ extern "C" int main(int argc, const char *argv[]) {
 #endif
     MenuItem{ "", "VGA Colors", "colors vga", }, MenuItem{ "", "Solarized Dark Colors", "colors solarized_dark" }, MenuItem { "", "Solarized Light Colors", "colors solarized_light" }
   };
+  app->AddNativeEditMenu();
   app->AddNativeMenu("View", view_menu);
 #endif
 
