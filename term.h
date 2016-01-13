@@ -20,17 +20,16 @@
 #define LFL_TERM_TERM_H__
 namespace LFL {
   
-struct TerminalWindow {
-  unique_ptr<Terminal::Controller> controller;
-  unique_ptr<Terminal> terminal;
-  TerminalWindow(Terminal::Controller *C) : controller(C) {}
+template <class TerminalType> struct TerminalWindowT {
+  unique_ptr<typename TerminalType::Controller> controller;
+  unique_ptr<TerminalType> terminal;
+  TerminalWindowT(typename TerminalType::Controller *C) : controller(C) {}
 
-  void                               Open (int w, int h, int font_size) { return OpenT<Terminal>(w, h, font_size); }
-  template <class TerminalType> void OpenT(int w, int h, int font_size) {
+  void Open(int w, int h, int font_size) {
     CHECK(w);
     CHECK(h);
     CHECK(font_size);
-    terminal = unique_ptr<Terminal>(new TerminalType(controller.get(), screen, Fonts::Get(FLAGS_default_font, "", font_size)));
+    terminal = unique_ptr<TerminalType>(new TerminalType(controller.get(), screen, Fonts::Get(FLAGS_default_font, "", font_size)));
     terminal->Activate();
     terminal->SetDimension(w, h);
     screen->default_textgui = terminal.get();
@@ -71,13 +70,13 @@ struct TerminalWindow {
     app->scheduler.Wakeup(0);
   }
 };
-  
+typedef TerminalWindowT<Terminal> TerminalWindow;
+
 struct NetworkTerminalController : public Terminal::Controller {
   Service *svc=0;
   Connection *conn=0;
   Callback detach_cb;
   string remote, read_buf, ret_buf;
-  bool frame_on_keyboard_input=0;
   NetworkTerminalController(Service *s, const string &r=string())
     : svc(s), detach_cb(bind(&NetworkTerminalController::ConnectedCB, this)), remote(r) {}
 
@@ -100,9 +99,9 @@ struct NetworkTerminalController : public Terminal::Controller {
     if (app->network_thread) app->scheduler.AddWaitForeverSocket(conn->socket, SocketSet::READABLE, 0);
   }
 
-  virtual void ClosedCB() {
+  virtual void ClosedCB(Socket socket) {
     CHECK(conn);
-    app->scheduler.DelWaitForeverSocket(conn->socket);
+    app->scheduler.DelWaitForeverSocket(socket);
     app->scheduler.Wakeup(0);
     conn = 0;
     Dispose();
@@ -111,14 +110,18 @@ struct NetworkTerminalController : public Terminal::Controller {
   virtual StringPiece Read() {
     if (!conn) return StringPiece();
     if (conn->state == Connection::Connected && NBReadable(conn->socket))
-      if (conn->Read() < 0) { ERROR(conn->Name(), ": Read"); Close(); return StringPiece(); }
-    ret_buf.assign(conn->rb.begin(), conn->rb.size());
+      if (conn->Read() < 0) { ERROR(conn->Name(), ": Read"); auto s=conn->socket; Close(); ClosedCB(s); return StringPiece(); }
+    read_buf.append(conn->rb.begin(), conn->rb.size());
     conn->rb.Flush(conn->rb.size());
+    swap(read_buf, ret_buf);
+    read_buf.clear();
     return ret_buf;
   }
 
   virtual int Write(const char *b, int l) {
-    return (conn && conn->state == Connection::Connected) ? write(conn->socket, b, l) : -1;
+    if (!conn || conn->state != Connection::Connected) return -1;
+    if (local_echo) read_buf.append(ReplaceNewlines(string(b, l), "\r\n")); 
+    return write(conn->socket, b, l);
   }
 };
 

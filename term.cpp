@@ -190,7 +190,7 @@ struct SSHTerminalController : public MyNetworkTerminalController {
   }
 
   void SSHReadCB(Connection *c, const StringPiece &b) { 
-    if (b.empty()) ClosedCB();
+    if (b.empty()) ClosedCB(conn->socket);
     else read_buf.append(b.data(), b.size());
   }
 
