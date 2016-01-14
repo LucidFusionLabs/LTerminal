@@ -111,7 +111,7 @@ struct MyTerminalWindow : public TerminalWindow {
   }
 
   void OpenedController() {
-    if (int len = FLAGS_command.size()) CHECK_EQ(len+1, controller->Write(StrCat(FLAGS_command, "\n").data(), len+1));
+    if (FLAGS_command.size()) CHECK_EQ(FLAGS_command.size()+1, controller->Write(StrCat(FLAGS_command, "\n")));
   }
 
   bool CustomShader() const { return activeshader != &app->video->shader_default; }
@@ -151,7 +151,7 @@ struct PTYTerminalController : public Terminal::Controller {
     return read_buf.data;
   }
 
-  int Write(const char *b, int l) { return write(fd, b, l); }
+  int Write(const StringPiece &b) { return write(fd, b.data(), b.size()); }
   void IOCtlWindowSize(int w, int h) {
     struct winsize ws;
     memzero(ws);
@@ -195,16 +195,16 @@ struct SSHTerminalController : public MyNetworkTerminalController {
   }
 
   void IOCtlWindowSize(int w, int h) { if (conn) SSHClient::SetTerminalWindowSize(conn, w, h); }
-  int Write(const char *b, int l) {
+  int Write(const StringPiece &b) {
 #ifdef LFL_MOBILE
     char buf[1];
-    if (l == 1 && ctrl_down && !(ctrl_down = false)) {
+    if (b.size() == 1 && ctrl_down && !(ctrl_down = false)) {
       TouchDevice::ToggleToolbarButton("ctrl");
-      b = &(buf[0] = Key::CtrlModified(*reinterpret_cast<const unsigned char *>(b)));
+      b = &(buf[0] = Key::CtrlModified(*reinterpret_cast<const unsigned char *>(b.data())));
     }
 #endif
     if (!conn || conn->state != Connection::Connected) return -1;
-    return SSHClient::WriteChannelData(conn, StringPiece(b, l));
+    return SSHClient::WriteChannelData(conn, b);
   }
 };
 

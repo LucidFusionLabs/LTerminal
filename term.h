@@ -118,10 +118,10 @@ struct NetworkTerminalController : public Terminal::Controller {
     return ret_buf;
   }
 
-  virtual int Write(const char *b, int l) {
+  virtual int Write(const StringPiece &b) {
     if (!conn || conn->state != Connection::Connected) return -1;
-    if (local_echo) read_buf.append(ReplaceNewlines(string(b, l), "\r\n")); 
-    return write(conn->socket, b, l);
+    if (local_echo) read_buf.append(ReplaceNewlines(b.str(), "\r\n")); 
+    return write(conn->socket, b.data(), b.size());
   }
 };
 
@@ -158,7 +158,10 @@ struct InteractiveTerminalController : public Terminal::Controller {
   }
 
   void IOCtlWindowSize(int w, int h) {}
-  int Write(const char *b, int l) {
+  int Write(const StringPiece &buf) {
+    int l = buf.size();
+    const char *b = buf.data();
+
     if (l > 1 && *b == '\x1b') {
       string escape(b+1, l-1);
       if (!FindAndDispatch(escapes, escape)) ERROR("unhandled escape: ", escape);
