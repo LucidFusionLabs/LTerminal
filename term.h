@@ -32,7 +32,7 @@ template <class TerminalType> struct TerminalWindowT {
     terminal = unique_ptr<TerminalType>(new TerminalType(controller.get(), screen, Fonts::Get(FLAGS_default_font, "", font_size)));
     terminal->Activate();
     terminal->SetDimension(w, h);
-    screen->default_textgui = terminal.get();
+    screen->default_textgui = [=]{ return terminal.get(); };
     CHECK(terminal->font);
 #ifdef FUZZ_DEBUG
     for (int i=0; i<256; i++) {
@@ -120,7 +120,6 @@ struct NetworkTerminalController : public Terminal::Controller {
 
   virtual int Write(const StringPiece &b) {
     if (!conn || conn->state != Connection::Connected) return -1;
-    if (local_echo) read_buf.append(ReplaceNewlines(b.str(), "\r\n")); 
     return write(conn->socket, b.data(), b.size());
   }
 };
