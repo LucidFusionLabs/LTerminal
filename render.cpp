@@ -31,16 +31,17 @@ using namespace LFL;
 extern "C" int main(int argc, const char *argv[]) {
   app->name = "LTerminalRenderSandbox";
   app->logfilename = StrCat(LFAppDownloadDir(), "lterm-render.txt");
-  if (app->Create(argc, argv, __FILE__)) { app->Free(); return -1; }
+  if (app->Create(argc, argv, __FILE__)) return -1;
 
   int optind = Singleton<FlagMap>::Get()->optind;
   if (optind >= argc) { fprintf(stderr, "Usage: %s [-flags] <socket-name>\n", argv[0]); return -1; }
-  // if (app->Init()) { app->Free(); return -1; }
-  (app->assets = new Assets())->Init();
+  // if (app->Init()) return -1;
+  app->net = make_unique<Network>();
+  (app->asset_loader = make_unique<AssetLoader>())->Init();
 
   // to cleanup crash leaked shm: for i in $( ipcs -m | grep "^m " | awk '{print $2}' ); do ipcrm -m $i; done
   const string socket_name = StrCat(argv[optind]);
-  process_api = unique_ptr<ProcessAPIServer>(new ProcessAPIServer());
+  process_api = make_unique<ProcessAPIServer>();
   process_api->OpenSocket(StrCat(argv[optind]));
 
 #ifdef __APPLE__
@@ -51,5 +52,6 @@ extern "C" int main(int argc, const char *argv[]) {
 
   process_api->HandleMessagesLoop();
   INFO("render: exiting");
+  delete process_api->conn;
   return 0;
 }

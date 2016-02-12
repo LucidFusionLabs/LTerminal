@@ -43,7 +43,6 @@ DEFINE_string(command,     "",     "Execute initial command");
 DEFINE_string(screenshot,  "",     "Screenshot and exit");
 extern FlagOfType<bool> FLAGS_lfapp_network_;
 
-BindMap *binds;
 unordered_map<string, Shader> shader_map;
 Browser *image_browser;
 int new_win_width = 80*Video::InitFontWidth(), new_win_height = 25*Video::InitFontHeight(), downscale_effects = 1;
@@ -51,7 +50,6 @@ int new_win_width = 80*Video::InitFontWidth(), new_win_height = 25*Video::InitFo
 void MyNewLinkCB(const shared_ptr<TextGUI::Link> &link) {
   const char *args = FindChar(link->link.c_str() + 6, isint2<'?', ':'>);
   string image_url(link->link, 0, args ? args - link->link.c_str() : string::npos);
-  printf("NewLinKCB %s\n", image_url.c_str());
   // if (SuffixMatch(image_url, ".gifv")) return;
   if (!FileSuffix::Image(image_url)) {
     return;
@@ -83,7 +81,7 @@ struct MyTerminalController {
   static Terminal::Controller *NewSSHTerminalController();
   static Terminal::Controller *NewTelnetTerminalController(const string &hostport);
   static void InitSSHTerminalController() {
-    ONCE({ if (app->network_thread) RunInNetworkThread([=]() { app->network->Enable(Singleton<SSHClient>::Get()); }); });
+    ONCE({ if (app->network_thread) app->RunInNetworkThread([=]() { app->net->Enable((app->net->ssh_client = make_unique<SSHClient>()).get()); }); });
   }
 };
 
@@ -98,11 +96,10 @@ struct MyNetworkTerminalController : public NetworkTerminalController {
 
 struct MyTerminalWindow : public TerminalWindow {
   Shader *activeshader;
-  FrameBuffer *effects_buffer=0;
   int font_size, join_read_pending=0;
 
   MyTerminalWindow(Terminal::Controller *C) :
-    TerminalWindow(C), activeshader(&app->video->shader_default), font_size(FLAGS_default_font_size) {}
+    TerminalWindow(C), activeshader(&app->shaders->shader_default), font_size(FLAGS_default_font_size) {}
 
   void Open() {
     TerminalWindow::Open(80, 25, font_size);
@@ -114,7 +111,7 @@ struct MyTerminalWindow : public TerminalWindow {
     if (FLAGS_command.size()) CHECK_EQ(FLAGS_command.size()+1, controller->Write(StrCat(FLAGS_command, "\n")));
   }
 
-  bool CustomShader() const { return activeshader != &app->video->shader_default; }
+  bool CustomShader() const { return activeshader != &app->shaders->shader_default; }
   void UpdateTargetFPS() { app->scheduler.SetAnimating(CustomShader() || (screen->lfapp_console && screen->lfapp_console->animating)); }
 };
 
@@ -134,7 +131,7 @@ struct PTYTerminalController : public Terminal::Controller {
   PTYTerminalController() : read_buf(65536) {}
   virtual ~PTYTerminalController() { if (process.in) app->scheduler.DelWaitForeverSocket(fileno(process.in)); }
 
-  int Open(Terminal*) {
+  int Open(TextArea*) {
     setenv("TERM", "xterm", 1);
     string shell = BlankNull(getenv("SHELL")), lang = BlankNull(getenv("LANG"));
     if (shell.empty()) setenv("SHELL", (shell = "/bin/bash").c_str(), 1);
@@ -163,11 +160,11 @@ struct PTYTerminalController : public Terminal::Controller {
 #endif
 
 struct SSHTerminalController : public MyNetworkTerminalController {
-  SSHTerminalController() : MyNetworkTerminalController(Singleton<SSHClient>::Get()) {}
+  SSHTerminalController() : MyNetworkTerminalController(app->net->ssh_client.get()) {}
 
   int Open(Terminal *term) {
-    RunInNetworkThread([=](){
-      conn = Singleton<SSHClient>::Get()->Open
+    app->RunInNetworkThread([=](){
+      conn = app->net->ssh_client->Open
       (FLAGS_ssh, SSHClient::ResponseCB(bind(&SSHTerminalController::SSHReadCB, this, _1, _2)), &detach_cb);
       if (!conn) { Dispose(); return; }
       SSHClient::SetTerminalWindowSize(conn, term->term_width, term->term_height);
@@ -239,11 +236,11 @@ struct ShellTerminalController : public InteractiveTerminalController {
   }
 
   void MyNetworkThreadNSLookup(const string &host) {
-    Singleton<Resolver>::Get()->NSLookup(host, bind(&ShellTerminalController::MyNetworkThreadNSLookupResponse, this, host, _1, _2));
+    app->net->system_resolver->NSLookup(host, bind(&ShellTerminalController::MyNetworkThreadNSLookupResponse, this, host, _1, _2));
   }
 
   void MyNetworkThreadNSLookupResponse(const string &host, IPV4::Addr ipv4_addr, DNS::Response*) {
-    RunInMainThread(new Callback(bind(&ShellTerminalController::UnBlockWithResponse, this, StrCat("host = ", IPV4::Text(ipv4_addr)))));
+    app->RunInMainThread(bind(&ShellTerminalController::UnBlockWithResponse, this, StrCat("host = ", IPV4::Text(ipv4_addr))));
   }
 
   void MyHelpCmd(const vector<string> &arg) {
@@ -264,7 +261,7 @@ void MyTerminalController::ChangeCurrent(Terminal::Controller *new_controller_in
 
 Terminal::Controller *MyTerminalController::NewSSHTerminalController()                  { InitSSHTerminalController(); return new SSHTerminalController(); }
 Terminal::Controller *MyTerminalController::NewShellTerminalController(const string &m) { InitSSHTerminalController(); return new ShellTerminalController(m); }
-Terminal::Controller *MyTerminalController::NewTelnetTerminalController(const string &h) { return new NetworkTerminalController(Singleton<HTTPClient>::Get(), h); }
+Terminal::Controller *MyTerminalController::NewTelnetTerminalController(const string &h) { return new NetworkTerminalController(app->net->http_client.get(), h); }
 
 Terminal::Controller *MyTerminalController::NewDefaultTerminalController() {
 #if defined(WIN32) || defined(LFL_MOBILE)
@@ -307,7 +304,7 @@ int Frame(Window *W, unsigned clicks, int flag) {
   if (effects) screen->gd->UseShader(0);
 
   W->DrawDialogs();
-  if (FLAGS_draw_fps) Fonts::Default()->Draw(StringPrintf("FPS = %.2f", FPS()), point(W->width*.85, 0));
+  if (FLAGS_draw_fps) Fonts::Default()->Draw(StringPrintf("FPS = %.2f", app->FPS()), point(W->width*.85, 0));
   if (FLAGS_screenshot.size()) ONCE(app->shell.screenshot(vector<string>(1, FLAGS_screenshot)); app->run=0;);
   return 0;
 }
@@ -348,14 +345,10 @@ void MyColorsCmd(const vector<string> &arg) {
 void MyShaderCmd(const vector<string> &arg) {
   string shader_name = arg.size() ? arg[0] : "";
   MyTerminalWindow *tw = (MyTerminalWindow*)screen->user1;
-  if (tw->effects_buffer) {
-    tw->effects_buffer->tex.ClearGL();
-    Replace(&tw->effects_buffer, (FrameBuffer*)0);
-  }
   auto shader = shader_map.find(shader_name);
   bool found = shader != shader_map.end();
   if (found && !shader->second.ID) Shader::CreateShaderToy(shader_name, Asset::FileContents(StrCat(shader_name, ".glsl")), &shader->second);
-  tw->activeshader = found ? &shader->second : &app->video->shader_default;
+  tw->activeshader = found ? &shader->second : &app->shaders->shader_default;
   tw->UpdateTargetFPS();
 }
 
@@ -408,7 +401,16 @@ void MyWindowInitCB(Window *W) {
   W->height = new_win_height;
   W->caption = app->name;
   W->frame_cb = Frame;
-  W->binds = binds;
+  W->binds = make_unique<BindMap>();
+#ifndef WIN32
+  W->binds->Add(Bind('n',       Key::Modifier::Cmd, Bind::CB(app->create_win_f)));
+#endif                       
+  W->binds->Add(Bind('=',       Key::Modifier::Cmd, Bind::CB(bind(&MyIncreaseFontCmd, vector<string>()))));
+  W->binds->Add(Bind('-',       Key::Modifier::Cmd, Bind::CB(bind(&MyDecreaseFontCmd, vector<string>()))));
+  W->binds->Add(Bind('6',       Key::Modifier::Cmd, Bind::CB(bind([=](){ app->shell.console(vector<string>()); }))));
+  W->binds->Add(Bind(Key::Up,   Key::Modifier::Cmd, Bind::CB(bind([=](){ if (W->user1) static_cast<MyTerminalWindow*>(W->user1)->ScrollHistory(1); }))));
+  W->binds->Add(Bind(Key::Down, Key::Modifier::Cmd, Bind::CB(bind([=](){ if (W->user1) static_cast<MyTerminalWindow*>(W->user1)->ScrollHistory(0); }))));
+  W->input_bind.push_back(W->binds.get());
 }
 
 void MyWindowStartCB(Window *W) {
@@ -421,7 +423,7 @@ void MyWindowStartCB(Window *W) {
 void MyWindowCloneCB(Window *W) {
   if (FLAGS_lfapp_console) W->InitLFAppConsole();
   W->user1 = new MyTerminalWindow(MyTerminalController::NewDefaultTerminalController());
-  W->input_bind.push_back(W->binds);
+  W->input_bind.push_back(W->binds.get());
   MyWindowStartCB(W);
 }
 
@@ -438,7 +440,6 @@ extern "C" void LFAppCreateCB() {
 #ifdef LFL_DEBUG
   app->logfilename = StrCat(LFAppDownloadDir(), "lterm.txt");
 #endif
-  binds = new BindMap();
   MyWindowInitCB(screen);
   FLAGS_lfapp_video = FLAGS_lfapp_input = 1;
 #ifdef LFL_MOBILE
@@ -447,7 +448,7 @@ extern "C" void LFAppCreateCB() {
 }
 
 extern "C" int main(int argc, const char *argv[]) {
-  if (app->Create(argc, argv, __FILE__, LFAppCreateCB)) { app->Free(); return -1; }
+  if (app->Create(argc, argv, __FILE__, LFAppCreateCB)) return -1;
   bool start_network_thread = !(FLAGS_lfapp_network_.override && !FLAGS_lfapp_network);
   app->splash_color = &Singleton<Terminal::SolarizedDarkColors>::Get()->c[Terminal::Colors::bg_index];
 
@@ -472,16 +473,16 @@ extern "C" int main(int argc, const char *argv[]) {
   }
 #endif
 
-  if (app->Init()) { app->Free(); return -1; }
+  if (app->Init()) return -1;
   CHECK(app->video->opengl_framebuffer);
   app->window_init_cb = MyWindowInitCB;
   app->window_closed_cb = MyWindowClosedCB;
   app->shell.command.push_back(Shell::Command("colors", bind(&MyColorsCmd, _1)));
   app->shell.command.push_back(Shell::Command("shader", bind(&MyShaderCmd, _1)));
   if (start_network_thread) {
-    app->network = new Network();
+    app->net = make_unique<Network>();
 #if !defined(LFL_MOBILE)
-    app->render_process = new ProcessAPIClient();
+    app->render_process = make_unique<ProcessAPIClient>();
     app->render_process->StartServerProcess(StrCat(app->bindir, "lterm-render-sandbox", LocalFile::ExecutableSuffix));
 #endif
     CHECK(app->CreateNetworkThread(false, true));
@@ -490,14 +491,7 @@ extern "C" int main(int argc, const char *argv[]) {
   app->create_win_f = bind(&Application::CreateNewWindow, app, &MyWindowCloneCB);
 #ifdef WIN32
   app->input.paste_bind = Bind(Mouse::Button::_2);
-#else
-  binds->Add(Bind('n',       Key::Modifier::Cmd, Bind::CB(app->create_win_f)));
-#endif                       
-  binds->Add(Bind('=',       Key::Modifier::Cmd, Bind::CB(bind(&MyIncreaseFontCmd, vector<string>()))));
-  binds->Add(Bind('-',       Key::Modifier::Cmd, Bind::CB(bind(&MyDecreaseFontCmd, vector<string>()))));
-  binds->Add(Bind('6',       Key::Modifier::Cmd, Bind::CB(bind([&](){ app->shell.console(vector<string>()); }))));
-  binds->Add(Bind(Key::Up,   Key::Modifier::Cmd, Bind::CB(bind([&](){ if (screen->user1) static_cast<MyTerminalWindow*>(screen->user1)->ScrollHistory(1); }))));
-  binds->Add(Bind(Key::Down, Key::Modifier::Cmd, Bind::CB(bind([&](){ if (screen->user1) static_cast<MyTerminalWindow*>(screen->user1)->ScrollHistory(0); }))));
+#endif
 
 #ifndef LFL_MOBILE
   vector<MenuItem> view_menu{
@@ -531,7 +525,9 @@ extern "C" int main(int argc, const char *argv[]) {
   if      (FLAGS_interpreter)  controller = MyTerminalController::NewShellTerminalController("");
   else if (!FLAGS_ssh.empty()) controller = MyTerminalController::NewSSHTerminalController();
   else                         controller = MyTerminalController::NewDefaultTerminalController();
-  image_browser = new Browser();
+
+  unique_ptr<Browser> image_browser_owner = make_unique<Browser>();
+  image_browser = image_browser_owner.get();
   MyTerminalWindow *tw = new MyTerminalWindow(controller);
   screen->user1 = tw;
   MyWindowStartCB(screen);

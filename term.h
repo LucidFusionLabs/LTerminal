@@ -21,15 +21,16 @@
 namespace LFL {
   
 template <class TerminalType> struct TerminalWindowT {
-  unique_ptr<typename TerminalType::Controller> controller;
+  unique_ptr<typename Terminal::Controller> controller;
   unique_ptr<TerminalType> terminal;
-  TerminalWindowT(typename TerminalType::Controller *C) : controller(C) {}
+  Color open_fg=Color::white, open_bg=Color::clear;
+  TerminalWindowT(typename Terminal::Controller *C) : controller(C) {}
 
   void Open(int w, int h, int font_size) {
     CHECK(w);
     CHECK(h);
     CHECK(font_size);
-    terminal = unique_ptr<TerminalType>(new TerminalType(controller.get(), screen, Fonts::Get(FLAGS_default_font, "", font_size)));
+    terminal = unique_ptr<TerminalType>(new TerminalType(controller.get(), screen, Fonts::Get(FLAGS_default_font, "", font_size, open_fg, open_bg)));
     terminal->Activate();
     terminal->SetDimension(w, h);
     screen->default_textgui = [=]{ return terminal.get(); };
@@ -80,11 +81,11 @@ struct NetworkTerminalController : public Terminal::Controller {
   NetworkTerminalController(Service *s, const string &r=string())
     : svc(s), detach_cb(bind(&NetworkTerminalController::ConnectedCB, this)), remote(r) {}
 
-  virtual int Open(Terminal *term) {
+  virtual int Open(TextArea*) {
     if (remote.empty()) return -1;
-    RunInNetworkThread([=](){
+    app->RunInNetworkThread([=](){
       if (!(conn = svc->Connect(remote, 0, &detach_cb)))
-        RunInMainThread(new Callback(bind(&NetworkTerminalController::Dispose, this)));
+        app->RunInMainThread(bind(&NetworkTerminalController::Dispose, this));
     });
     return app->network_thread ? -1 : (conn ? conn->socket : -1);
   }
@@ -92,7 +93,7 @@ struct NetworkTerminalController : public Terminal::Controller {
   virtual void Close() {
     if (!conn || conn->state != Connection::Connected) return;
     conn->SetError();
-    RunInNetworkThread([=](){ app->network->ConnClose(svc, conn, NULL); });
+    app->RunInNetworkThread([=](){ app->net->ConnClose(svc, conn, NULL); });
   }
 
   virtual void ConnectedCB() {
@@ -125,7 +126,7 @@ struct NetworkTerminalController : public Terminal::Controller {
 };
 
 struct InteractiveTerminalController : public Terminal::Controller {
-  Terminal *term=0;
+  TextArea *term=0;
   Shell shell;
   UnbackedTextGUI cmd;
   string buf, read_buf, ret_buf, prompt="> ", header;
@@ -147,7 +148,7 @@ struct InteractiveTerminalController : public Terminal::Controller {
   }
   virtual ~InteractiveTerminalController() { cmd.WriteHistory(LFAppDownloadDir(), "shell", ""); }
 
-  int Open(Terminal *T) { (term=T)->Write(StrCat(header, prompt)); return -1; }
+  int Open(TextArea *T) { (term=T)->Write(StrCat(header, prompt)); return -1; }
   StringPiece Read() { swap(read_buf, ret_buf); read_buf.clear(); return ret_buf; }
   void UnBlockWithResponse(const string &t) { if (!(blocking=0)) ReadCB(StrCat(t, "\r\n", prompt)); }
 
