@@ -20,98 +20,38 @@
 #define LFL_TERM_TERM_H__
 namespace LFL {
   
-template <class TerminalType> struct TerminalWindowT {
-  unique_ptr<typename Terminal::Controller> controller;
-  unique_ptr<TerminalType> terminal;
-  Color open_fg=Color::white, open_bg=Color::clear;
-  TerminalWindowT(typename Terminal::Controller *C) : controller(C) {}
-
-  void Open(int w, int h, int font_size) {
-    CHECK(w);
-    CHECK(h);
-    CHECK(font_size);
-    terminal = unique_ptr<TerminalType>(new TerminalType(controller.get(), screen, Fonts::Get(FLAGS_default_font, "", font_size, open_fg, open_bg)));
-    terminal->Activate();
-    terminal->SetDimension(w, h);
-    screen->default_textgui = [=]{ return terminal.get(); };
-    CHECK(terminal->font);
-#ifdef FUZZ_DEBUG
-    for (int i=0; i<256; i++) {
-      INFO("fuzz i = ", i);
-      for (int j=0; j<256; j++)
-        for (int k=0; k<256; k++)
-          terminal->Write(string(1, i), 1, 1);
-    }
-    terminal->Newline(1);
-    terminal->Write("Hello world.", 1, 1);
-#else
-    app->scheduler.AddWaitForeverMouse();
-    OpenController();
-#endif
-  }
-
-  virtual void OpenedController() {}
-  void OpenController() {
-    int fd = controller->Open(terminal.get());
-    if (fd != -1) app->scheduler.AddWaitForeverSocket(fd, SocketSet::READABLE, 0);
-    if (controller->frame_on_keyboard_input) app->scheduler.AddWaitForeverKeyboard();
-    else                                     app->scheduler.DelWaitForeverKeyboard();
-    OpenedController();
-  }
-
-  int ReadAndUpdateTerminalFramebuffer() {
-    StringPiece s = controller->Read();
-    if (s.len) terminal->Write(s);
-    return s.len;
-  }
-
-  void ScrollHistory(bool up_or_down) {
-    if (up_or_down) terminal->ScrollUp();
-    else            terminal->ScrollDown();
-    app->scheduler.Wakeup(0);
-  }
-};
-typedef TerminalWindowT<Terminal> TerminalWindow;
-
 struct NetworkTerminalController : public Terminal::Controller {
   Service *svc=0;
   Connection *conn=0;
-  Callback detach_cb;
+  Callback detach_cb, close_cb;
   string remote, read_buf, ret_buf;
-  NetworkTerminalController(Service *s, const string &r=string())
-    : svc(s), detach_cb(bind(&NetworkTerminalController::ConnectedCB, this)), remote(r) {}
+  NetworkTerminalController(Service *s, const string &r, const Callback &ccb)
+    : svc(s), detach_cb(bind(&NetworkTerminalController::ConnectedCB, this)), close_cb(ccb), remote(r) {}
+  virtual ~NetworkTerminalController() { if (conn) app->scheduler.DelWaitForeverSocket(conn->socket); }
 
   virtual int Open(TextArea*) {
     if (remote.empty()) return -1;
     app->RunInNetworkThread([=](){
       if (!(conn = svc->Connect(remote, 0, &detach_cb)))
-        app->RunInMainThread(bind(&NetworkTerminalController::Dispose, this));
-    });
+        if (app->network_thread) app->RunInMainThread([=](){ Close(); }); });
     return app->network_thread ? -1 : (conn ? conn->socket : -1);
   }
 
   virtual void Close() {
     if (!conn || conn->state != Connection::Connected) return;
-    conn->SetError();
-    app->RunInNetworkThread([=](){ app->net->ConnClose(svc, conn, NULL); });
+    if (app->network_thread) app->scheduler.DelWaitForeverSocket(conn->socket);
+    app->net->ConnCloseDetached(svc, conn);
+    conn = 0;
+    close_cb();
   }
 
   virtual void ConnectedCB() {
     if (app->network_thread) app->scheduler.AddWaitForeverSocket(conn->socket, SocketSet::READABLE, 0);
   }
 
-  virtual void ClosedCB(Socket socket) {
-    CHECK(conn);
-    app->scheduler.DelWaitForeverSocket(socket);
-    app->scheduler.Wakeup(0);
-    conn = 0;
-    Dispose();
-  }
-
   virtual StringPiece Read() {
-    if (!conn) return StringPiece();
-    if (conn->state == Connection::Connected && NBReadable(conn->socket))
-      if (conn->Read() < 0) { ERROR(conn->Name(), ": Read"); auto s=conn->socket; Close(); ClosedCB(s); return StringPiece(); }
+    if (!conn || conn->state != Connection::Connected || !NBReadable(conn->socket)) return StringPiece();
+    if (conn->Read() < 0) { ERROR(conn->Name(), ": Read"); Close(); return StringPiece(); }
     read_buf.append(conn->rb.begin(), conn->rb.size());
     conn->rb.Flush(conn->rb.size());
     swap(read_buf, ret_buf);
@@ -128,20 +68,17 @@ struct NetworkTerminalController : public Terminal::Controller {
 struct InteractiveTerminalController : public Terminal::Controller {
   TextArea *term=0;
   Shell shell;
-  UnbackedTextGUI cmd;
+  UnbackedTextBox cmd;
   string buf, read_buf, ret_buf, prompt="> ", header;
-  bool blocking=0;
-  Terminal::Controller *next_controller=0;
-  function<void(Terminal::Controller*, unique_ptr<Terminal::Controller>*)> next_controller_cb;
-
-  map<string, Callback> escapes = {
-    { "OA", bind([&] { cmd.HistUp();   ReadCB(StrCat("\x0d", prompt, String::ToUTF8(cmd.cmd_line.Text16()), "\x1b[K")); }) },
-    { "OB", bind([&] { cmd.HistDown(); ReadCB(StrCat("\x0d", prompt, String::ToUTF8(cmd.cmd_line.Text16()), "\x1b[K")); }) },
-    { "OC", bind([&] { if (cmd.cursor.i.x < cmd.cmd_line.Size()) { ReadCB(string(1, cmd.cmd_line[cmd.cursor.i.x].Id())); cmd.CursorRight(); } }) },
-    { "OD", bind([&] { if (cmd.cursor.i.x)                       { ReadCB("\x08");                                       cmd.CursorLeft();  } }) },
+  bool blocking=0, done=0;
+  unordered_map<string, Callback> escapes = {
+    { "OA", bind([&] { cmd.HistUp();   WriteText(StrCat("\x0d", prompt, String::ToUTF8(cmd.cmd_line.Text16()), "\x1b[K")); }) },
+    { "OB", bind([&] { cmd.HistDown(); WriteText(StrCat("\x0d", prompt, String::ToUTF8(cmd.cmd_line.Text16()), "\x1b[K")); }) },
+    { "OC", bind([&] { if (cmd.cursor.i.x < cmd.cmd_line.Size()) { WriteText(string(1, cmd.cmd_line[cmd.cursor.i.x].Id())); cmd.CursorRight(); } }) },
+    { "OD", bind([&] { if (cmd.cursor.i.x)                       { WriteText("\x08");                                       cmd.CursorLeft();  } }) },
   };
 
-  InteractiveTerminalController() : cmd(Fonts::Default()) {
+  InteractiveTerminalController() : cmd(FontDesc::Default()) {
     cmd.runcb = bind(&Shell::Run, &shell, _1);
     cmd.ReadHistory(LFAppDownloadDir(), "shell");
     frame_on_keyboard_input = true;
@@ -150,12 +87,7 @@ struct InteractiveTerminalController : public Terminal::Controller {
 
   int Open(TextArea *T) { (term=T)->Write(StrCat(header, prompt)); return -1; }
   StringPiece Read() { swap(read_buf, ret_buf); read_buf.clear(); return ret_buf; }
-  void UnBlockWithResponse(const string &t) { if (!(blocking=0)) ReadCB(StrCat(t, "\r\n", prompt)); }
-
-  void ReadCB(const StringPiece &b) {
-    if (screen->animating) read_buf.append(b.data(), b.size());
-    else if (term) term->Write(b);
-  }
+  void UnBlockWithResponse(const string &t) { blocking=0; WriteText(StrCat(t, "\r\n", prompt)); }
 
   void IOCtlWindowSize(int w, int h) {}
   int Write(const StringPiece &buf) {
@@ -169,15 +101,58 @@ struct InteractiveTerminalController : public Terminal::Controller {
     } else CHECK_EQ(1, l);
 
     bool cursor_last = cmd.cursor.i.x == cmd.cmd_line.Size();
-    if      (*b == '\r') { if (1) { cmd.Enter(); ReadCB("\r\n" + ((!next_controller && !blocking) ? prompt : ""));      } }
-    else if (*b == 0x7f) { if (cmd.cursor.i.x) { ReadCB((cursor_last ? "\b \b" : "\x08\x1b[1P"));        cmd.Erase();   } }
-    else                 { if (1)              { ReadCB((cursor_last ? "" : "\x1b[1@") + string(1, *b)); cmd.Input(*b); } }
-
-    unique_ptr<Terminal::Controller> self;
-    if (auto c = GetThenAssignNull(&next_controller)) next_controller_cb(c, &self);
+    if      (*b == '\r') { if (1) { cmd.Enter(); WriteText("\r\n" + ((!done && !blocking) ? prompt : "")); } }
+    else if (*b == 0x7f) { if (cmd.cursor.i.x) { WriteText((cursor_last ? "\b \b" : "\x08\x1b[1P"));        cmd.Erase();   } }
+    else                 { if (1)              { WriteText((cursor_last ? "" : "\x1b[1@") + string(1, *b)); cmd.Input(*b); } }
     return l;
   }
+
+  void WriteText(const StringPiece &b) {
+    if (screen->animating) read_buf.append(b.data(), b.size());
+    else if (term) term->Write(b);
+  }
 };
+
+template <class TerminalType> struct TerminalWindowT {
+  TerminalType *terminal;
+  unique_ptr<Terminal::Controller> controller, last_controller;
+
+  TerminalWindowT(TerminalType *t, int w, int h) : terminal(t) {
+    terminal->Activate();
+    terminal->SetDimension(w, h);
+#ifdef FUZZ_DEBUG
+    for (int i=0; i<256; i++) {
+      INFO("fuzz i = ", i);
+      for (int j=0; j<256; j++)
+        for (int k=0; k<256; k++)
+          terminal->Write(string(1, i), 1, 1);
+    }
+    terminal->Newline(1);
+    terminal->Write("Hello world.", 1, 1);
+#endif
+  }
+
+  virtual void OpenedController() {}
+
+  void ChangeController(unique_ptr<Terminal::Controller> new_controller) {
+    if (auto ic = dynamic_cast<InteractiveTerminalController*>(controller.get())) ic->done = true;
+    controller.swap(last_controller);
+    controller = move(new_controller);
+    terminal->sink = controller.get();
+    int fd = controller->Open(terminal);
+    if (fd != -1) app->scheduler.AddWaitForeverSocket(fd, SocketSet::READABLE, 0);
+    if (controller->frame_on_keyboard_input) app->scheduler.AddWaitForeverKeyboard();
+    else                                     app->scheduler.DelWaitForeverKeyboard();
+    OpenedController();
+  }
+
+  int ReadAndUpdateTerminalFramebuffer() {
+    StringPiece s = controller->Read();
+    if (s.len) terminal->Write(s);
+    return s.len;
+  }
+};
+typedef TerminalWindowT<Terminal> TerminalWindow;
 
 }; // namespace LFL
 #endif // LFL_TERM_TERM_H__
