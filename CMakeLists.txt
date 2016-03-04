@@ -1,53 +1,25 @@
 # $Id: CMakeLists.txt 1320 2014-10-26 08:12:52Z justin $
 
-lfl_clear_projects()
-set(LFL_PNG 1)
-set(LFL_GIF 1)
-set(LFL_JPEG 1)
-set(LFL_HEADLESS 1)
-set(LFL_FLATBUFFERS 1)
-if(LFL_ANDROID)
-elseif(LFL_IPHONE)
-else()
-  if(NOT WIN32)
-    set(LFL_GLOG 1)
-  endif()
-endif()
-
 lfl_project(lterm-render-sandbox)
-add_subdirectory(../core/lfapp ${CMAKE_CURRENT_BINARY_DIR}/${LFL_PROJECT}_lfapp_obj)
-lfapp_add_target(lterm-render-sandbox render.cpp)
+lfl_add_target(lterm-render-sandbox render.cpp)
 target_compile_definitions(lterm-render-sandbox PUBLIC ${LFAPP_DEF})
 target_include_directories(lterm-render-sandbox PUBLIC ${LFAPP_INCLUDE})
-lfapp_post_build_copy_bin(lterm-render-sandbox lterm-render-sandbox LTerminal)
-
-lfl_clear_projects()
-set(LFL_PNG 1)
-set(LFL_GLES2 1)
-set(LFL_OPENSSL 1)
-set(LFL_LFLVIDEO 1)
-set(LFL_LFLINPUT 1)
-set(LFL_FLATBUFFERS 1)
-if(NOT WIN32 AND NOT LFL_ANDROID)
-  set(LFL_ICONV 1)
-endif()
-if(LFL_ANDROID)
-elseif(LFL_IPHONE)
-else()
-  set(LFL_GLEW 1)
-  if(NOT WIN32)
-    set(LFL_GLOG 1)
-    set(LFL_FREETYPE 1)
-  endif()
-endif()
+target_link_libraries(lterm-render-sandbox ${LFL_APP_LIB} app_null_os app_null_framework app_null_graphics
+                      app_null_audio app_null_camera app_null_matrix app_null_fft
+                      app_simple_resampler app_simple_loader ${LFL_APP_CONVERT} app_libpng_png
+                      app_libjpeg_jpeg app_giflib_gif app_null_css app_null_ttf app_null_ssl
+                      app_null_crypto app_null_dh)
+lfl_post_build_copy_bin(lterm-render-sandbox lterm-render-sandbox LTerminal)
 
 lfl_project(lterm)
-add_subdirectory(../core/lfapp ${CMAKE_CURRENT_BINARY_DIR}/${LFL_PROJECT}_lfapp_obj)
-lfapp_add_target(lterm term.cpp term.rc)
+lfl_add_target(lterm term.cpp term.rc)
 target_compile_definitions(lterm PUBLIC ${LFAPP_DEF})
 target_include_directories(lterm PUBLIC ${LFAPP_INCLUDE})
-lfapp_post_build_start(lterm lterm LTerminal)
-if(WIN32)
-  add_dependencies(lterm libjpeg libgif)
-endif()
+target_link_libraries(lterm ${LFL_APP_LIB} ${LFL_APP_OS} ${LFL_APP_FRAMEWORK} ${LFL_APP_GRAPHICS}
+                      app_null_audio app_null_camera app_null_matrix app_null_fft
+                      app_simple_resampler app_simple_loader ${LFL_APP_CONVERT} app_libpng_png
+                      app_null_jpeg app_null_gif app_null_css app_freetype_ttf app_openssl_ssl
+                      ${LFL_APP_CRYPTO} app_openssl_dh)
+lfl_post_build_start(lterm lterm LTerminal)
 add_dependencies(lterm-render-sandbox lterm)
+

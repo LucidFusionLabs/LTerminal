@@ -16,8 +16,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "lfapp/lfapp.h"
-#include "lfapp/ipc.h"
+#include "core/app/app.h"
+#include "core/app/ipc.h"
 
 #ifdef __APPLE__
 #include <sandbox.h>
@@ -28,14 +28,21 @@ unique_ptr<ProcessAPIServer> process_api;
 }; // namespace LFL
 using namespace LFL;
 
-extern "C" int main(int argc, const char *argv[]) {
+extern "C" void MyAppInit() {
   app->name = "LTerminalRenderSandbox";
+  app->log_pid = true;
+#ifdef LFL_DEBUG
   app->logfilename = StrCat(LFAppDownloadDir(), "lterm-render.txt");
+#endif
+}
+
+extern "C" int MyAppMain(int argc, const char* const* argv) {
   if (app->Create(argc, argv, __FILE__)) return -1;
 
   int optind = Singleton<FlagMap>::Get()->optind;
   if (optind >= argc) { fprintf(stderr, "Usage: %s [-flags] <socket-name>\n", argv[0]); return -1; }
   // if (app->Init()) return -1;
+  screen->gd = static_cast<GraphicsDevice*>(LFAppCreateGraphicsDevice(2));
   app->net = make_unique<Network>();
   (app->asset_loader = make_unique<AssetLoader>())->Init();
 

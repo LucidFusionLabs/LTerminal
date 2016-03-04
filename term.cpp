@@ -16,18 +16,18 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "lfapp/lfapp.h"
-#include "lfapp/dom.h"
-#include "lfapp/css.h"
-#include "lfapp/flow.h"
-#include "lfapp/gui.h"
-#include "lfapp/crypto.h"
-#include "lfapp/net/ssh.h"
-#include "lfapp/ipc.h"
-#include "lfapp/net/resolver.h"
-#include "lfapp/browser.h"
-#include "web/html.h"
-#include "web/document.h"
+#include "core/app/app.h"
+#include "core/web/dom.h"
+#include "core/web/css.h"
+#include "core/app/flow.h"
+#include "core/app/gui.h"
+#include "core/app/crypto.h"
+#include "core/app/net/ssh.h"
+#include "core/app/ipc.h"
+#include "core/app/net/resolver.h"
+#include "core/app/browser.h"
+#include "core/web/html.h"
+#include "core/web/document.h"
 #include "term.h"
 
 #ifndef WIN32
@@ -321,7 +321,7 @@ struct MyTerminalWindow : public TerminalWindow {
   void FontCmd(const vector<string> &arg) {
     if (arg.size() < 2) return app->LaunchNativeFontChooser(screen->default_font.desc, "choosefont");
     if (arg.size() > 2) FLAGS_default_font_flag = atoi(arg[2]);
-    FLAGS_default_font = arg[0];
+    screen->default_font.desc.name = arg[0];
     SetFontSize(atof(arg[1]));
     app->scheduler.Wakeup(0);
   }
@@ -387,7 +387,7 @@ void MyWindowStart(Window *W) {
     W->user1 = MakeTyped(tw);
   }
 
-  auto tw = GetTyped<MyTerminalWindow>(W->user1);
+  auto tw = GetTyped<MyTerminalWindow*>(W->user1);
   if (FLAGS_console) W->InitConsole(bind(&MyTerminalWindow::ConsoleAnimatingCB, tw, W));
   W->frame_cb = bind(&MyTerminalWindow::Frame, tw, _1, _2, _3);
   W->default_textbox = [=]{ return tw->terminal; };
@@ -418,14 +418,14 @@ void MyWindowStart(Window *W) {
 }
 
 void MyWindowClosed(Window *W) {
-  delete GetTyped<MyTerminalWindow>(W->user1);
+  delete GetTyped<MyTerminalWindow*>(W->user1);
   delete W;
 }
 
 }; // naemspace LFL
 using namespace LFL;
 
-extern "C" void LFAppCreateCB() {
+extern "C" void MyAppInit() {
   FLAGS_lfapp_video = FLAGS_lfapp_input = 1;
 #ifdef LFL_DEBUG
   app->logfilename = StrCat(LFAppDownloadDir(), "lterm.txt");
@@ -441,8 +441,8 @@ extern "C" void LFAppCreateCB() {
 #endif
 }
 
-extern "C" int main(int argc, const char *argv[]) {
-  if (app->Create(argc, argv, __FILE__, LFAppCreateCB)) return -1;
+extern "C" int MyAppMain(int argc, const char* const* argv) {
+  if (app->Create(argc, argv, __FILE__)) return -1;
   app->splash_color = &Singleton<Terminal::SolarizedDarkColors>::Get()->c[Terminal::Colors::bg_index];
   bool start_network_thread = !(FLAGS_lfapp_network_.override && !FLAGS_lfapp_network);
 
@@ -477,6 +477,7 @@ extern "C" int main(int argc, const char *argv[]) {
   if (start_network_thread) {
     app->net = make_unique<Network>();
 #if !defined(LFL_MOBILE)
+    app->log_pid = true;
     app->render_process = make_unique<ProcessAPIClient>();
     app->render_process->StartServerProcess(StrCat(app->bindir, "lterm-render-sandbox", LocalFile::ExecutableSuffix));
 #endif
