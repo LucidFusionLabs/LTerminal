@@ -29,6 +29,8 @@ unique_ptr<ProcessAPIServer> process_api;
 using namespace LFL;
 
 extern "C" void MyAppInit() {
+  app = new Application();
+  screen = new Window();
   app->name = "LTerminalRenderSandbox";
   app->log_pid = true;
 #ifdef LFL_DEBUG
@@ -37,12 +39,13 @@ extern "C" void MyAppInit() {
 }
 
 extern "C" int MyAppMain(int argc, const char* const* argv) {
+  if (!app) MyAppInit();
   if (app->Create(argc, argv, __FILE__)) return -1;
 
   int optind = Singleton<FlagMap>::Get()->optind;
   if (optind >= argc) { fprintf(stderr, "Usage: %s [-flags] <socket-name>\n", argv[0]); return -1; }
   // if (app->Init()) return -1;
-  screen->gd = static_cast<GraphicsDevice*>(LFAppCreateGraphicsDevice(2));
+  screen->gd = CreateGraphicsDevice(2).release();
   app->net = make_unique<Network>();
   (app->asset_loader = make_unique<AssetLoader>())->Init();
 

@@ -49,9 +49,9 @@ extern FlagOfType<bool> FLAGS_lfapp_network_;
 struct MyAppState {
   unordered_map<string, Shader> shader_map;
   unique_ptr<Browser> image_browser;
-  int new_win_width = 80*Video::InitFontWidth(), new_win_height = 25*Video::InitFontHeight();
+  int new_win_width = 80*Fonts::InitFontWidth(), new_win_height = 25*Fonts::InitFontHeight();
   int downscale_effects = 1;
-} *my_app = new MyAppState();
+} *my_app = nullptr;
 
 #ifndef WIN32
 struct ReadBuffer {
@@ -109,7 +109,8 @@ struct SSHTerminalController : public NetworkTerminalController {
       SSHClient::SetTerminalWindowSize(conn, term->term_width, term->term_height);
       SSHClient::SetUser(conn, FLAGS_login);
 #ifdef LFL_MOBILE
-      SSHClient::SetPasswordCB(conn, Vault::LoadPassword, Vault::SavePassword);
+      SSHClient::SetPasswordCB(conn, bind(&Application::LoadPassword, app, _1, _2, _3),
+                               bind(&Application::SavePassword, app, _1, _2, _3));
 #endif
     });
     return -1;
@@ -121,12 +122,13 @@ struct SSHTerminalController : public NetworkTerminalController {
   }
 
   void IOCtlWindowSize(int w, int h) { if (conn) SSHClient::SetTerminalWindowSize(conn, w, h); }
-  int Write(const StringPiece &b) {
+  int Write(const StringPiece &in) {
+    StringPiece b = in;
 #ifdef LFL_MOBILE
     char buf[1];
     if (b.size() == 1 && ctrl_down && !(ctrl_down = false)) {
-      TouchDevice::ToggleToolbarButton("ctrl");
-      b = &(buf[0] = Key::CtrlModified(*MakeUnsigned(b.data())));
+      app->ToggleToolbarButton("ctrl");
+      b = StringPiece(&(buf[0] = Key::CtrlModified(*MakeUnsigned(b.data()))), 1);
     }
 #endif
     if (!conn || conn->state != Connection::Connected) return -1;
@@ -363,12 +365,12 @@ struct MyTerminalWindow : public TerminalWindow {
     { "pgup",   bind([=]{ terminal->PageUp();      if (controller->frame_on_keyboard_input) app->scheduler.Wakeup(0); }) },
     { "pgdown", bind([=]{ terminal->PageDown();    if (controller->frame_on_keyboard_input) app->scheduler.Wakeup(0); }) } };
   unordered_map<string, Callback> mobile_togglekey_cmd = {
-    { "ctrl", bind([&]{ controller->ctrl_down = !ssh->ctrl_down; }) } };
-  void MobileKeyPressCmd (const vector<string> &arg) { if (arg.size()) FindAndDispatch(mobile_key_command,   arg[0]); }
+    { "ctrl", bind([&]{ controller->ctrl_down = !controller->ctrl_down; }) } };
+  void MobileKeyPressCmd (const vector<string> &arg) { if (arg.size()) FindAndDispatch(mobile_key_cmd, arg[0]); }
   void MobileKeyToggleCmd(const vector<string> &arg) { if (arg.size()) FindAndDispatch(mobile_togglekey_cmd, arg[0]); }
   void MobileCloseCmd(const vector<string> &arg) { controller->Close(); }
   void MobileMenuCmd(const vector<string> &arg) {
-    MyShaderCmd(vector<string>{"none"});
+    ShaderCmd(vector<string>{"none"});
     if (arg.size()) app->LaunchNativeMenu(arg[0]);
   }
 #endif
@@ -381,7 +383,7 @@ void MyWindowInit(Window *W) {
 }
 
 void MyWindowStart(Window *W) {
-  if (!W->user1.value) {
+  if (!W->user1.v) {
     auto tw = new MyTerminalWindow(W);
     tw->UseDefaultTerminalController();
     W->user1 = MakeTyped(tw);
@@ -425,8 +427,11 @@ void MyWindowClosed(Window *W) {
 }; // naemspace LFL
 using namespace LFL;
 
-extern "C" void MyAppInit() {
+extern "C" void MyAppCreate() {
   FLAGS_lfapp_video = FLAGS_lfapp_input = 1;
+  app = new Application();
+  screen = new Window();
+  my_app = new MyAppState();
 #ifdef LFL_DEBUG
   app->logfilename = StrCat(LFAppDownloadDir(), "lterm.txt");
 #endif
@@ -437,11 +442,12 @@ extern "C" void MyAppInit() {
   app->window_init_cb = MyWindowInit;
   app->window_init_cb(screen);
 #ifdef LFL_MOBILE
-  downscale_effects = TouchDevice::SetExtraScale(true);
+  my_app->downscale_effects = app->SetExtraScale(true);
 #endif
 }
 
 extern "C" int MyAppMain(int argc, const char* const* argv) {
+  if (!app) MyAppCreate();
   if (app->Create(argc, argv, __FILE__)) return -1;
   app->splash_color = &Singleton<Terminal::SolarizedDarkColors>::Get()->c[Terminal::Colors::bg_index];
   bool start_network_thread = !(FLAGS_lfapp_network_.override && !FLAGS_lfapp_network);
@@ -468,7 +474,7 @@ extern "C" int MyAppMain(int argc, const char* const* argv) {
 #endif
 
   if (app->Init()) return -1;
-  CHECK(app->video->opengl_framebuffer);
+  CHECK(screen->gd->have_framebuffer);
   app->scheduler.AddWaitForeverMouse();
 #ifdef WIN32
   app->input.paste_bind = Bind(Mouse::Button::_2);
@@ -529,9 +535,9 @@ extern "C" int MyAppMain(int argc, const char* const* argv) {
     { "\U000025C0", "keypress left" }, { "\U000025B6", "keypress right" }, { "\U000025B2", "keypress up" }, 
     { "\U000025BC", "keypress down" }, { "\U000023EB", "keypress pgup" }, { "\U000023EC", "keypress pgdown" }, 
     { "quit", "close" } };
-  TouchDevice::CloseKeyboardAfterReturn(false);
-  TouchDevice::OpenKeyboard();
-  TouchDevice::AddToolbar(toolbar_menu);
+  app->CloseTouchKeyboardAfterReturn(false);
+  app->OpenTouchKeyboard();
+  app->AddToolbar(toolbar_menu);
 #endif
 
   INFO("Starting ", app->name, " ", screen->default_font.desc.name, " (w=", tw->terminal->font->FixedWidth(),
