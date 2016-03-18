@@ -28,18 +28,14 @@ unique_ptr<ProcessAPIServer> process_api;
 }; // namespace LFL
 using namespace LFL;
 
-extern "C" void MyAppInit() {
+extern "C" void MyAppCreate() {
   app = new Application();
   screen = new Window();
   app->name = "LTerminalRenderSandbox";
   app->log_pid = true;
-#ifdef LFL_DEBUG
-  app->logfilename = StrCat(LFAppDownloadDir(), "lterm-render.txt");
-#endif
 }
 
 extern "C" int MyAppMain(int argc, const char* const* argv) {
-  if (!app) MyAppInit();
   if (app->Create(argc, argv, __FILE__)) return -1;
 
   int optind = Singleton<FlagMap>::Get()->optind;

@@ -197,9 +197,9 @@ struct MyTerminalWindow : public TerminalWindow {
   Time join_read_interval = Time(100), refresh_interval = Time(33);
   int join_read_pending = 0;
   MyTerminalWindow(Window *W) :
-    TerminalWindow(W->AddGUI(make_unique<Terminal>(nullptr, W->gd, W->default_font)), 80, 25) {
-    terminal->new_link_cb   = bind(&MyTerminalWindow::NewLinkCB,   this, _1);
-    terminal->hover_link_cb = bind(&MyTerminalWindow::HoverLinkCB, this, _1);
+    TerminalWindow(W->AddGUI(make_unique<Terminal>(nullptr, W->gd, W->default_font, point(80, 25)))) {
+    terminal->new_link_cb      = bind(&MyTerminalWindow::NewLinkCB,   this, _1);
+    terminal->hover_control_cb = bind(&MyTerminalWindow::HoverLinkCB, this, _1);
   }
 
   void SetFontSize(int n) {
@@ -257,9 +257,9 @@ struct MyTerminalWindow : public TerminalWindow {
     }
   }
 
-  void NewLinkCB(const shared_ptr<TextBox::Link> &link) {
-    const char *args = FindChar(link->link.c_str() + 6, isint2<'?', ':'>);
-    string image_url(link->link, 0, args ? args - link->link.c_str() : string::npos);
+  void NewLinkCB(const shared_ptr<TextBox::Control> &link) {
+    const char *args = FindChar(link->val.c_str() + 6, isint2<'?', ':'>);
+    string image_url(link->val, 0, args ? args - link->val.c_str() : string::npos);
     // if (SuffixMatch(image_url, ".gifv")) return;
     if (!FileSuffix::Image(image_url)) {
       return;
@@ -274,7 +274,7 @@ struct MyTerminalWindow : public TerminalWindow {
       app->RunInNetworkThread([=](){ link->image = my_app->image_browser->doc.parser->OpenImage(image_url); });
   }
 
-  void HoverLinkCB(TextBox::Link *link) {
+  void HoverLinkCB(TextBox::Control *link) {
     Texture *tex = link ? link->image.get() : 0;
     if (!tex) return;
     tex->Bind();
@@ -340,7 +340,7 @@ struct MyTerminalWindow : public TerminalWindow {
     string shader_name = arg.size() ? arg[0] : "";
     auto shader = my_app->shader_map.find(shader_name);
     bool found = shader != my_app->shader_map.end();
-    if (found && !shader->second.ID) Shader::CreateShaderToy(shader_name, Asset::FileContents(StrCat(shader_name, ".glsl")), &shader->second);
+    if (found && !shader->second.ID) Shader::CreateShaderToy(shader_name, Asset::FileContents(StrCat(shader_name, ".frag")), &shader->second);
     activeshader = found ? &shader->second : &app->shaders->shader_default;
     UpdateTargetFPS();
   }
@@ -407,6 +407,7 @@ void MyWindowStart(Window *W) {
   W->shell->Add("keypress",     bind(&MyTerminalWindow::MobileKeyPressCmd,       tw, _1));
   W->shell->Add("togglekey",    bind(&MyTerminalWindow::MobileKeyToggleCmd,      tw, _1));
 #endif
+  if (my_app->image_browser) W->shell->AddBrowserCommands(my_app->image_browser.get());
 
   BindMap *binds = W->AddInputController(make_unique<BindMap>());
 #ifndef WIN32
@@ -432,9 +433,6 @@ extern "C" void MyAppCreate() {
   app = new Application();
   screen = new Window();
   my_app = new MyAppState();
-#ifdef LFL_DEBUG
-  app->logfilename = StrCat(LFAppDownloadDir(), "lterm.txt");
-#endif
   app->name = "LTerminal";
   app->exit_cb = []() { delete my_app; };
   app->window_closed_cb = MyWindowClosed;
@@ -455,18 +453,18 @@ extern "C" int MyAppMain(int argc, const char* const* argv) {
 #ifdef WIN32
   Asset::cache["MenuAtlas,0,255,255,255,0.0000.glyphs.matrix"] = app->LoadResource(200);
   Asset::cache["MenuAtlas,0,255,255,255,0.0000.png"]           = app->LoadResource(201);
-  Asset::cache["lfapp_vertex.glsl"]                            = app->LoadResource(202);
-  Asset::cache["lfapp_pixel.glsl"]                             = app->LoadResource(203);
-  Asset::cache["alien.glsl"]                                   = app->LoadResource(204);
-  Asset::cache["emboss.glsl"]                                  = app->LoadResource(205);
-  Asset::cache["fire.glsl"]                                    = app->LoadResource(206);
-  Asset::cache["fractal.glsl"]                                 = app->LoadResource(207);
-  Asset::cache["darkly.glsl"]                                  = app->LoadResource(208);
-  Asset::cache["stormy.glsl"]                                  = app->LoadResource(209);
-  Asset::cache["twistery.glsl"]                                = app->LoadResource(210);
-  Asset::cache["warper.glsl"]                                  = app->LoadResource(211);
-  Asset::cache["water.glsl"]                                   = app->LoadResource(212);
-  Asset::cache["waves.glsl"]                                   = app->LoadResource(213);
+  Asset::cache["default.vert"]                                 = app->LoadResource(202);
+  Asset::cache["default.frag"]                                 = app->LoadResource(203);
+  Asset::cache["alien.frag"]                                   = app->LoadResource(204);
+  Asset::cache["emboss.frag"]                                  = app->LoadResource(205);
+  Asset::cache["fire.frag"]                                    = app->LoadResource(206);
+  Asset::cache["fractal.frag"]                                 = app->LoadResource(207);
+  Asset::cache["darkly.frag"]                                  = app->LoadResource(208);
+  Asset::cache["stormy.frag"]                                  = app->LoadResource(209);
+  Asset::cache["twistery.frag"]                                = app->LoadResource(210);
+  Asset::cache["warper.frag"]                                  = app->LoadResource(211);
+  Asset::cache["water.frag"]                                   = app->LoadResource(212);
+  Asset::cache["waves.frag"]                                   = app->LoadResource(213);
   if (FLAGS_lfapp_console) {
     Asset::cache["VeraMoBd.ttf,32,255,255,255,4.0000.glyphs.matrix"] = app->LoadResource(214);
     Asset::cache["VeraMoBd.ttf,32,255,255,255,4.0000.png"]           = app->LoadResource(215);

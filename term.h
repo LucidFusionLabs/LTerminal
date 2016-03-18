@@ -117,9 +117,7 @@ template <class TerminalType> struct TerminalWindowT {
   TerminalType *terminal;
   unique_ptr<Terminal::Controller> controller, last_controller;
 
-  TerminalWindowT(TerminalType *t, int w, int h) : terminal(t) {
-    terminal->Activate();
-    terminal->SetDimension(w, h);
+  TerminalWindowT(TerminalType *t) : terminal(t) {
 #ifdef FUZZ_DEBUG
     for (int i=0; i<256; i++) {
       INFO("fuzz i = ", i);
