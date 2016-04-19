@@ -200,13 +200,13 @@ struct MyTerminalWindow : public TerminalWindow {
 
   void SetFontSize(int n) {
     screen->default_font.desc.size = n;
-    CHECK((terminal->font = screen->default_font.Load()));
-    int font_width  = terminal->font->FixedWidth(), new_width  = font_width  * terminal->term_width;
-    int font_height = terminal->font->Height(),     new_height = font_height * terminal->term_height;
+    CHECK((terminal->style.font = screen->default_font.Load()));
+    int font_width  = terminal->style.font->FixedWidth(), new_width  = font_width  * terminal->term_width;
+    int font_height = terminal->style.font->Height(),     new_height = font_height * terminal->term_height;
     if (new_width != screen->width || new_height != screen->height) screen->Reshape(new_width, new_height);
     else                                                            terminal->Redraw();
     screen->SetResizeIncrements(font_width, font_height);
-    INFO("Font: ", app->fonts->DefaultFontEngine()->DebugString(terminal->font));
+    INFO("Font: ", app->fonts->DefaultFontEngine()->DebugString(terminal->style.font));
   }
 
   void UseShellTerminalController(const string &m) {
@@ -389,7 +389,7 @@ void MyWindowStart(Window *W) {
   if (FLAGS_console) W->InitConsole(bind(&MyTerminalWindow::ConsoleAnimatingCB, tw, W));
   W->frame_cb = bind(&MyTerminalWindow::Frame, tw, _1, _2, _3);
   W->default_textbox = [=]{ return tw->terminal; };
-  W->SetResizeIncrements(tw->terminal->font->FixedWidth(), tw->terminal->font->Height());
+  W->SetResizeIncrements(tw->terminal->style.font->FixedWidth(), tw->terminal->style.font->Height());
 
   W->shell = make_unique<Shell>(nullptr, nullptr, nullptr);
   W->shell->Add("choosefont",   bind(&MyTerminalWindow::FontCmd,                 tw, _1));
@@ -443,7 +443,8 @@ extern "C" void MyAppCreate() {
 extern "C" int MyAppMain(int argc, const char* const* argv) {
   if (!app) MyAppCreate();
   if (app->Create(argc, argv, __FILE__)) return -1;
-  app->splash_color = &Singleton<Terminal::SolarizedDarkColors>::Get()->c[Terminal::Colors::bg_index];
+  Terminal::Colors *colors = Singleton<Terminal::SolarizedDarkColors>::Get();
+  app->splash_color = colors->GetColor(colors->background_index);
   bool start_network_thread = !(FLAGS_lfapp_network_.override && !FLAGS_lfapp_network);
 
 #ifdef WIN32
@@ -491,8 +492,8 @@ extern "C" int MyAppMain(int argc, const char* const* argv) {
   screen->user1 = MakeTyped(tw);
   app->StartNewWindow(screen);
   tw->SetFontSize(screen->default_font.desc.size);
-  my_app->new_win_width  = tw->terminal->font->FixedWidth() * tw->terminal->term_width;
-  my_app->new_win_height = tw->terminal->font->Height()     * tw->terminal->term_height;
+  my_app->new_win_width  = tw->terminal->style.font->FixedWidth() * tw->terminal->term_width;
+  my_app->new_win_height = tw->terminal->style.font->Height()     * tw->terminal->term_height;
   tw->terminal->Draw(screen->Box());
 
 #ifndef LFL_MOBILE
@@ -506,7 +507,7 @@ extern "C" int MyAppMain(int argc, const char* const* argv) {
 #endif
     MenuItem{ "", "VGA Colors", "colors vga", }, MenuItem{ "", "Solarized Dark Colors", "colors solarized_dark" }, MenuItem { "", "Solarized Light Colors", "colors solarized_light" }
   };
-  app->AddNativeEditMenu();
+  app->AddNativeEditMenu(vector<MenuItem>());
   app->AddNativeMenu("View", view_menu);
 #endif
 
@@ -534,7 +535,7 @@ extern "C" int MyAppMain(int argc, const char* const* argv) {
   app->AddToolbar(toolbar_menu);
 #endif
 
-  INFO("Starting ", app->name, " ", screen->default_font.desc.name, " (w=", tw->terminal->font->FixedWidth(),
-       ", h=", tw->terminal->font->Height(), ", scale=", my_app->downscale_effects, ")");
+  INFO("Starting ", app->name, " ", screen->default_font.desc.name, " (w=", tw->terminal->style.font->FixedWidth(),
+       ", h=", tw->terminal->style.font->Height(), ", scale=", my_app->downscale_effects, ")");
   return app->Main();
 }
