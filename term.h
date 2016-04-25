@@ -61,7 +61,7 @@ struct NetworkTerminalController : public Terminal::Controller {
 
   virtual int Write(const StringPiece &b) {
     if (!conn || conn->state != Connection::Connected) return -1;
-    return write(conn->socket, b.data(), b.size());
+    return conn->WriteFlush(b.data(), b.size());
   }
 };
 
