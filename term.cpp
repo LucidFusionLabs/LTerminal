@@ -448,23 +448,23 @@ extern "C" int MyAppMain(int argc, const char* const* argv) {
   bool start_network_thread = !(FLAGS_lfapp_network_.override && !FLAGS_lfapp_network);
 
 #ifdef WIN32
-  Asset::cache["MenuAtlas,0,255,255,255,0.0000.glyphs.matrix"] = app->LoadResource(200);
-  Asset::cache["MenuAtlas,0,255,255,255,0.0000.png"]           = app->LoadResource(201);
-  Asset::cache["default.vert"]                                 = app->LoadResource(202);
-  Asset::cache["default.frag"]                                 = app->LoadResource(203);
-  Asset::cache["alien.frag"]                                   = app->LoadResource(204);
-  Asset::cache["emboss.frag"]                                  = app->LoadResource(205);
-  Asset::cache["fire.frag"]                                    = app->LoadResource(206);
-  Asset::cache["fractal.frag"]                                 = app->LoadResource(207);
-  Asset::cache["darkly.frag"]                                  = app->LoadResource(208);
-  Asset::cache["stormy.frag"]                                  = app->LoadResource(209);
-  Asset::cache["twistery.frag"]                                = app->LoadResource(210);
-  Asset::cache["warper.frag"]                                  = app->LoadResource(211);
-  Asset::cache["water.frag"]                                   = app->LoadResource(212);
-  Asset::cache["waves.frag"]                                   = app->LoadResource(213);
-  if (FLAGS_lfapp_console) {
-    Asset::cache["VeraMoBd.ttf,32,255,255,255,4.0000.glyphs.matrix"] = app->LoadResource(214);
-    Asset::cache["VeraMoBd.ttf,32,255,255,255,4.0000.png"]           = app->LoadResource(215);
+  app->asset_cache["MenuAtlas,0,255,255,255,0.0000.glyphs.matrix"] = app->LoadResource(200);
+  app->asset_cache["MenuAtlas,0,255,255,255,0.0000.png"]           = app->LoadResource(201);
+  app->asset_cache["default.vert"]                                 = app->LoadResource(202);
+  app->asset_cache["default.frag"]                                 = app->LoadResource(203);
+  app->asset_cache["alien.frag"]                                   = app->LoadResource(204);
+  app->asset_cache["emboss.frag"]                                  = app->LoadResource(205);
+  app->asset_cache["fire.frag"]                                    = app->LoadResource(206);
+  app->asset_cache["fractal.frag"]                                 = app->LoadResource(207);
+  app->asset_cache["darkly.frag"]                                  = app->LoadResource(208);
+  app->asset_cache["stormy.frag"]                                  = app->LoadResource(209);
+  app->asset_cache["twistery.frag"]                                = app->LoadResource(210);
+  app->asset_cache["warper.frag"]                                  = app->LoadResource(211);
+  app->asset_cache["water.frag"]                                   = app->LoadResource(212);
+  app->asset_cache["waves.frag"]                                   = app->LoadResource(213);
+  if (FLAGS_console) {
+    app->asset_cache["VeraMoBd.ttf,32,255,255,255,4.0000.glyphs.matrix"] = app->LoadResource(214);
+    app->asset_cache["VeraMoBd.ttf,32,255,255,255,4.0000.png"]           = app->LoadResource(215);
   }
 #endif
 
@@ -472,7 +472,7 @@ extern "C" int MyAppMain(int argc, const char* const* argv) {
   CHECK(screen->gd->have_framebuffer);
   app->scheduler.AddWaitForeverMouse();
 #ifdef WIN32
-  app->input.paste_bind = Bind(Mouse::Button::_2);
+  app->input->paste_bind = Bind(Mouse::Button::_2);
 #endif
 
   if (start_network_thread) {
