@@ -39,8 +39,11 @@ DEFINE_string(ssh,         "",     "SSH to host");
 DEFINE_string(login,       "",     "SSH user");
 DEFINE_string(command,     "",     "Execute initial command");
 DEFINE_string(screenshot,  "",     "Screenshot and exit");
+DEFINE_string(record,      "",     "Record session to file");
+DEFINE_string(playback,    "",     "Playback recorded session file");
 DEFINE_bool  (draw_fps,    false,  "Draw FPS");
-extern FlagOfType<bool> FLAGS_lfapp_network_;
+DEFINE_bool  (resize_grid, false,  "Resize window in glyph bound increments");
+extern FlagOfType<bool> FLAGS_enable_network_;
 
 struct MyAppState {
   unordered_map<string, Shader> shader_map;
@@ -48,6 +51,17 @@ struct MyAppState {
   int new_win_width = 80*Fonts::InitFontWidth(), new_win_height = 25*Fonts::InitFontHeight();
   int downscale_effects = 1;
 } *my_app = nullptr;
+
+struct PlaybackTerminalController : public Terminal::Controller {
+  unique_ptr<FlatFile> playback;
+  PlaybackTerminalController(unique_ptr<FlatFile> f) : playback(move(f)) {}
+  int Open(TextArea*) { return -1; }
+  int Write(const StringPiece &b) { return b.size(); }
+  StringPiece Read() {
+    auto r = playback ? playback->Next<IPC::RecordLog>() : nullptr;
+    return (r && r->data()) ? StringPiece(MakeSigned(r->data()->data()), r->data()->size()) : StringPiece();
+  }
+};
 
 #ifndef WIN32
 struct ReadBuffer {
@@ -63,7 +77,9 @@ struct PTYTerminalController : public Terminal::Controller {
   ProcessPipe process;
   ReadBuffer read_buf;
   PTYTerminalController() : read_buf(65536) {}
-  virtual ~PTYTerminalController() { if (process.in) app->scheduler.DelWaitForeverSocket(fileno(process.in)); }
+  virtual ~PTYTerminalController() {
+    if (process.in) app->scheduler.DelWaitForeverSocket(screen, fileno(process.in));
+  }
 
   int Open(TextArea*) {
     setenv("TERM", "xterm", 1);
@@ -203,10 +219,14 @@ struct MyTerminalWindow : public TerminalWindow {
     CHECK((terminal->style.font = screen->default_font.Load()));
     int font_width  = terminal->style.font->FixedWidth(), new_width  = font_width  * terminal->term_width;
     int font_height = terminal->style.font->Height(),     new_height = font_height * terminal->term_height;
+    if (FLAGS_resize_grid) screen->SetResizeIncrements(font_width, font_height);
     if (new_width != screen->width || new_height != screen->height) screen->Reshape(new_width, new_height);
     else                                                            terminal->Redraw();
-    screen->SetResizeIncrements(font_width, font_height);
     INFO("Font: ", app->fonts->DefaultFontEngine()->DebugString(terminal->style.font));
+  }
+
+  void UsePlaybackTerminalController(unique_ptr<FlatFile> f) {
+    ChangeController(make_unique<PlaybackTerminalController>(move(f)));
   }
 
   void UseShellTerminalController(const string &m) {
@@ -233,9 +253,10 @@ struct MyTerminalWindow : public TerminalWindow {
   }
 
   void UseInitialTerminalController() {
-    if      (FLAGS_interpreter)  return UseShellTerminalController("");
-    else if (!FLAGS_ssh.empty()) return UseSSHTerminalController();
-    else                         return UseDefaultTerminalController();
+    if      (FLAGS_playback.size()) return UsePlaybackTerminalController(make_unique<FlatFile>(FLAGS_playback));
+    else if (FLAGS_interpreter)     return UseShellTerminalController("");
+    else if (FLAGS_ssh.size())      return UseSSHTerminalController();
+    else                            return UseDefaultTerminalController();
   }
 
   void OpenedController() {
@@ -243,13 +264,13 @@ struct MyTerminalWindow : public TerminalWindow {
   }
 
   bool CustomShader() const { return activeshader != &app->shaders->shader_default; }
-  void UpdateTargetFPS() { app->scheduler.SetAnimating(CustomShader() || (screen->console && screen->console->animating)); }
+  void UpdateTargetFPS(Window *w) { app->scheduler.SetAnimating(w, CustomShader() || (w->console && w->console->animating)); }
 
-  void ConsoleAnimatingCB(Window *W) { 
-    UpdateTargetFPS();
-    if (!W->console || !W->console->animating) {
-      if ((W->console && W->console->Active()) || controller->frame_on_keyboard_input) app->scheduler.AddWaitForeverKeyboard();
-      else                                                                             app->scheduler.DelWaitForeverKeyboard();
+  void ConsoleAnimatingCB(Window *w) { 
+    UpdateTargetFPS(w);
+    if (!w->console || !w->console->animating) {
+      if ((w->console && w->console->Active()) || controller->frame_on_keyboard_input) app->scheduler.AddWaitForeverKeyboard(w);
+      else                                                                             app->scheduler.DelWaitForeverKeyboard(w);
     }
   }
 
@@ -281,15 +302,15 @@ struct MyTerminalWindow : public TerminalWindow {
   }
 
   int Frame(Window *W, unsigned clicks, int flag) {
-    bool effects = screen->animating, downscale = effects && my_app->downscale_effects > 1;
-    Box draw_box = screen->Box();
+    bool effects = W->animating, downscale = effects && my_app->downscale_effects > 1;
+    Box draw_box = W->Box();
 
     if (downscale) W->gd->RestoreViewport(DrawMode::_2D);
     terminal->CheckResized(draw_box);
     int read_size = ReadAndUpdateTerminalFramebuffer();
     if (downscale) {
       float scale = activeshader->scale = 1.0 / my_app->downscale_effects;
-      W->gd->ViewPort(Box(screen->width*scale, screen->height*scale));
+      W->gd->ViewPort(Box(W->width*scale, W->height*scale));
     }
 
     if (!effects) {
@@ -297,31 +318,31 @@ struct MyTerminalWindow : public TerminalWindow {
       if (read_size && !(flag & LFApp::Frame::DontSkip)) {
         int *pending = &join_read_pending;
         bool join_read = read_size > 255;
-        if (join_read) { if (1            && ++(*pending)) { if (app->scheduler.WakeupIn(0, join_read_interval)) return -1; } }
-        else           { if ((*pending)<1 && ++(*pending)) { if (app->scheduler.WakeupIn(0,   refresh_interval)) return -1; } }
+        if (join_read) { if (1            && ++(*pending)) { if (app->scheduler.WakeupIn(W, join_read_interval)) return -1; } }
+        else           { if ((*pending)<1 && ++(*pending)) { if (app->scheduler.WakeupIn(W,   refresh_interval)) return -1; } }
         *pending = 0;
       }
-      app->scheduler.ClearWakeupIn();
+      app->scheduler.ClearWakeupIn(W);
 #endif
     }
 
     W->gd->DrawMode(DrawMode::_2D);
     W->gd->DisableBlend();
     terminal->Draw(draw_box, Terminal::DrawFlag::Default, effects ? activeshader : NULL);
-    if (effects) screen->gd->UseShader(0);
+    if (effects) W->gd->UseShader(0);
 
     W->DrawDialogs();
     if (FLAGS_draw_fps) W->default_font->Draw(StringPrintf("FPS = %.2f", app->FPS()), point(W->width*.85, 0));
-    if (FLAGS_screenshot.size()) ONCE(screen->shell->screenshot(vector<string>(1, FLAGS_screenshot)); app->run=0;);
+    if (FLAGS_screenshot.size()) ONCE(W->shell->screenshot(vector<string>(1, FLAGS_screenshot)); app->run=0;);
     return 0;
   }
 
   void FontCmd(const vector<string> &arg) {
     if (arg.size() < 2) return app->LaunchNativeFontChooser(screen->default_font.desc, "choosefont");
-    if (arg.size() > 2) FLAGS_default_font_flag = atoi(arg[2]);
+    if (arg.size() > 2) FLAGS_font_flag = atoi(arg[2]);
     screen->default_font.desc.name = arg[0];
     SetFontSize(atof(arg[1]));
-    app->scheduler.Wakeup(0);
+    app->scheduler.Wakeup(screen);
   }
 
   void ColorsCmd(const vector<string> &arg) {
@@ -329,7 +350,7 @@ struct MyTerminalWindow : public TerminalWindow {
     if      (colors_name == "vga")             terminal->ChangeColors(Singleton<Terminal::StandardVGAColors>   ::Get());
     else if (colors_name == "solarized_dark")  terminal->ChangeColors(Singleton<Terminal::SolarizedDarkColors> ::Get());
     else if (colors_name == "solarized_light") terminal->ChangeColors(Singleton<Terminal::SolarizedLightColors>::Get());
-    app->scheduler.Wakeup(0);
+    app->scheduler.Wakeup(screen);
   }
 
   void ShaderCmd(const vector<string> &arg) {
@@ -338,28 +359,28 @@ struct MyTerminalWindow : public TerminalWindow {
     bool found = shader != my_app->shader_map.end();
     if (found && !shader->second.ID) Shader::CreateShaderToy(shader_name, Asset::FileContents(StrCat(shader_name, ".frag")), &shader->second);
     activeshader = found ? &shader->second : &app->shaders->shader_default;
-    UpdateTargetFPS();
+    UpdateTargetFPS(screen);
   }
 
   void EffectsControlsCmd(const vector<string>&) { 
     screen->shell->Run("slider shadertoy_blend 1.0 0.01");
-    app->scheduler.Wakeup(0);
+    app->scheduler.Wakeup(screen);
   }
 
   void TransparencyControlsCmd(const vector<string>&) {
     SliderDialog::UpdatedCB cb(bind([=](Widget::Slider *s){ screen->SetTransparency(s->Percent()); }, _1));
     screen->AddDialog(make_unique<SliderDialog>(screen->gd, "window transparency", cb, 0, 1.0, .025));
-    app->scheduler.Wakeup(0);
+    app->scheduler.Wakeup(screen);
   }
 
 #ifdef LFL_MOBILE
   unordered_map<string, Callback> mobile_key_cmd = {
-    { "left",   bind([=]{ terminal->CursorLeft();  if (controller->frame_on_keyboard_input) app->scheduler.Wakeup(0); }) },
-    { "right",  bind([=]{ terminal->CursorRight(); if (controller->frame_on_keyboard_input) app->scheduler.Wakeup(0); }) },
-    { "up",     bind([=]{ terminal->HistUp();      if (controller->frame_on_keyboard_input) app->scheduler.Wakeup(0); }) },
-    { "down",   bind([=]{ terminal->HistDown();    if (controller->frame_on_keyboard_input) app->scheduler.Wakeup(0); }) },
-    { "pgup",   bind([=]{ terminal->PageUp();      if (controller->frame_on_keyboard_input) app->scheduler.Wakeup(0); }) },
-    { "pgdown", bind([=]{ terminal->PageDown();    if (controller->frame_on_keyboard_input) app->scheduler.Wakeup(0); }) } };
+    { "left",   bind([=]{ terminal->CursorLeft();  if (controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); }) },
+    { "right",  bind([=]{ terminal->CursorRight(); if (controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); }) },
+    { "up",     bind([=]{ terminal->HistUp();      if (controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); }) },
+    { "down",   bind([=]{ terminal->HistDown();    if (controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); }) },
+    { "pgup",   bind([=]{ terminal->PageUp();      if (controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); }) },
+    { "pgdown", bind([=]{ terminal->PageDown();    if (controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); }) } };
   unordered_map<string, Callback> mobile_togglekey_cmd = {
     { "ctrl", bind([&]{ controller->ctrl_down = !controller->ctrl_down; }) } };
   void MobileKeyPressCmd (const vector<string> &arg) { if (arg.size()) FindAndDispatch(mobile_key_cmd, arg[0]); }
@@ -389,7 +410,8 @@ void MyWindowStart(Window *W) {
   if (FLAGS_console) W->InitConsole(bind(&MyTerminalWindow::ConsoleAnimatingCB, tw, W));
   W->frame_cb = bind(&MyTerminalWindow::Frame, tw, _1, _2, _3);
   W->default_textbox = [=]{ return tw->terminal; };
-  W->SetResizeIncrements(tw->terminal->style.font->FixedWidth(), tw->terminal->style.font->Height());
+  if (FLAGS_resize_grid) W->SetResizeIncrements(tw->terminal->style.font->FixedWidth(), tw->terminal->style.font->Height());
+  app->scheduler.AddWaitForeverMouse(W);
 
   W->shell = make_unique<Shell>(nullptr, nullptr, nullptr);
   W->shell->Add("choosefont",   bind(&MyTerminalWindow::FontCmd,                 tw, _1));
@@ -412,8 +434,8 @@ void MyWindowStart(Window *W) {
   binds->Add('6',       Key::Modifier::Cmd, Bind::CB(bind([=](){ W->shell->console(vector<string>()); })));
   binds->Add('=',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->SetFontSize(W->default_font.desc.size + 1); })));
   binds->Add('-',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->SetFontSize(W->default_font.desc.size - 1); })));
-  binds->Add(Key::Up,   Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->terminal->ScrollUp();   app->scheduler.Wakeup(0); })));
-  binds->Add(Key::Down, Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->terminal->ScrollDown(); app->scheduler.Wakeup(0); })));
+  binds->Add(Key::Up,   Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->terminal->ScrollUp();   app->scheduler.Wakeup(screen); })));
+  binds->Add(Key::Down, Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->terminal->ScrollDown(); app->scheduler.Wakeup(screen); })));
 }
 
 void MyWindowClosed(Window *W) {
@@ -425,7 +447,7 @@ void MyWindowClosed(Window *W) {
 using namespace LFL;
 
 extern "C" void MyAppCreate() {
-  FLAGS_lfapp_video = FLAGS_lfapp_input = 1;
+  FLAGS_enable_video = FLAGS_enable_input = 1;
   app = new Application();
   screen = new Window();
   my_app = new MyAppState();
@@ -441,11 +463,11 @@ extern "C" void MyAppCreate() {
 }
 
 extern "C" int MyAppMain(int argc, const char* const* argv) {
-  if (!app) MyAppCreate();
   if (app->Create(argc, argv, __FILE__)) return -1;
+  SettingsFile::Load();
   Terminal::Colors *colors = Singleton<Terminal::SolarizedDarkColors>::Get();
   app->splash_color = colors->GetColor(colors->background_index);
-  bool start_network_thread = !(FLAGS_lfapp_network_.override && !FLAGS_lfapp_network);
+  bool start_network_thread = !(FLAGS_enable_network_.override && !FLAGS_enable_network);
 
 #ifdef WIN32
   app->asset_cache["MenuAtlas,0,255,255,255,0.0000.glyphs.matrix"] = app->LoadResource(200);
@@ -470,7 +492,6 @@ extern "C" int MyAppMain(int argc, const char* const* argv) {
 
   if (app->Init()) return -1;
   CHECK(screen->gd->have_framebuffer);
-  app->scheduler.AddWaitForeverMouse();
 #ifdef WIN32
   app->input->paste_bind = Bind(Mouse::Button::_2);
 #endif
@@ -488,6 +509,7 @@ extern "C" int MyAppMain(int argc, const char* const* argv) {
   my_app->image_browser = make_unique<Browser>();
 
   auto tw = new MyTerminalWindow(screen);
+  if (FLAGS_record.size()) tw->record = make_unique<FlatFile>(FLAGS_record);
   tw->UseInitialTerminalController();
   screen->user1 = MakeTyped(tw);
   app->StartNewWindow(screen);

@@ -27,7 +27,7 @@ struct NetworkTerminalController : public Terminal::Controller {
   string remote, read_buf, ret_buf;
   NetworkTerminalController(Service *s, const string &r, const Callback &ccb)
     : svc(s), detach_cb(bind(&NetworkTerminalController::ConnectedCB, this)), close_cb(ccb), remote(r) {}
-  virtual ~NetworkTerminalController() { if (conn) app->scheduler.DelWaitForeverSocket(conn->socket); }
+  virtual ~NetworkTerminalController() { if (conn) app->scheduler.DelWaitForeverSocket(screen, conn->socket); }
 
   virtual int Open(TextArea*) {
     if (remote.empty()) return -1;
@@ -39,14 +39,14 @@ struct NetworkTerminalController : public Terminal::Controller {
 
   virtual void Close() {
     if (!conn || conn->state != Connection::Connected) return;
-    if (app->network_thread) app->scheduler.DelWaitForeverSocket(conn->socket);
+    if (app->network_thread) app->scheduler.DelWaitForeverSocket(screen, conn->socket);
     app->net->ConnCloseDetached(svc, conn);
     conn = 0;
     close_cb();
   }
 
   virtual void ConnectedCB() {
-    if (app->network_thread) app->scheduler.AddWaitForeverSocket(conn->socket, SocketSet::READABLE, 0);
+    if (app->network_thread) app->scheduler.AddWaitForeverSocket(screen, conn->socket, SocketSet::READABLE);
   }
 
   virtual StringPiece Read() {
@@ -116,6 +116,7 @@ struct InteractiveTerminalController : public Terminal::Controller {
 template <class TerminalType> struct TerminalWindowT {
   TerminalType *terminal;
   unique_ptr<Terminal::Controller> controller, last_controller;
+  unique_ptr<FlatFile> record;
 
   TerminalWindowT(TerminalType *t) : terminal(t) {
 #ifdef FUZZ_DEBUG
@@ -138,15 +139,19 @@ template <class TerminalType> struct TerminalWindowT {
     controller = move(new_controller);
     terminal->sink = controller.get();
     int fd = controller->Open(terminal);
-    if (fd != -1) app->scheduler.AddWaitForeverSocket(fd, SocketSet::READABLE, 0);
-    if (controller->frame_on_keyboard_input) app->scheduler.AddWaitForeverKeyboard();
-    else                                     app->scheduler.DelWaitForeverKeyboard();
+    if (fd != -1) app->scheduler.AddWaitForeverSocket(screen, fd, SocketSet::READABLE);
+    if (controller->frame_on_keyboard_input) app->scheduler.AddWaitForeverKeyboard(screen);
+    else                                     app->scheduler.DelWaitForeverKeyboard(screen);
     OpenedController();
   }
 
   int ReadAndUpdateTerminalFramebuffer() {
     StringPiece s = controller->Read();
-    if (s.len) terminal->Write(s);
+    if (s.len) {
+      terminal->Write(s);
+      if (record) record->Add
+        (MakeIPC(RecordLog, (Now() - app->time_started).count(), fb.CreateVector(MakeUnsigned(s.buf), s.len)));
+    }
     return s.len;
   }
 };
