@@ -19,11 +19,13 @@
 #include "core/app/app.h"
 #include "core/app/gui.h"
 #include "core/app/ipc.h"
-#include "core/app/crypto.h"
-#include "core/app/net/ssh.h"
 #include "core/app/net/resolver.h"
 #include "core/web/browser.h"
 #include "core/web/document.h"
+#ifdef LFL_CRYPTO
+#include "core/app/crypto.h"
+#include "core/app/net/ssh.h"
+#endif
 #include "term.h"
 
 #ifndef WIN32
@@ -33,16 +35,18 @@
 #endif
 
 namespace LFL {
-DEFINE_bool  (interpreter, false,  "Launch interpreter instead of shell");
-DEFINE_string(telnet,      "",     "Telnet to host");
+#ifdef LFL_CRYPTO
 DEFINE_string(ssh,         "",     "SSH to host");
 DEFINE_string(login,       "",     "SSH user");
+#endif
+DEFINE_bool  (interpreter, false,  "Launch interpreter instead of shell");
+DEFINE_string(telnet,      "",     "Telnet to host");
 DEFINE_string(command,     "",     "Execute initial command");
 DEFINE_string(screenshot,  "",     "Screenshot and exit");
 DEFINE_string(record,      "",     "Record session to file");
 DEFINE_string(playback,    "",     "Playback recorded session file");
 DEFINE_bool  (draw_fps,    false,  "Draw FPS");
-DEFINE_bool  (resize_grid, false,  "Resize window in glyph bound increments");
+DEFINE_bool  (resize_grid, true,   "Resize window in glyph bound increments");
 extern FlagOfType<bool> FLAGS_enable_network_;
 
 struct MyAppState {
@@ -58,8 +62,15 @@ struct PlaybackTerminalController : public Terminal::Controller {
   int Open(TextArea*) { return -1; }
   int Write(const StringPiece &b) { return b.size(); }
   StringPiece Read() {
+#ifdef LFL_IPC
     auto r = playback ? playback->Next<IPC::RecordLog>() : nullptr;
-    return (r && r->data()) ? StringPiece(MakeSigned(r->data()->data()), r->data()->size()) : StringPiece();
+    auto ret = (r && r->data()) ? StringPiece(MakeSigned(r->data()->data()), r->data()->size()) : StringPiece();
+    fprintf(stderr, "Playback %llu \"%s\"\n", r ? r->stamp() : 0, CHexEscapeNonAscii(ret).c_str());
+    return ret;
+#else
+    ERROR("Playback not supported");
+    return StringPiece();
+#endif
   }
 };
 
@@ -109,6 +120,7 @@ struct PTYTerminalController : public Terminal::Controller {
 };
 #endif
 
+#ifdef LFL_CRYPTO
 struct SSHTerminalController : public NetworkTerminalController {
   using NetworkTerminalController::NetworkTerminalController;
 
@@ -157,6 +169,7 @@ struct SSHTerminalController : public NetworkTerminalController {
     return ret_buf;
   }
 };
+#endif
 
 struct ShellTerminalController : public InteractiveTerminalController {
   string ssh_usage="\r\nusage: ssh -l user host[:port]";
@@ -164,12 +177,15 @@ struct ShellTerminalController : public InteractiveTerminalController {
   ShellTerminalController(const string &hdr, const Callback &tcb, const Callback &scb) :
     telnet_cb(tcb), ssh_cb(scb) {
     header = StrCat(hdr, "LTerminal 1.0", ssh_usage, "\r\n\r\n");
+#ifdef LFL_CRYPTO
     shell.Add("ssh",      bind(&ShellTerminalController::MySSHCmd,      this, _1));
+#endif
     shell.Add("telnet",   bind(&ShellTerminalController::MyTelnetCmd,   this, _1));
     shell.Add("nslookup", bind(&ShellTerminalController::MyNSLookupCmd, this, _1));
     shell.Add("help",     bind(&ShellTerminalController::MyHelpCmd,     this, _1));
   }
 
+#ifdef LFL_CRYPTO
   void MySSHCmd(const vector<string> &arg) {
     int ind = 0;
     for (; ind < arg.size() && arg[ind][0] == '-'; ind += 2) if (arg[ind] == "-l") FLAGS_login = arg[ind+1];
@@ -177,6 +193,7 @@ struct ShellTerminalController : public InteractiveTerminalController {
     if (FLAGS_login.empty() || FLAGS_ssh.empty()) { if (term) term->Write(ssh_usage); }
     else ssh_cb();
   }
+#endif
 
   void MyTelnetCmd(const vector<string> &arg) {
     if (arg.empty()) { if (term) term->Write("\r\nusage: telnet host"); }
@@ -235,8 +252,10 @@ struct MyTerminalWindow : public TerminalWindow {
   }
 
   void UseSSHTerminalController() {
+#ifdef LFL_CRYPTO
     ChangeController(make_unique<SSHTerminalController>(app->net->tcp_client.get(), "",
                                                         [=](){ UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n"); }));
+#endif
   }
 
   void UseTelnetTerminalController() {
@@ -255,7 +274,9 @@ struct MyTerminalWindow : public TerminalWindow {
   void UseInitialTerminalController() {
     if      (FLAGS_playback.size()) return UsePlaybackTerminalController(make_unique<FlatFile>(FLAGS_playback));
     else if (FLAGS_interpreter)     return UseShellTerminalController("");
+#ifdef LFL_CRYPTO
     else if (FLAGS_ssh.size())      return UseSSHTerminalController();
+#endif
     else                            return UseDefaultTerminalController();
   }
 
@@ -446,9 +467,9 @@ void MyWindowClosed(Window *W) {
 }; // naemspace LFL
 using namespace LFL;
 
-extern "C" void MyAppCreate() {
+extern "C" void MyAppCreate(int argc, const char* const* argv) {
   FLAGS_enable_video = FLAGS_enable_input = 1;
-  app = new Application();
+  app = new Application(argc, argv);
   screen = new Window();
   my_app = new MyAppState();
   app->name = "LTerminal";
@@ -457,13 +478,13 @@ extern "C" void MyAppCreate() {
   app->window_start_cb = MyWindowStart;
   app->window_init_cb = MyWindowInit;
   app->window_init_cb(screen);
+}
+
+extern "C" int MyAppMain() {
 #ifdef LFL_MOBILE
   my_app->downscale_effects = app->SetExtraScale(true);
 #endif
-}
-
-extern "C" int MyAppMain(int argc, const char* const* argv) {
-  if (app->Create(argc, argv, __FILE__)) return -1;
+  if (app->Create(__FILE__)) return -1;
   SettingsFile::Load();
   Terminal::Colors *colors = Singleton<Terminal::SolarizedDarkColors>::Get();
   app->splash_color = colors->GetColor(colors->background_index);
@@ -551,7 +572,7 @@ extern "C" int MyAppMain(int argc, const char* const* argv) {
   vector<pair<string,string>> toolbar_menu = { { "fx", "menu Effects" }, { "ctrl", "togglekey ctrl" },
     { "\U000025C0", "keypress left" }, { "\U000025B6", "keypress right" }, { "\U000025B2", "keypress up" }, 
     { "\U000025BC", "keypress down" }, { "\U000023EB", "keypress pgup" }, { "\U000023EC", "keypress pgdown" }, 
-    { "quit", "close" } };
+    { "fonts", "choosefont" } };
   app->CloseTouchKeyboardAfterReturn(false);
   app->OpenTouchKeyboard();
   app->AddToolbar(toolbar_menu);

@@ -131,6 +131,7 @@ template <class TerminalType> struct TerminalWindowT {
 #endif
   }
 
+  virtual ~TerminalWindowT() {}
   virtual void OpenedController() {}
 
   void ChangeController(unique_ptr<Terminal::Controller> new_controller) {

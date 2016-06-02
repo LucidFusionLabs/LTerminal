@@ -28,27 +28,26 @@ unique_ptr<ProcessAPIServer> process_api;
 }; // namespace LFL
 using namespace LFL;
 
-extern "C" void MyAppCreate() {
-  app = new Application();
+extern "C" void MyAppCreate(int argc, const char* const* argv) {
+  app = new Application(argc, argv);
   screen = new Window();
   app->name = "LTerminalRenderSandbox";
   app->log_pid = true;
 }
 
-extern "C" int MyAppMain(int argc, const char* const* argv) {
-  if (app->Create(argc, argv, __FILE__)) return -1;
-
+extern "C" int MyAppMain() {
+  if (app->Create(__FILE__)) return -1;
   int optind = Singleton<FlagMap>::Get()->optind;
-  if (optind >= argc) { fprintf(stderr, "Usage: %s [-flags] <socket-name>\n", argv[0]); return -1; }
+  if (optind >= app->argc) { fprintf(stderr, "Usage: %s [-flags] <socket-name>\n", app->argv[0]); return -1; }
   // if (app->Init()) return -1;
   screen->gd = CreateGraphicsDevice(2).release();
   app->net = make_unique<Network>();
   (app->asset_loader = make_unique<AssetLoader>())->Init();
 
   // to cleanup crash leaked shm: for i in $( ipcs -m | grep "^m " | awk '{print $2}' ); do ipcrm -m $i; done
-  const string socket_name = StrCat(argv[optind]);
+  const string socket_name = StrCat(app->argv[optind]);
   process_api = make_unique<ProcessAPIServer>();
-  process_api->OpenSocket(StrCat(argv[optind]));
+  process_api->OpenSocket(StrCat(app->argv[optind]));
 
 #ifdef __APPLE__
   char *sandbox_error=0;

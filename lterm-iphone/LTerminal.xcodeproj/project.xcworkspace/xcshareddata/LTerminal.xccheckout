@@ -11,12 +11,12 @@
 	<key>IDESourceControlProjectOriginsDictionary</key>
 	<dict>
 		<key>2DBB44B47DAEE9297BA7B7CA5BDCA8EA2272AF0E</key>
-		<string>https://github.com/LucidFusionLabs/lfl</string>
+		<string>https://github.com/lucidfusionlabs/lfl.git</string>
 		<key>93BD82081A5AD6D4EE9B5211A0CDCA90391A9A40</key>
 		<string>https://github.com/LucidFusionLabs/term</string>
 	</dict>
 	<key>IDESourceControlProjectPath</key>
-	<string>term-iphone/LTerminal.xcodeproj</string>
+	<string>lterm-iphone/LTerminal.xcodeproj</string>
 	<key>IDESourceControlProjectRelativeInstallPathDictionary</key>
 	<dict>
 		<key>2DBB44B47DAEE9297BA7B7CA5BDCA8EA2272AF0E</key>

@@ -23,7 +23,7 @@
 			buildPhases = (
 			);
 			buildToolPath = /usr/bin/make;
-			buildWorkingDirectory = /Users/p/lfl/iphonesim/term;
+			buildWorkingDirectory = /Users/p/lfl/iossim/term;
 			dependencies = (
 			);
 			name = LTerminal;
