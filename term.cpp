@@ -47,12 +47,13 @@ DEFINE_string(record,      "",     "Record session to file");
 DEFINE_string(playback,    "",     "Playback recorded session file");
 DEFINE_bool  (draw_fps,    false,  "Draw FPS");
 DEFINE_bool  (resize_grid, true,   "Resize window in glyph bound increments");
+DEFINE_FLAG(dim, point, point(80,25), "Initial terminal dimensions");
 extern FlagOfType<bool> FLAGS_enable_network_;
 
 struct MyAppState {
   unordered_map<string, Shader> shader_map;
   unique_ptr<Browser> image_browser;
-  int new_win_width = 80*Fonts::InitFontWidth(), new_win_height = 25*Fonts::InitFontHeight();
+  int new_win_width = FLAGS_dim.x*Fonts::InitFontWidth(), new_win_height = FLAGS_dim.y*Fonts::InitFontHeight();
   int downscale_effects = 1;
 } *my_app = nullptr;
 
@@ -226,9 +227,10 @@ struct MyTerminalWindow : public TerminalWindow {
   Time join_read_interval = Time(100), refresh_interval = Time(33);
   int join_read_pending = 0;
   MyTerminalWindow(Window *W) :
-    TerminalWindow(W->AddGUI(make_unique<Terminal>(nullptr, W->gd, W->default_font, point(80, 25)))) {
+    TerminalWindow(W->AddGUI(make_unique<Terminal>(nullptr, W->gd, W->default_font, FLAGS_dim))) {
     terminal->new_link_cb      = bind(&MyTerminalWindow::NewLinkCB,   this, _1);
     terminal->hover_control_cb = bind(&MyTerminalWindow::HoverLinkCB, this, _1);
+    if (terminal->bg_color) W->gd->clear_color = *terminal->bg_color;
   }
 
   void SetFontSize(int n) {
@@ -285,7 +287,11 @@ struct MyTerminalWindow : public TerminalWindow {
   }
 
   bool CustomShader() const { return activeshader != &app->shaders->shader_default; }
-  void UpdateTargetFPS(Window *w) { app->scheduler.SetAnimating(w, CustomShader() || (w->console && w->console->animating)); }
+  void UpdateTargetFPS(Window *w) {
+    bool animating = CustomShader() || (w->console && w->console->animating);
+    app->scheduler.SetAnimating(w, animating);
+    if (my_app->downscale_effects) app->SetDownScale(animating);
+  }
 
   void ConsoleAnimatingCB(Window *w) { 
     UpdateTargetFPS(w);
@@ -331,8 +337,9 @@ struct MyTerminalWindow : public TerminalWindow {
     int read_size = ReadAndUpdateTerminalFramebuffer();
     if (downscale) {
       float scale = activeshader->scale = 1.0 / my_app->downscale_effects;
-      W->gd->ViewPort(Box(W->width*scale, W->height*scale));
-    }
+      draw_box.y *= scale;
+      draw_box.h -= terminal->extra_height * scale;
+    } else W->gd->DrawMode(DrawMode::_2D);
 
     if (!effects) {
 #if defined(__APPLE__) && !defined(LFL_MOBILE) && !defined(LFL_QT)
@@ -347,9 +354,9 @@ struct MyTerminalWindow : public TerminalWindow {
 #endif
     }
 
-    W->gd->DrawMode(DrawMode::_2D);
     W->gd->DisableBlend();
-    terminal->Draw(draw_box, Terminal::DrawFlag::Default, effects ? activeshader : NULL);
+    terminal->Draw(draw_box, downscale ? Terminal::DrawFlag::DrawCursor : Terminal::DrawFlag::Default,
+                   effects ? activeshader : NULL);
     if (effects) W->gd->UseShader(0);
 
     W->DrawDialogs();
@@ -371,6 +378,7 @@ struct MyTerminalWindow : public TerminalWindow {
     if      (colors_name == "vga")             terminal->ChangeColors(Singleton<Terminal::StandardVGAColors>   ::Get());
     else if (colors_name == "solarized_dark")  terminal->ChangeColors(Singleton<Terminal::SolarizedDarkColors> ::Get());
     else if (colors_name == "solarized_light") terminal->ChangeColors(Singleton<Terminal::SolarizedLightColors>::Get());
+    if (terminal->bg_color) screen->gd->clear_color = *terminal->bg_color;
     app->scheduler.Wakeup(screen);
   }
 
@@ -445,6 +453,7 @@ void MyWindowStart(Window *W) {
   W->shell->Add("menu",         bind(&MyTerminalWindow::MobileMenuCmd,           tw, _1));
   W->shell->Add("keypress",     bind(&MyTerminalWindow::MobileKeyPressCmd,       tw, _1));
   W->shell->Add("togglekey",    bind(&MyTerminalWindow::MobileKeyToggleCmd,      tw, _1));
+  tw->terminal->line_fb.align_top_or_bot = tw->terminal->cmd_fb.align_top_or_bot = true;
 #endif
   if (my_app->image_browser) W->shell->AddBrowserCommands(my_app->image_browser.get());
 
@@ -560,7 +569,7 @@ extern "C" int MyAppMain() {
     MenuItem{ "", "Emboss",   "shader emboss"   }, MenuItem{ "", "Stormy", "shader stormy" }, MenuItem{ "", "Alien", "shader alien" },
     MenuItem{ "", "Fractal",  "shader fractal"  }, MenuItem{ "", "Darkly", "shader darkly" },
     MenuItem{ "", "<seperator>", "" }, MenuItem{ "", "Controls", "fxctl" } };
-  app->AddNativeMenu("Effects", effects_menu);
+  app->AddNativeMenu("Toys", effects_menu);
 
   MakeValueTuple(&my_app->shader_map, "warper", "water", "twistery");
   MakeValueTuple(&my_app->shader_map, "warper", "water", "twistery");
@@ -569,10 +578,10 @@ extern "C" int MyAppMain() {
   MakeValueTuple(&my_app->shader_map, "darkly");
 
 #ifdef LFL_MOBILE                                                                            
-  vector<pair<string,string>> toolbar_menu = { { "fx", "menu Effects" }, { "ctrl", "togglekey ctrl" },
+  vector<pair<string,string>> toolbar_menu = { { "ctrl", "togglekey ctrl" },
     { "\U000025C0", "keypress left" }, { "\U000025B6", "keypress right" }, { "\U000025B2", "keypress up" }, 
     { "\U000025BC", "keypress down" }, { "\U000023EB", "keypress pgup" }, { "\U000023EC", "keypress pgdown" }, 
-    { "fonts", "choosefont" } };
+    { "fonts", "choosefont" }, { "toys", "menu Toys" } };
   app->CloseTouchKeyboardAfterReturn(false);
   app->OpenTouchKeyboard();
   app->AddToolbar(toolbar_menu);
