@@ -227,20 +227,21 @@ struct MyTerminalWindow : public TerminalWindow {
   Time join_read_interval = Time(100), refresh_interval = Time(33);
   int join_read_pending = 0;
   MyTerminalWindow(Window *W) :
-    TerminalWindow(W->AddGUI(make_unique<Terminal>(nullptr, W->gd, W->default_font, FLAGS_dim))) {
+    TerminalWindow(W->AddGUI(make_unique<Terminal>(nullptr, W, W->default_font, FLAGS_dim))) {
     terminal->new_link_cb      = bind(&MyTerminalWindow::NewLinkCB,   this, _1);
     terminal->hover_control_cb = bind(&MyTerminalWindow::HoverLinkCB, this, _1);
     if (terminal->bg_color) W->gd->clear_color = *terminal->bg_color;
   }
 
   void SetFontSize(int n) {
+    bool drew = false;
     screen->default_font.desc.size = n;
     CHECK((terminal->style.font = screen->default_font.Load()));
     int font_width  = terminal->style.font->FixedWidth(), new_width  = font_width  * terminal->term_width;
     int font_height = terminal->style.font->Height(),     new_height = font_height * terminal->term_height;
     if (FLAGS_resize_grid) screen->SetResizeIncrements(font_width, font_height);
-    if (new_width != screen->width || new_height != screen->height) screen->Reshape(new_width, new_height);
-    else                                                            terminal->Redraw();
+    if (new_width != screen->width || new_height != screen->height) drew = screen->Reshape(new_width, new_height);
+    if (!drew) terminal->Redraw(true, true);
     INFO("Font: ", app->fonts->DefaultFontEngine()->DebugString(terminal->style.font));
   }
 
@@ -279,6 +280,7 @@ struct MyTerminalWindow : public TerminalWindow {
 #ifdef LFL_CRYPTO
     else if (FLAGS_ssh.size())      return UseSSHTerminalController();
 #endif
+    else if (FLAGS_telnet.size())   return UseTelnetTerminalController();
     else                            return UseDefaultTerminalController();
   }
 
@@ -324,7 +326,7 @@ struct MyTerminalWindow : public TerminalWindow {
     tex->Bind();
     screen->gd->EnableBlend();
     screen->gd->SetColor(Color::white - Color::Alpha(0.25));
-    Box::DelBorder(screen->Box(), screen->width*.2, screen->height*.2).Draw(tex->coord);
+    Box::DelBorder(screen->Box(), screen->width*.2, screen->height*.2).Draw(screen->gd, tex->coord);
     screen->gd->ClearDeferred();
   }
 
@@ -398,7 +400,7 @@ struct MyTerminalWindow : public TerminalWindow {
 
   void TransparencyControlsCmd(const vector<string>&) {
     SliderDialog::UpdatedCB cb(bind([=](Widget::Slider *s){ screen->SetTransparency(s->Percent()); }, _1));
-    screen->AddDialog(make_unique<SliderDialog>(screen->gd, "window transparency", cb, 0, 1.0, .025));
+    screen->AddDialog(make_unique<SliderDialog>(screen, "window transparency", cb, 0, 1.0, .025));
     app->scheduler.Wakeup(screen);
   }
 
