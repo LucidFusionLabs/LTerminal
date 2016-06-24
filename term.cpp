@@ -66,7 +66,8 @@ struct PlaybackTerminalController : public Terminal::Controller {
 #ifdef LFL_IPC
     auto r = playback ? playback->Next<IPC::RecordLog>() : nullptr;
     auto ret = (r && r->data()) ? StringPiece(MakeSigned(r->data()->data()), r->data()->size()) : StringPiece();
-    fprintf(stderr, "Playback %llu \"%s\"\n", r ? r->stamp() : 0, CHexEscapeNonAscii(ret).c_str());
+    unsigned long long stamp = r ? r->stamp() : 0;
+    fprintf(stderr, "Playback %llu \"%s\"\n", stamp, CHexEscapeNonAscii(ret).c_str());
     return ret;
 #else
     ERROR("Playback not supported");
@@ -444,7 +445,7 @@ void MyWindowStart(Window *W) {
   if (FLAGS_resize_grid) W->SetResizeIncrements(tw->terminal->style.font->FixedWidth(), tw->terminal->style.font->Height());
   app->scheduler.AddWaitForeverMouse(W);
 
-  W->shell = make_unique<Shell>(nullptr, nullptr, nullptr);
+  W->shell = make_unique<Shell>();
   W->shell->Add("choosefont",   bind(&MyTerminalWindow::FontCmd,                 tw, _1));
   W->shell->Add("colors",       bind(&MyTerminalWindow::ColorsCmd,               tw, _1));
   W->shell->Add("shader",       bind(&MyTerminalWindow::ShaderCmd,               tw, _1));
@@ -489,12 +490,14 @@ extern "C" void MyAppCreate(int argc, const char* const* argv) {
   app->window_start_cb = MyWindowStart;
   app->window_init_cb = MyWindowInit;
   app->window_init_cb(screen);
+#ifdef LFL_MOBILE
+  my_app->downscale_effects = app->SetExtraScale(true);
+  app->SetTitleBar(false);
+  app->SetKeepScreenOn(false);
+#endif
 }
 
 extern "C" int MyAppMain() {
-#ifdef LFL_MOBILE
-  my_app->downscale_effects = app->SetExtraScale(true);
-#endif
   if (app->Create(__FILE__)) return -1;
   SettingsFile::Load();
   Terminal::Colors *colors = Singleton<Terminal::SolarizedDarkColors>::Get();
