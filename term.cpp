@@ -26,6 +26,7 @@
 #include "core/app/crypto.h"
 #include "core/app/net/ssh.h"
 #endif
+#include "core/app/db/sqlite.h"
 #include "term.h"
 
 #ifndef WIN32
@@ -53,8 +54,14 @@ extern FlagOfType<bool> FLAGS_enable_network_;
 struct MyAppState {
   unordered_map<string, Shader> shader_map;
   unique_ptr<Browser> image_browser;
+  unique_ptr<SystemMenuWidget> edit_menu, view_menu, toys_menu;
+  unique_ptr<SystemToolbarWidget> hosts_toolbar, keyboard_toolbar;
+  unique_ptr<SystemTableWidget> hosts_table, newhost_table;
+  unique_ptr<SystemNavigationWidget> hosts_nav;
   int new_win_width = FLAGS_dim.x*Fonts::InitFontWidth(), new_win_height = FLAGS_dim.y*Fonts::InitFontHeight();
   int downscale_effects = 1;
+  SQLite::Database db;
+  ~MyAppState() { SQLite::Close(db); }
 } *my_app = nullptr;
 
 struct PlaybackTerminalController : public Terminal::Controller {
@@ -91,7 +98,7 @@ struct PTYTerminalController : public Terminal::Controller {
   ReadBuffer read_buf;
   PTYTerminalController() : read_buf(65536) {}
   virtual ~PTYTerminalController() {
-    if (process.in) app->scheduler.DelWaitForeverSocket(screen, fileno(process.in));
+    if (process.in) app->scheduler.DelFrameWaitSocket(screen, fileno(process.in));
   }
 
   int Open(TextArea*) {
@@ -153,7 +160,7 @@ struct SSHTerminalController : public NetworkTerminalController {
 #ifdef LFL_MOBILE
     char buf[1];
     if (b.size() == 1 && ctrl_down && !(ctrl_down = false)) {
-      app->ToggleToolbarButton("ctrl");
+      my_app->keyboard_toolbar->ToggleButton("ctrl");
       b = StringPiece(&(buf[0] = Key::CtrlModified(*MakeUnsigned(b.data()))), 1);
     }
 #endif
@@ -299,8 +306,8 @@ struct MyTerminalWindow : public TerminalWindow {
   void ConsoleAnimatingCB(Window *w) { 
     UpdateTargetFPS(w);
     if (!w->console || !w->console->animating) {
-      if ((w->console && w->console->Active()) || controller->frame_on_keyboard_input) app->scheduler.AddWaitForeverKeyboard(w);
-      else                                                                             app->scheduler.DelWaitForeverKeyboard(w);
+      if ((w->console && w->console->Active()) || controller->frame_on_keyboard_input) app->scheduler.AddFrameWaitKeyboard(w);
+      else                                                                             app->scheduler.DelFrameWaitKeyboard(w);
     }
   }
 
@@ -327,7 +334,8 @@ struct MyTerminalWindow : public TerminalWindow {
     tex->Bind();
     screen->gd->EnableBlend();
     screen->gd->SetColor(Color::white - Color::Alpha(0.25));
-    Box::DelBorder(screen->Box(), screen->width*.2, screen->height*.2).Draw(screen->gd, tex->coord);
+    GraphicsContext::DrawTexturedBox1
+      (screen->gd, Box::DelBorder(screen->Box(), screen->width*.2, screen->height*.2), tex->coord);
     screen->gd->ClearDeferred();
   }
 
@@ -369,7 +377,7 @@ struct MyTerminalWindow : public TerminalWindow {
   }
 
   void FontCmd(const vector<string> &arg) {
-    if (arg.size() < 2) return app->LaunchNativeFontChooser(screen->default_font.desc, "choosefont");
+    if (arg.size() < 2) return app->ShowSystemFontChooser(screen->default_font.desc, "choosefont");
     if (arg.size() > 2) FLAGS_font_flag = atoi(arg[2]);
     screen->default_font.desc.name = arg[0];
     SetFontSize(atof(arg[1]));
@@ -418,9 +426,26 @@ struct MyTerminalWindow : public TerminalWindow {
   void MobileKeyPressCmd (const vector<string> &arg) { if (arg.size()) FindAndDispatch(mobile_key_cmd, arg[0]); }
   void MobileKeyToggleCmd(const vector<string> &arg) { if (arg.size()) FindAndDispatch(mobile_togglekey_cmd, arg[0]); }
   void MobileCloseCmd(const vector<string> &arg) { controller->Close(); }
-  void MobileMenuCmd(const vector<string> &arg) {
+  void MobileToysMenuCmd(const vector<string> &arg) {
     ShaderCmd(vector<string>{"none"});
-    if (arg.size()) app->LaunchNativeMenu(arg[0]);
+    my_app->toys_menu->Show();
+  }
+  void MobileNewHostCmd(const vector<string> &arg) {
+    my_app->hosts_nav->PushTable(my_app->newhost_table.get());
+   // my_app->hosts_table->Show(false);
+   // my_app->newhost_table->Show(true);
+  }
+  void MobileStartShellCmd(const vector<string> &arg) {
+    MobileStartSession();
+  }
+  void MobileQuickConnectCmd(const vector<string> &arg) {
+    MobileStartSession();
+  }
+  void MobileStartSession() {
+    my_app->hosts_nav->Show(false);
+    my_app->keyboard_toolbar->Show(true);
+    app->CloseTouchKeyboardAfterReturn(false);
+    app->OpenTouchKeyboard();
   }
 #endif
 };
@@ -443,7 +468,7 @@ void MyWindowStart(Window *W) {
   W->frame_cb = bind(&MyTerminalWindow::Frame, tw, _1, _2, _3);
   W->default_textbox = [=]{ return tw->terminal; };
   if (FLAGS_resize_grid) W->SetResizeIncrements(tw->terminal->style.font->FixedWidth(), tw->terminal->style.font->Height());
-  app->scheduler.AddWaitForeverMouse(W);
+  app->scheduler.AddFrameWaitMouse(W);
 
   W->shell = make_unique<Shell>();
   W->shell->Add("choosefont",   bind(&MyTerminalWindow::FontCmd,                 tw, _1));
@@ -453,9 +478,12 @@ void MyWindowStart(Window *W) {
   W->shell->Add("transparency", bind(&MyTerminalWindow::TransparencyControlsCmd, tw, _1));
 #ifdef LFL_MOBILE                                                                           
   W->shell->Add("close",        bind(&MyTerminalWindow::MobileCloseCmd,          tw, _1));
-  W->shell->Add("menu",         bind(&MyTerminalWindow::MobileMenuCmd,           tw, _1));
+  W->shell->Add("toysmenu",     bind(&MyTerminalWindow::MobileToysMenuCmd,       tw, _1));
   W->shell->Add("keypress",     bind(&MyTerminalWindow::MobileKeyPressCmd,       tw, _1));
   W->shell->Add("togglekey",    bind(&MyTerminalWindow::MobileKeyToggleCmd,      tw, _1));
+  W->shell->Add("newhost",      bind(&MyTerminalWindow::MobileNewHostCmd   ,     tw, _1));
+  W->shell->Add("startshell",   bind(&MyTerminalWindow::MobileStartShellCmd,     tw, _1));
+  W->shell->Add("quickconnect", bind(&MyTerminalWindow::MobileQuickConnectCmd,   tw, _1));
   tw->terminal->line_fb.align_top_or_bot = tw->terminal->cmd_fb.align_top_or_bot = true;
 #endif
   if (my_app->image_browser) W->shell->AddBrowserCommands(my_app->image_browser.get());
@@ -564,8 +592,8 @@ extern "C" int MyAppMain() {
 #endif
     MenuItem{ "", "VGA Colors", "colors vga", }, MenuItem{ "", "Solarized Dark Colors", "colors solarized_dark" }, MenuItem { "", "Solarized Light Colors", "colors solarized_light" }
   };
-  app->AddNativeEditMenu(vector<MenuItem>());
-  app->AddNativeMenu("View", view_menu);
+  my_app->edit_menu = SystemMenuWidget::CreateEditMenu(vector<MenuItem>());
+  my_app->view_menu = make_unique<SystemMenuWidget>("View", view_menu);
 #endif
 
   vector<MenuItem> effects_menu{
@@ -574,7 +602,7 @@ extern "C" int MyAppMain() {
     MenuItem{ "", "Emboss",   "shader emboss"   }, MenuItem{ "", "Stormy", "shader stormy" }, MenuItem{ "", "Alien", "shader alien" },
     MenuItem{ "", "Fractal",  "shader fractal"  }, MenuItem{ "", "Darkly", "shader darkly" },
     MenuItem{ "", "<seperator>", "" }, MenuItem{ "", "Controls", "fxctl" } };
-  app->AddNativeMenu("Toys", effects_menu);
+  my_app->toys_menu = make_unique<SystemMenuWidget>("Toys", effects_menu);
 
   MakeValueTuple(&my_app->shader_map, "warper", "water", "twistery");
   MakeValueTuple(&my_app->shader_map, "warper", "water", "twistery");
@@ -582,14 +610,44 @@ extern "C" int MyAppMain() {
   MakeValueTuple(&my_app->shader_map, "stormy", "alien", "fractal");
   MakeValueTuple(&my_app->shader_map, "darkly");
 
-#ifdef LFL_MOBILE                                                                            
-  vector<pair<string,string>> toolbar_menu = { { "ctrl", "togglekey ctrl" },
+#ifdef LFL_MOBILE
+  vector<pair<string,string>> keyboard_tb = { { "ctrl", "togglekey ctrl" },
     { "\U000025C0", "keypress left" }, { "\U000025B6", "keypress right" }, { "\U000025B2", "keypress up" }, 
     { "\U000025BC", "keypress down" }, { "\U000023EB", "keypress pgup" }, { "\U000023EC", "keypress pgdown" }, 
-    { "fonts", "choosefont" }, { "toys", "menu Toys" } };
-  app->CloseTouchKeyboardAfterReturn(false);
-  app->OpenTouchKeyboard();
-  app->AddToolbar(toolbar_menu);
+    { "fonts", "choosefont" }, { "toys", "toysmenu" } };
+  my_app->keyboard_toolbar = make_unique<SystemToolbarWidget>(keyboard_tb);
+
+  vector<pair<string,string>> hosts_tb = { { "\U00002699", "appsettings" }, { "+", "newhost" } };
+  my_app->hosts_toolbar = make_unique<SystemToolbarWidget>(hosts_tb);
+
+  vector<MenuItem> hosts_table{ MenuItem{ "Quick connect", "command", "quickconnect" },
+    MenuItem{ "Interactive Shell", "command", "startshell" }, MenuItem{ "<seperator>", "", "" } };
+  my_app->hosts_table = make_unique<SystemTableWidget>("Hosts", hosts_table);
+  my_app->hosts_table->AddToolbar(my_app->hosts_toolbar.get());
+
+  vector<MenuItem> newhost_table{ MenuItem{ "Hostname", "textinput", "" },
+    MenuItem{ "Port", "numinput", "22" }, MenuItem{ "Username", "textinput", "" } };
+  my_app->newhost_table = make_unique<SystemTableWidget>("New Host", newhost_table);
+
+  INFO("omg ", app->GetLocalizedString("app_name"));
+  my_app->hosts_nav = make_unique<SystemNavigationWidget>(my_app->hosts_table.get());
+#if 1
+  my_app->hosts_nav->Show(true);
+#else
+  // my_app->hosts_toolbar->Show(true);
+  my_app->hosts_table->Show(true);
+#endif
+
+  string dbfn = StrCat(app->savedir, "hosts.db");
+  bool created = !LocalFile::IsFile(dbfn);
+  my_app->db = SQLite::Open(dbfn);
+  INFO("opening ", dbfn, " created=", created);
+  if (created) CHECK(SQLite::Exec(my_app->db,
+                                  "CREATE TABLE hosts\n"
+                                  "(host_id INTEGER PRIMARY KEY AUTOINCREMENT,\n"
+                                  "host_name VARCHAR NOT NULL,\n"
+                                  "identity INTEGER NOT NULL,\n"
+                                  "preferences BLOB NOT NULL);\n"));
 #endif
 
   INFO("Starting ", app->name, " ", screen->default_font.desc.name, " (w=", tw->terminal->style.font->FixedWidth(),

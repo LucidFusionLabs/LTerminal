@@ -27,7 +27,7 @@ struct NetworkTerminalController : public Terminal::Controller {
   string remote, read_buf, ret_buf;
   NetworkTerminalController(Service *s, const string &r, const Callback &ccb)
     : svc(s), detach_cb(bind(&NetworkTerminalController::ConnectedCB, this)), close_cb(ccb), remote(r) {}
-  virtual ~NetworkTerminalController() { if (conn) app->scheduler.DelWaitForeverSocket(screen, conn->socket); }
+  virtual ~NetworkTerminalController() { if (conn) app->scheduler.DelFrameWaitSocket(screen, conn->socket); }
 
   virtual int Open(TextArea*) {
     if (remote.empty()) return -1;
@@ -39,14 +39,14 @@ struct NetworkTerminalController : public Terminal::Controller {
 
   virtual void Close() {
     if (!conn || conn->state != Connection::Connected) return;
-    if (app->network_thread) app->scheduler.DelWaitForeverSocket(screen, conn->socket);
+    if (app->network_thread) app->scheduler.DelFrameWaitSocket(screen, conn->socket);
     app->net->ConnCloseDetached(svc, conn);
     conn = 0;
     close_cb();
   }
 
   virtual void ConnectedCB() {
-    if (app->network_thread) app->scheduler.AddWaitForeverSocket(screen, conn->socket, SocketSet::READABLE);
+    if (app->network_thread) app->scheduler.AddFrameWaitSocket(screen, conn->socket, SocketSet::READABLE);
   }
 
   virtual StringPiece Read() {
@@ -80,10 +80,10 @@ struct InteractiveTerminalController : public Terminal::Controller {
 
   InteractiveTerminalController() : cmd(FontDesc::Default()) {
     cmd.runcb = bind(&Shell::Run, &shell, _1);
-    cmd.ReadHistory(LFAppDownloadDir(), "shell");
+    cmd.ReadHistory(app->savedir, "shell");
     frame_on_keyboard_input = true;
   }
-  virtual ~InteractiveTerminalController() { cmd.WriteHistory(LFAppDownloadDir(), "shell", ""); }
+  virtual ~InteractiveTerminalController() { cmd.WriteHistory(app->savedir, "shell", ""); }
 
   int Open(TextArea *T) { (term=T)->Write(StrCat(header, prompt)); return -1; }
   StringPiece Read() { swap(read_buf, ret_buf); read_buf.clear(); return ret_buf; }
@@ -140,9 +140,9 @@ template <class TerminalType> struct TerminalWindowT {
     controller = move(new_controller);
     terminal->sink = controller.get();
     int fd = controller->Open(terminal);
-    if (fd != -1) app->scheduler.AddWaitForeverSocket(screen, fd, SocketSet::READABLE);
-    if (controller->frame_on_keyboard_input) app->scheduler.AddWaitForeverKeyboard(screen);
-    else                                     app->scheduler.DelWaitForeverKeyboard(screen);
+    if (fd != -1) app->scheduler.AddFrameWaitSocket(screen, fd, SocketSet::READABLE);
+    if (controller->frame_on_keyboard_input) app->scheduler.AddFrameWaitKeyboard(screen);
+    else                                     app->scheduler.DelFrameWaitKeyboard(screen);
     OpenedController();
   }
 

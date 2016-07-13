@@ -1,5 +1,11 @@
 # $Id: CMakeLists.txt 1320 2014-10-26 08:12:52Z justin $
 
+if(LFL_MOBILE)
+  set(DB_LIB app_db_sqlite)
+else()
+  set(DB_LIB app_null_sqlite)
+endif()
+
 if(LFL_MOBILE OR LFL_WINDOWS OR (LFL_DEBUG AND NOT LFL_APPLE))
   set(CRYPTO_DEF -DLFL_CRYPTO)
   set(CRYPTO_LIB ${LFL_APP_CRYPTO} app_openssl_dh)
@@ -27,7 +33,7 @@ lfl_add_package(lterm SOURCES term.cpp term.rc COMPILE_DEFINITIONS ${CRYPTO_DEF}
                 app_simple_resampler app_simple_loader ${LFL_APP_CONVERT} app_libpng_png
                 app_null_jpeg app_null_gif app_null_ogg app_null_css ${LFL_APP_FONT}
                 ${LFL_APP_SSL} app_null_js app_null_tu
-                ${CRYPTO_LIB} ${LFL_APP_OS})
+                ${DB_LIB} ${CRYPTO_LIB} ${LFL_APP_OS})
 set(LFL_APP_ASSET_FILES ${LFL_APP_ASSET_FILES} ${LFL_SOURCE_DIR}/core/app/shaders/shadertoy/*.frag
     ${LFL_SOURCE_DIR}/core/app/assets/VeraMoBd.*)
 lfl_post_build_start(lterm lterm LTerminal)
