@@ -28,7 +28,7 @@ android {
     sourceSets {
         main {
             manifest.srcFile 'AndroidManifest.xml'
-            java.srcDirs         = ['../../core/app/java', 'src']
+            java.srcDirs         = ['src']
             // java.excludes        = ['**/GPlusClient.java', '**/Advertising.java']
             resources.srcDirs    = []
             aidl.srcDirs         = []
@@ -44,7 +44,7 @@ android {
 }
 
 dependencies {
-    compile project(':BaseGameUtils')
+    compile project(':LFLApp')
 }
 
 allprojects {

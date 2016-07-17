@@ -29,8 +29,9 @@ struct NetworkTerminalController : public Terminal::Controller {
     : svc(s), detach_cb(bind(&NetworkTerminalController::ConnectedCB, this)), close_cb(ccb), remote(r) {}
   virtual ~NetworkTerminalController() { if (conn) app->scheduler.DelFrameWaitSocket(screen, conn->socket); }
 
-  virtual int Open(TextArea*) {
+  virtual int Open(TextArea *t) {
     if (remote.empty()) return -1;
+    t->Write(StrCat("Connecting to ", remote, "\r\n"));
     app->RunInNetworkThread([=](){
       if (!(conn = svc->Connect(remote, 0, &detach_cb)))
         if (app->network_thread) app->RunInMainThread([=](){ Close(); }); });
@@ -147,6 +148,7 @@ template <class TerminalType> struct TerminalWindowT {
   }
 
   int ReadAndUpdateTerminalFramebuffer() {
+    if (!controller) return 0;
     StringPiece s = controller->Read();
     if (s.len) {
       terminal->Write(s);

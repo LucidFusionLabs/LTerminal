@@ -135,6 +135,7 @@ struct SSHTerminalController : public NetworkTerminalController {
 
   int Open(TextArea *t) {
     Terminal *term = dynamic_cast<Terminal*>(t);
+    term->Write(StrCat("Connecting to ", FLAGS_login, "@", FLAGS_ssh, "\r\n"));
     app->RunInNetworkThread([=](){
       conn = SSHClient::Open(FLAGS_ssh, SSHClient::ResponseCB
                              (bind(&SSHTerminalController::SSHReadCB, this, _1, _2)), &detach_cb);
@@ -432,20 +433,28 @@ struct MyTerminalWindow : public TerminalWindow {
   }
   void MobileNewHostCmd(const vector<string> &arg) {
     my_app->hosts_nav->PushTable(my_app->newhost_table.get());
-   // my_app->hosts_table->Show(false);
-   // my_app->newhost_table->Show(true);
   }
   void MobileStartShellCmd(const vector<string> &arg) {
+    UseShellTerminalController("");
     MobileStartSession();
   }
   void MobileQuickConnectCmd(const vector<string> &arg) {
-    MobileStartSession();
+    my_app->hosts_nav->PushTable(my_app->newhost_table.get());
   }
   void MobileStartSession() {
     my_app->hosts_nav->Show(false);
     my_app->keyboard_toolbar->Show(true);
     app->CloseTouchKeyboardAfterReturn(false);
     app->OpenTouchKeyboard();
+  }
+  void MobileConnectCmd(const vector<string>&) {
+    StringPairVec v = my_app->newhost_table->GetSectionText(0);
+    CHECK_EQ(4, v.size());
+    FLAGS_ssh = v[0].second;
+    if (v[1].second != "22") StrAppend(&FLAGS_ssh, ":", v[1].second);
+    FLAGS_login = v[2].second;
+    UseSSHTerminalController();
+    MobileStartSession();
   }
 #endif
 };
@@ -484,6 +493,7 @@ void MyWindowStart(Window *W) {
   W->shell->Add("newhost",      bind(&MyTerminalWindow::MobileNewHostCmd   ,     tw, _1));
   W->shell->Add("startshell",   bind(&MyTerminalWindow::MobileStartShellCmd,     tw, _1));
   W->shell->Add("quickconnect", bind(&MyTerminalWindow::MobileQuickConnectCmd,   tw, _1));
+  W->shell->Add("connect",      bind(&MyTerminalWindow::MobileConnectCmd,        tw, _1));
   tw->terminal->line_fb.align_top_or_bot = tw->terminal->cmd_fb.align_top_or_bot = true;
 #endif
   if (my_app->image_browser) W->shell->AddBrowserCommands(my_app->image_browser.get());
@@ -573,7 +583,9 @@ extern "C" int MyAppMain() {
 
   auto tw = new MyTerminalWindow(screen);
   if (FLAGS_record.size()) tw->record = make_unique<FlatFile>(FLAGS_record);
+#ifndef LFL_MOBILE
   tw->UseInitialTerminalController();
+#endif
   screen->user1 = MakeTyped(tw);
   app->StartNewWindow(screen);
   tw->SetFontSize(screen->default_font.desc.size);
@@ -601,7 +613,7 @@ extern "C" int MyAppMain() {
     MenuItem{ "", "Twistery", "shader twistery" }, MenuItem{ "", "Fire",   "shader fire"   }, MenuItem{ "", "Waves", "shader waves" },
     MenuItem{ "", "Emboss",   "shader emboss"   }, MenuItem{ "", "Stormy", "shader stormy" }, MenuItem{ "", "Alien", "shader alien" },
     MenuItem{ "", "Fractal",  "shader fractal"  }, MenuItem{ "", "Darkly", "shader darkly" },
-    MenuItem{ "", "<seperator>", "" }, MenuItem{ "", "Controls", "fxctl" } };
+    MenuItem{ "", "<separator>", "" }, MenuItem{ "", "Controls", "fxctl" } };
   my_app->toys_menu = make_unique<SystemMenuWidget>("Toys", effects_menu);
 
   MakeValueTuple(&my_app->shader_map, "warper", "water", "twistery");
@@ -621,22 +633,20 @@ extern "C" int MyAppMain() {
   my_app->hosts_toolbar = make_unique<SystemToolbarWidget>(hosts_tb);
 
   vector<MenuItem> hosts_table{ MenuItem{ "Quick connect", "command", "quickconnect" },
-    MenuItem{ "Interactive Shell", "command", "startshell" }, MenuItem{ "<seperator>", "", "" } };
+    MenuItem{ "Interactive Shell", "command", "startshell" }, MenuItem{ "<separator>", "", "" } };
   my_app->hosts_table = make_unique<SystemTableWidget>("Hosts", hosts_table);
   my_app->hosts_table->AddToolbar(my_app->hosts_toolbar.get());
 
-  vector<MenuItem> newhost_table{ MenuItem{ "Hostname", "textinput", "" },
-    MenuItem{ "Port", "numinput", "22" }, MenuItem{ "Username", "textinput", "" } };
+  vector<MenuItem> newhost_table{ MenuItem{ "SSH,Telnet", "textinput,textinput", "" },
+    MenuItem{ "Port", "numinput", "22" }, MenuItem{ "Username", "textinput", "" },
+    MenuItem{ "Password,Identity", "pwinput,pwinput", "" }, MenuItem{ "<separator>", "", "" },
+    MenuItem{ "Connect", "button", "connect" }, MenuItem{ "<separator>", "", "" },
+    MenuItem{ "Server Settings", "button", "" }
+  };
   my_app->newhost_table = make_unique<SystemTableWidget>("New Host", newhost_table);
 
-  INFO("omg ", app->GetLocalizedString("app_name"));
   my_app->hosts_nav = make_unique<SystemNavigationWidget>(my_app->hosts_table.get());
-#if 1
   my_app->hosts_nav->Show(true);
-#else
-  // my_app->hosts_toolbar->Show(true);
-  my_app->hosts_table->Show(true);
-#endif
 
   string dbfn = StrCat(app->savedir, "hosts.db");
   bool created = !LocalFile::IsFile(dbfn);
