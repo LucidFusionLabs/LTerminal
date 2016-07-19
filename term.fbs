@@ -1,0 +1,9 @@
+namespace LFL.LTerminal;
+
+table RecordLog { stamp: ulong; data: [ubyte]; }
+
+table Host {
+  hostport:    string;
+  username:    string;
+  displayname: string;
+}

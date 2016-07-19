@@ -14,6 +14,10 @@ else()
   set(CRYPTO_LIB app_null_dh)
 endif()
 
+if(LFL_FLATBUFFERS)
+  FLATBUFFERS_GENERATE_C_HEADERS(FLATBUFFERS_SRC term.fbs)
+endif()
+
 if(NOT LFL_MOBILE)
   lfl_project(lterm-render-sandbox)
   lfl_add_package(lterm-render-sandbox SOURCES render.cpp
@@ -27,7 +31,8 @@ if(NOT LFL_MOBILE)
 endif()
 
 lfl_project(lterm)
-lfl_add_package(lterm SOURCES term.cpp term.rc COMPILE_DEFINITIONS ${CRYPTO_DEF}
+lfl_add_package(lterm SOURCES term.cpp term.rc ${FLATBUFFERS_SRC_OUTPUTS}
+                COMPILE_DEFINITIONS ${CRYPTO_DEF}
                 LINK_LIBRARIES ${LFL_APP_LIB} ${LFL_APP_FRAMEWORK} ${LFL_APP_GRAPHICS}
                 app_null_audio app_null_camera app_null_matrix app_null_fft
                 app_simple_resampler app_simple_loader ${LFL_APP_CONVERT} app_libpng_png

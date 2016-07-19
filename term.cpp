@@ -27,6 +27,9 @@
 #include "core/app/net/ssh.h"
 #endif
 #include "core/app/db/sqlite.h"
+#ifdef LFL_FLATBUFFERS
+#include "term/term_generated.h"
+#endif
 #include "term.h"
 
 #ifndef WIN32
@@ -61,6 +64,7 @@ struct MyAppState {
   int new_win_width = FLAGS_dim.x*Fonts::InitFontWidth(), new_win_height = FLAGS_dim.y*Fonts::InitFontHeight();
   int downscale_effects = 1;
   SQLite::Database db;
+  SQLiteIdValueStore hosts_db;
   ~MyAppState() { SQLite::Close(db); }
 } *my_app = nullptr;
 
@@ -70,8 +74,8 @@ struct PlaybackTerminalController : public Terminal::Controller {
   int Open(TextArea*) { return -1; }
   int Write(const StringPiece &b) { return b.size(); }
   StringPiece Read() {
-#ifdef LFL_IPC
-    auto r = playback ? playback->Next<IPC::RecordLog>() : nullptr;
+#ifdef LFL_FLATBUFFERS
+    auto r = playback ? playback->Next<LTerminal::RecordLog>() : nullptr;
     auto ret = (r && r->data()) ? StringPiece(MakeSigned(r->data()->data()), r->data()->size()) : StringPiece();
     unsigned long long stamp = r ? r->stamp() : 0;
     fprintf(stderr, "Playback %llu \"%s\"\n", stamp, CHexEscapeNonAscii(ret).c_str());
@@ -132,22 +136,37 @@ struct PTYTerminalController : public Terminal::Controller {
 #ifdef LFL_CRYPTO
 struct SSHTerminalController : public NetworkTerminalController {
   using NetworkTerminalController::NetworkTerminalController;
+  Callback success_cb;
+  bool save_host=0;
 
   int Open(TextArea *t) {
     Terminal *term = dynamic_cast<Terminal*>(t);
     term->Write(StrCat("Connecting to ", FLAGS_login, "@", FLAGS_ssh, "\r\n"));
     app->RunInNetworkThread([=](){
+      success_cb = bind(&SSHTerminalController::SSHLoginCB, this, term);
       conn = SSHClient::Open(FLAGS_ssh, SSHClient::ResponseCB
-                             (bind(&SSHTerminalController::SSHReadCB, this, _1, _2)), &detach_cb);
+                             (bind(&SSHTerminalController::SSHReadCB, this, _1, _2)), &detach_cb, &success_cb);
       if (!conn) { app->RunInMainThread(bind(&NetworkTerminalController::Dispose, this)); return; }
       SSHClient::SetTerminalWindowSize(conn, term->term_width, term->term_height);
       SSHClient::SetUser(conn, FLAGS_login);
 #ifdef LFL_MOBILE
       SSHClient::SetPasswordCB(conn, bind(&Application::LoadPassword, app, _1, _2, _3),
-                               bind(&Application::SavePassword, app, _1, _2, _3));
+                                     bind(&Application::SavePassword, app, _1, _2, _3));
 #endif
     });
     return -1;
+  }
+
+  void SSHLoginCB(Terminal *term) {
+    term->Write("Connected.\r\n");
+    if (!save_host) return;
+    save_host = false;
+#ifdef LFL_MOBILE
+    int row_id = my_app->hosts_db.Insert
+      (MakeBlobPiece(MakeFlatBufferOfType(LTerminal::Host,
+                                          LTerminal::CreateHost(fb, fb.CreateString(FLAGS_ssh),
+                                                                fb.CreateString(FLAGS_login)))));
+#endif
   }
 
   void SSHReadCB(Connection *c, const StringPiece &b) { 
@@ -235,6 +254,8 @@ struct MyTerminalWindow : public TerminalWindow {
   Shader *activeshader = &app->shaders->shader_default;
   Time join_read_interval = Time(100), refresh_interval = Time(33);
   int join_read_pending = 0;
+  bool save_host = false;
+
   MyTerminalWindow(Window *W) :
     TerminalWindow(W->AddGUI(make_unique<Terminal>(nullptr, W, W->default_font, FLAGS_dim))) {
     terminal->new_link_cb      = bind(&MyTerminalWindow::NewLinkCB,   this, _1);
@@ -265,8 +286,11 @@ struct MyTerminalWindow : public TerminalWindow {
 
   void UseSSHTerminalController() {
 #ifdef LFL_CRYPTO
-    ChangeController(make_unique<SSHTerminalController>(app->net->tcp_client.get(), "",
-                                                        [=](){ UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n"); }));
+    auto ssh_controller =
+      make_unique<SSHTerminalController>(app->net->tcp_client.get(), "",
+                                         [=](){ UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n"); });
+    ssh_controller->save_host = save_host;
+    ChangeController(move(ssh_controller));
 #endif
   }
 
@@ -422,8 +446,10 @@ struct MyTerminalWindow : public TerminalWindow {
     { "down",   bind([=]{ terminal->HistDown();    if (controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); }) },
     { "pgup",   bind([=]{ terminal->PageUp();      if (controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); }) },
     { "pgdown", bind([=]{ terminal->PageDown();    if (controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); }) } };
+
   unordered_map<string, Callback> mobile_togglekey_cmd = {
     { "ctrl", bind([&]{ controller->ctrl_down = !controller->ctrl_down; }) } };
+
   void MobileKeyPressCmd (const vector<string> &arg) { if (arg.size()) FindAndDispatch(mobile_key_cmd, arg[0]); }
   void MobileKeyToggleCmd(const vector<string> &arg) { if (arg.size()) FindAndDispatch(mobile_togglekey_cmd, arg[0]); }
   void MobileCloseCmd(const vector<string> &arg) { controller->Close(); }
@@ -431,22 +457,40 @@ struct MyTerminalWindow : public TerminalWindow {
     ShaderCmd(vector<string>{"none"});
     my_app->toys_menu->Show();
   }
+
   void MobileNewHostCmd(const vector<string> &arg) {
+    save_host = true;
     my_app->hosts_nav->PushTable(my_app->newhost_table.get());
   }
+
   void MobileStartShellCmd(const vector<string> &arg) {
+    save_host = false;
     UseShellTerminalController("");
     MobileStartSession();
   }
+
   void MobileQuickConnectCmd(const vector<string> &arg) {
+    save_host = false;
     my_app->hosts_nav->PushTable(my_app->newhost_table.get());
   }
+
+  void MobileHostConnectCmd(const vector<string> &arg) {
+    CHECK_EQ(1, arg.size());
+    const string &val = FindOrDie(my_app->hosts_db.data, atoi(arg[0]));
+    const LTerminal::Host *h = flatbuffers::GetRoot<LTerminal::Host>(val.data());
+    FLAGS_ssh   = h->hostport() ? h->hostport()->data() : "";
+    FLAGS_login = h->username() ? h->username()->data() : "";
+    UseSSHTerminalController();
+    MobileStartSession();
+  }
+
   void MobileStartSession() {
     my_app->hosts_nav->Show(false);
     my_app->keyboard_toolbar->Show(true);
     app->CloseTouchKeyboardAfterReturn(false);
     app->OpenTouchKeyboard();
   }
+
   void MobileConnectCmd(const vector<string>&) {
     StringPairVec v = my_app->newhost_table->GetSectionText(0);
     CHECK_EQ(4, v.size());
@@ -493,6 +537,7 @@ void MyWindowStart(Window *W) {
   W->shell->Add("newhost",      bind(&MyTerminalWindow::MobileNewHostCmd   ,     tw, _1));
   W->shell->Add("startshell",   bind(&MyTerminalWindow::MobileStartShellCmd,     tw, _1));
   W->shell->Add("quickconnect", bind(&MyTerminalWindow::MobileQuickConnectCmd,   tw, _1));
+  W->shell->Add("hostconnect",  bind(&MyTerminalWindow::MobileHostConnectCmd,    tw, _1));
   W->shell->Add("connect",      bind(&MyTerminalWindow::MobileConnectCmd,        tw, _1));
   tw->terminal->line_fb.align_top_or_bot = tw->terminal->cmd_fb.align_top_or_bot = true;
 #endif
@@ -623,6 +668,9 @@ extern "C" int MyAppMain() {
   MakeValueTuple(&my_app->shader_map, "darkly");
 
 #ifdef LFL_MOBILE
+  my_app->db = SQLite::Open(StrCat(app->savedir, "lterm.db"));
+  my_app->hosts_db.Open(&my_app->db, "hosts");
+
   vector<pair<string,string>> keyboard_tb = { { "ctrl", "togglekey ctrl" },
     { "\U000025C0", "keypress left" }, { "\U000025B6", "keypress right" }, { "\U000025B2", "keypress up" }, 
     { "\U000025BC", "keypress down" }, { "\U000023EB", "keypress pgup" }, { "\U000023EC", "keypress pgdown" }, 
@@ -634,6 +682,12 @@ extern "C" int MyAppMain() {
 
   vector<MenuItem> hosts_table{ MenuItem{ "Quick connect", "command", "quickconnect" },
     MenuItem{ "Interactive Shell", "command", "startshell" }, MenuItem{ "<separator>", "", "" } };
+  for (auto host : my_app->hosts_db.data) {
+    const LTerminal::Host *h = flatbuffers::GetRoot<LTerminal::Host>(host.second.data());
+    string hostport = h->hostport() ? h->hostport()->data() : "";
+    string username = h->username() ? h->username()->data() : "";
+    hosts_table.emplace_back(StrCat(username, "@", hostport), "command", StrCat("hostconnect ", host.first));
+  }
   my_app->hosts_table = make_unique<SystemTableWidget>("Hosts", hosts_table);
   my_app->hosts_table->AddToolbar(my_app->hosts_toolbar.get());
 
@@ -647,17 +701,6 @@ extern "C" int MyAppMain() {
 
   my_app->hosts_nav = make_unique<SystemNavigationWidget>(my_app->hosts_table.get());
   my_app->hosts_nav->Show(true);
-
-  string dbfn = StrCat(app->savedir, "hosts.db");
-  bool created = !LocalFile::IsFile(dbfn);
-  my_app->db = SQLite::Open(dbfn);
-  INFO("opening ", dbfn, " created=", created);
-  if (created) CHECK(SQLite::Exec(my_app->db,
-                                  "CREATE TABLE hosts\n"
-                                  "(host_id INTEGER PRIMARY KEY AUTOINCREMENT,\n"
-                                  "host_name VARCHAR NOT NULL,\n"
-                                  "identity INTEGER NOT NULL,\n"
-                                  "preferences BLOB NOT NULL);\n"));
 #endif
 
   INFO("Starting ", app->name, " ", screen->default_font.desc.name, " (w=", tw->terminal->style.font->FixedWidth(),

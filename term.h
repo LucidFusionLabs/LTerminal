@@ -152,8 +152,11 @@ template <class TerminalType> struct TerminalWindowT {
     StringPiece s = controller->Read();
     if (s.len) {
       terminal->Write(s);
+#ifdef LFL_FLATBUFFERS
       if (record) record->Add
-        (MakeIPC(RecordLog, (Now() - app->time_started).count(), fb.CreateVector(MakeUnsigned(s.buf), s.len)));
+        (MakeFlatBufferOfType
+         (LTerminal::RecordLog, LTerminal::CreateRecordLog(fb, (Now() - app->time_started).count(), fb.CreateVector(MakeUnsigned(s.buf), s.len))));
+#endif
     }
     return s.len;
   }
