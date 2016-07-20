@@ -458,6 +458,10 @@ struct MyTerminalWindow : public TerminalWindow {
     my_app->toys_menu->Show();
   }
 
+  void MobileAppSettingsCmd(const vector<string> &arg) {
+    if (!app->OpenSystemAppPreferences()) {}
+  }
+
   void MobileNewHostCmd(const vector<string> &arg) {
     save_host = true;
     my_app->hosts_nav->PushTable(my_app->newhost_table.get());
@@ -534,7 +538,8 @@ void MyWindowStart(Window *W) {
   W->shell->Add("toysmenu",     bind(&MyTerminalWindow::MobileToysMenuCmd,       tw, _1));
   W->shell->Add("keypress",     bind(&MyTerminalWindow::MobileKeyPressCmd,       tw, _1));
   W->shell->Add("togglekey",    bind(&MyTerminalWindow::MobileKeyToggleCmd,      tw, _1));
-  W->shell->Add("newhost",      bind(&MyTerminalWindow::MobileNewHostCmd   ,     tw, _1));
+  W->shell->Add("appsettings",  bind(&MyTerminalWindow::MobileAppSettingsCmd,    tw, _1));
+  W->shell->Add("newhost",      bind(&MyTerminalWindow::MobileNewHostCmd,        tw, _1));
   W->shell->Add("startshell",   bind(&MyTerminalWindow::MobileStartShellCmd,     tw, _1));
   W->shell->Add("quickconnect", bind(&MyTerminalWindow::MobileQuickConnectCmd,   tw, _1));
   W->shell->Add("hostconnect",  bind(&MyTerminalWindow::MobileHostConnectCmd,    tw, _1));
