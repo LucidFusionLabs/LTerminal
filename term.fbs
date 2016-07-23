@@ -6,4 +6,19 @@ table Host {
   hostport:    string;
   username:    string;
   displayname: string;
+  credential:  int;
+  identity:    int;
+}
+
+table Credential {
+  type:        int;
+  data:        [ubyte];
+  password:    string;
+  displayname: string;
+}
+
+table Identity {
+  username:    string;
+  displayname: string;
+  credential:  [int];
 }

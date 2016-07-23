@@ -42,6 +42,7 @@ namespace LFL {
 #ifdef LFL_CRYPTO
 DEFINE_string(ssh,         "",     "SSH to host");
 DEFINE_string(login,       "",     "SSH user");
+DEFINE_string(keyfile,     "",     "SSH private key");
 #endif
 DEFINE_bool  (interpreter, false,  "Launch interpreter instead of shell");
 DEFINE_string(telnet,      "",     "Telnet to host");
@@ -57,6 +58,7 @@ extern FlagOfType<bool> FLAGS_enable_network_;
 struct MyAppState {
   unordered_map<string, Shader> shader_map;
   unique_ptr<Browser> image_browser;
+  unique_ptr<SystemAlertWidget> passphrase_alert;
   unique_ptr<SystemMenuWidget> edit_menu, view_menu, toys_menu;
   unique_ptr<SystemToolbarWidget> hosts_toolbar, keyboard_toolbar;
   unique_ptr<SystemTableWidget> hosts_table, newhost_table;
@@ -138,8 +140,15 @@ struct SSHTerminalController : public NetworkTerminalController {
   using NetworkTerminalController::NetworkTerminalController;
   Callback success_cb;
   bool save_host=0;
+  shared_ptr<SSHClient::Identity> identity;
 
   int Open(TextArea *t) {
+    if (!FLAGS_keyfile.empty()) {
+      identity = make_shared<SSHClient::Identity>();
+      if (!Crypto::ParsePEM(&LocalFile::FileContents(FLAGS_keyfile)[0], &identity->rsa, &identity->dsa, &identity->ec,
+                            [=](string v) { return my_app->passphrase_alert->RunModal(v); })) identity.reset();
+    }
+
     Terminal *term = dynamic_cast<Terminal*>(t);
     term->Write(StrCat("Connecting to ", FLAGS_login, "@", FLAGS_ssh, "\r\n"));
     app->RunInNetworkThread([=](){
@@ -149,6 +158,7 @@ struct SSHTerminalController : public NetworkTerminalController {
       if (!conn) { app->RunInMainThread(bind(&NetworkTerminalController::Dispose, this)); return; }
       SSHClient::SetTerminalWindowSize(conn, term->term_width, term->term_height);
       SSHClient::SetUser(conn, FLAGS_login);
+      SSHClient::SetIdentity(conn, identity);
 #ifdef LFL_MOBILE
       SSHClient::SetPasswordCB(conn, bind(&Application::LoadPassword, app, _1, _2, _3),
                                      bind(&Application::SavePassword, app, _1, _2, _3));
@@ -630,6 +640,9 @@ extern "C" int MyAppMain() {
   }
 
   my_app->image_browser = make_unique<Browser>();
+  vector<pair<string,string>> passphrase_alert = {
+    { "style", "pwinput" }, { "Passphrase", "Passphrase" }, { "Cancel", "" }, { "Continue", "" } };
+  my_app->passphrase_alert = make_unique<SystemAlertWidget>(passphrase_alert);
 
   auto tw = new MyTerminalWindow(screen);
   if (FLAGS_record.size()) tw->record = make_unique<FlatFile>(FLAGS_record);
