@@ -1,24 +1,26 @@
 namespace LFL.LTerminal;
 
-table RecordLog { stamp: ulong; data: [ubyte]; }
-
-table Host {
-  hostport:    string;
-  username:    string;
-  displayname: string;
-  credential:  int;
-  identity:    int;
-}
+enum CredentialDBType : int { Identity = 0, Table, Keychain }
+enum CredentialType : int { Ask = 0, Password, PEM }
+struct CredentialRef { db: int; id: int; }
 
 table Credential {
-  type:        int;
+  type:        CredentialType;
   data:        [ubyte];
-  password:    string;
   displayname: string;
 }
 
 table Identity {
   username:    string;
+  credential:  [CredentialRef];
   displayname: string;
-  credential:  [int];
 }
+
+table Remote {
+  hostport:    string;
+  username:    string;
+  credential:  CredentialRef;
+  displayname: string;
+}
+
+table RecordLog { stamp: ulong; data: [ubyte]; }

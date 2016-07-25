@@ -1,7 +1,7 @@
 # $Id: CMakeLists.txt 1320 2014-10-26 08:12:52Z justin $
 
 if(LFL_MOBILE)
-  set(DB_LIB app_db_sqlite)
+  set(DB_LIB app_sqlcipher_sqlite)
 else()
   set(DB_LIB app_null_sqlite)
 endif()
@@ -10,8 +10,8 @@ if(LFL_MOBILE OR LFL_WINDOWS OR LFL_DEBUG)
   set(CRYPTO_DEF -DLFL_CRYPTO)
   set(CRYPTO_LIB ${LFL_APP_CRYPTO} app_openssl_pk app_openssl_dh)
 else()
-  set(CRYPTO_DEF app_null_crypto)
-  set(CRYPTO_LIB app_null_dh)
+  set(CRYPTO_DEF)
+  set(CRYPTO_LIB app_null_crypto)
 endif()
 
 if(LFL_FLATBUFFERS)
