@@ -61,7 +61,8 @@ struct MyAppState {
   unique_ptr<SystemAlertWidget> passphrase_alert;
   unique_ptr<SystemMenuWidget> edit_menu, view_menu, toys_menu;
   unique_ptr<SystemToolbarWidget> hosts_toolbar, keyboard_toolbar;
-  unique_ptr<SystemTableWidget> hosts_table, keys_table, newhost_table, settings_table, serversettings_table;
+  unique_ptr<SystemTableWidget> hosts_table, keys_table, newkey_table, genkey_table, newhost_table,
+    settings_table, serversettings_table;
   unique_ptr<SystemNavigationWidget> hosts_nav;
   int new_win_width = FLAGS_dim.x*Fonts::InitFontWidth(), new_win_height = FLAGS_dim.y*Fonts::InitFontHeight();
   int downscale_effects = 1;
@@ -481,6 +482,17 @@ struct MyTerminalWindow : public TerminalWindow {
     save_host = true;
     my_app->hosts_nav->PushTable(my_app->newhost_table.get());
   }
+
+  void MobileNewKeyCmd(const vector<string> &arg) {
+    my_app->hosts_nav->PushTable(my_app->newkey_table.get());
+  }
+  
+  void MobileGenKeyCmd(const vector<string> &arg) {
+    my_app->hosts_nav->PushTable(my_app->genkey_table.get());
+  }
+  
+  void MobilePasteKeyCmd(const vector<string> &arg) {
+  }
   
   void MobileChooseKeyCmd(const vector<string> &arg) {
     my_app->hosts_nav->PushTable(my_app->keys_table.get());
@@ -560,6 +572,9 @@ void MyWindowStart(Window *W) {
   W->shell->Add("appsettings",    bind(&MyTerminalWindow::MobileAppSettingsCmd,    tw, _1));
   W->shell->Add("serversettings", bind(&MyTerminalWindow::MobileServerSettingsCmd, tw, _1));
   W->shell->Add("newhost",        bind(&MyTerminalWindow::MobileNewHostCmd,        tw, _1));
+  W->shell->Add("newkey",         bind(&MyTerminalWindow::MobileNewKeyCmd,         tw, _1));
+  W->shell->Add("genkey",         bind(&MyTerminalWindow::MobileGenKeyCmd,         tw, _1));
+  W->shell->Add("pastekey",       bind(&MyTerminalWindow::MobilePasteKeyCmd,       tw, _1));
   W->shell->Add("choosekey",      bind(&MyTerminalWindow::MobileChooseKeyCmd,      tw, _1));
   W->shell->Add("startshell",     bind(&MyTerminalWindow::MobileStartShellCmd,     tw, _1));
   W->shell->Add("quickconnect",   bind(&MyTerminalWindow::MobileQuickConnectCmd,   tw, _1));
@@ -701,6 +716,7 @@ extern "C" int MyAppMain() {
   my_app->credential_db.Open(&my_app->db, "credential");
   my_app->identity_db  .Open(&my_app->db, "identity");
   my_app->remote_db    .Open(&my_app->db, "remote");
+  int key_icon = CheckNotNull(app->LoadSystemImage("drawable-xhdpi/key.png"));
 
   vector<pair<string,string>> keyboard_tb = { { "ctrl", "togglekey ctrl" },
     { "\U000025C0", "keypress left" }, { "\U000025B6", "keypress right" }, { "\U000025B2", "keypress up" }, 
@@ -711,45 +727,56 @@ extern "C" int MyAppMain() {
   vector<pair<string,string>> hosts_tb = { { "\U00002699", "appsettings" }, { "+", "newhost" } };
   my_app->hosts_toolbar = make_unique<SystemToolbarWidget>(hosts_tb);
 
-  vector<MenuItem> hosts_table{ MenuItem{ "Quick connect", "command", "quickconnect" },
-    MenuItem{ "Interactive Shell", "command", "startshell" }, MenuItem{ "", "separator", "" } };
+  vector<TableItem> hosts_table{ TableItem("Quick connect", "command", "quickconnect"),
+    TableItem("Interactive Shell", "command", "startshell"), TableItem("", "separator", "") };
   for (auto host : my_app->remote_db.data) {
     const LTerminal::Remote *h = flatbuffers::GetRoot<LTerminal::Remote>(host.second.data());
     string hostport = h->hostport() ? h->hostport()->data() : "";
     string username = h->username() ? h->username()->data() : "";
-    hosts_table.emplace_back(StrCat(username, "@", hostport), "command", StrCat("hostconnect ", host.first));
+    hosts_table.push_back({StrCat(username, "@", hostport), "command", StrCat("hostconnect ", host.first)});
   }
   my_app->hosts_table = make_unique<SystemTableWidget>("Hosts", "", hosts_table);
-  my_app->hosts_table->AddNavigationButton(MenuItem{"Edit", "", ""}, HAlign::Right);
+  my_app->hosts_table->AddNavigationButton(TableItem("Edit", "", ""), HAlign::Right);
   my_app->hosts_table->AddToolbar(my_app->hosts_toolbar.get());
   my_app->hosts_table->SetEditableSection(1);
 
-  vector<MenuItem> newhost_table{ MenuItem{ "Protocol,SSH,Telnet", "dropdown,textinput,textinput", ",," },
-    MenuItem{ "Port", "numinput", "22" }, MenuItem{ "Username", "textinput", "" },
-    MenuItem{ "Credential,Password,Key", "dropdown,pwinput,command", ",,choosekey" },
-    MenuItem{ "", "separator", "" }, MenuItem{ "Connect", "button", "connect" },
-    MenuItem{ "", "separator", "" }, MenuItem{ "Server Settings", "button", "serversettings" }
+  vector<TableItem> newhost_table{ TableItem("Protocol,SSH,Telnet", "dropdown,textinput,textinput", ",,"),
+    TableItem("Port", "numinput", "22"), TableItem("Username", "textinput", ""),
+    TableItem("Password", "pwinput", "", 0, key_icon, "choosekey"),
+    TableItem("", "separator", ""), TableItem("Connect", "button", "connect"),
+    TableItem("", "separator", ""), TableItem("Server Settings", "button", "serversettings")
   };
   my_app->newhost_table = make_unique<SystemTableWidget>("New Host", "", move(newhost_table));
 
-  vector<MenuItem> settings_table{ MenuItem{ "Theme", "", "" }, MenuItem{ "Beep", "", "" },
-    MenuItem{ "Keep Display On", "", "" }, MenuItem{ "", "separator", "" },
-    MenuItem{ "Timeout", "", "" }, MenuItem{ "Autocomplete", "", "" }, MenuItem{ "", "separator", "" },
-    MenuItem{ "Keys", "", "" }, MenuItem{ "Touch ID & Passcode", "", "" }, MenuItem{ "Keyboard", "", "" },
-    MenuItem{ "", "separator", "" }, MenuItem{ "About LTerminal", "", "" }, MenuItem{ "Support", "", "" },
-    MenuItem{ "Privacy", "", "" } };
+  vector<TableItem> settings_table{ TableItem("Theme", "", ""), TableItem("Beep", "", ""),
+    TableItem("Keep Display On", "", ""), TableItem("", "separator", ""),
+    TableItem("Timeout", "", ""), TableItem("Autocomplete", "", ""), TableItem("", "separator", ""),
+    TableItem("Keys", "", ""), TableItem("Touch ID & Passcode", "", ""), TableItem("Keyboard", "", ""),
+    TableItem("", "separator", ""), TableItem("About LTerminal", "", ""), TableItem("Support", "", ""),
+    TableItem("Privacy", "", "") };
   my_app->settings_table = make_unique<SystemTableWidget>("Settings", "", move(settings_table));
 
-  vector<MenuItem> serversettings_table{ MenuItem{ "Text Encoding", "", "" }, MenuItem{ "Folder", "", "" },
-    MenuItem{ "Advanced", "separator", "" }, MenuItem{ "Agent Forwarding", "", "" }, MenuItem{ "Terminal Type", "", ""},
-    MenuItem{ "Delete Sends ^H", "", ""}, MenuItem{ "Close on Disconnect", "", ""}, MenuItem{ "Startup Command", "", ""},
-    MenuItem{ "Host Key Fingerprint", "", ""}, MenuItem{ "Autocomplete", "separator", ""}, MenuItem{ "Autocomplete", "", ""},
-    MenuItem{ "Prompt String", "", ""}, MenuItem{ "Reset Autcomplete Data", "", ""} };
+  vector<TableItem> serversettings_table{ TableItem("Text Encoding", "", ""), TableItem("Folder", "", ""),
+    TableItem("Advanced", "separator", ""), TableItem("Agent Forwarding", "", ""), TableItem("Terminal Type", "", ""),
+    TableItem("Delete Sends ^H", "", ""), TableItem("Close on Disconnect", "", ""), TableItem("Startup Command", "", ""),
+    TableItem("Host Key Fingerprint", "", ""), TableItem("Autocomplete", "separator", ""), TableItem("Autocomplete", "", ""),
+    TableItem("Prompt String", "", ""), TableItem("Reset Autcomplete Data", "", "") };
   my_app->serversettings_table = make_unique<SystemTableWidget>("Server Settings", "", move(serversettings_table));
 
-  vector<MenuItem> keys_table{ MenuItem{"None", "", ""} };
+  vector<TableItem> keys_table{ TableItem("None", "", "") };
   my_app->keys_table = make_unique<SystemTableWidget>("Keys", "", move(keys_table));
-  my_app->keys_table->AddNavigationButton(MenuItem{"Edit", "", ""}, HAlign::Right);
+  my_app->keys_table->AddNavigationButton(TableItem("+", "", "newkey"), HAlign::Right);
+
+  vector<TableItem> newkey_table{ TableItem("Generate New Key", "command", "genkey"),
+    TableItem("Paste from Clipboard", "command", "pastekey") };
+  my_app->newkey_table = make_unique<SystemTableWidget>("New Key", "", move(newkey_table));
+
+  vector<TableItem> genkey_table{ TableItem("Name", "textinput", ""), TableItem("Passphrase", "pwinput", ""),
+    TableItem("Type", "separator", ""), TableItem("Algo", "select", "RSA,ECDSA", 0, 0, "",
+                                                  {{"RSA", {{2,0,"2048,4096"}}}, {"ECDSA", {{2,0,"256,384,521"}}}}),
+    TableItem("Size", "separator", ""), TableItem("Bits", "select", "2048,4096") };
+  my_app->genkey_table = make_unique<SystemTableWidget>("Generate New Key", "", move(genkey_table));
+  my_app->genkey_table->AddNavigationButton(TableItem("Generate", "", ""), HAlign::Right);
 
   my_app->hosts_nav = make_unique<SystemNavigationWidget>(my_app->hosts_table.get());
   my_app->hosts_nav->Show(true);
