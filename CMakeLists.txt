@@ -8,7 +8,7 @@ endif()
 
 if(LFL_MOBILE OR LFL_WINDOWS OR LFL_DEBUG)
   set(CRYPTO_DEF -DLFL_CRYPTO)
-  set(CRYPTO_LIB ${LFL_APP_CRYPTO} app_openssl_pk app_openssl_dh)
+  set(CRYPTO_LIB ${LFL_APP_CRYPTO} app_openssl_pk app_openssl_dh app_ref10_25519 app_bcrypt_pbkdf)
 else()
   set(CRYPTO_DEF)
   set(CRYPTO_LIB app_null_crypto)
