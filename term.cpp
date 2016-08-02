@@ -43,6 +43,8 @@ namespace LFL {
 DEFINE_string(ssh,         "",     "SSH to host");
 DEFINE_string(login,       "",     "SSH user");
 DEFINE_string(keyfile,     "",     "SSH private key");
+DEFINE_string(keygen,      "",     "Generate key");
+DEFINE_int   (bits,        0,      "Generate key bits");      
 #endif
 DEFINE_bool  (interpreter, false,  "Launch interpreter instead of shell");
 DEFINE_string(telnet,      "",     "Telnet to host");
@@ -65,7 +67,7 @@ struct MyAppState {
     updatehost_table, quickconnect_table, settings_table, serversettings_table;
   unique_ptr<SystemNavigationWidget> hosts_nav;
   int new_win_width = FLAGS_dim.x*Fonts::InitFontWidth(), new_win_height = FLAGS_dim.y*Fonts::InitFontHeight();
-  int downscale_effects = 1;
+  int downscale_effects = 1, updatehost_table_index = -1;
   SQLite::Database db;
   SQLiteIdValueStore credential_db, identity_db, remote_db;
   ~MyAppState() { SQLite::Close(db); }
@@ -143,7 +145,7 @@ struct SSHTerminalController : public NetworkTerminalController {
 
   int Open(TextArea *t) {
     Terminal *term = dynamic_cast<Terminal*>(t);
-    term->Write(StrCat("Connecting to ", FLAGS_login, "@", FLAGS_ssh, "\r\n"));
+    SSHReadCB(0, StrCat("Connecting to ", FLAGS_login, "@", FLAGS_ssh, "\r\n"));
     app->RunInNetworkThread([=](){
       success_cb = bind(&SSHTerminalController::SSHLoginCB, this, term);
       conn = SSHClient::Open(FLAGS_ssh, FLAGS_login, SSHClient::ResponseCB
@@ -168,7 +170,7 @@ struct SSHTerminalController : public NetworkTerminalController {
   }
 
   void SSHLoginCB(Terminal *term) {
-    term->Write("Connected.\r\n");
+    SSHReadCB(0, "Connected.\r\n");
     if (savehost_cb) savehost_cb();
   }
 
@@ -465,12 +467,25 @@ struct MyTerminalWindow : public TerminalWindow {
     // if (!app->OpenSystemAppPreferences()) {}
   }
 
-  void MobileServerSettingsCmd(const vector<string> &arg) {
-    my_app->hosts_nav->PushTable(my_app->serversettings_table.get());
-  }
-
   void MobileGenKeyCmd(const vector<string> &arg) {
     my_app->hosts_nav->PopTable(2);
+    string name = "Name", pw = "Passphrase", algo = "Algo", bits = "Bits";
+    if (!my_app->genkey_table->GetSectionText(0, {&name, &pw}) ||
+        !my_app->genkey_table->GetSectionText(1, {&algo}) ||
+        !my_app->genkey_table->GetSectionText(2, {&bits})) return ERROR("parse genkey");
+
+    if (name.empty()) name = StrCat(algo, " key");
+
+    string pubkey, privkey;
+    if (!Crypto::GenerateKey(algo, atoi(bits)), &pubkey, &privkey) return ERROR("generate ", algo, " key");
+    INFO("Generate ", bits, " bits ", algo, " keypair, PEM length", privkey.size());
+
+    int row_id = my_app->credential_db.Insert
+      (MakeBlobPiece(MakeFlatBufferOfType(LTerminal::Credential,
+                                          LTerminal::CreateCredential(fb, LTerminal::CredentialType_PEM,
+                                                                      fb.CreateVector(reinterpret_cast<const uint8_t*>(privkey.data()), privkey.size()),
+                                                                      fb.CreateString(name)))));
+    my_app->keys_table->show_cb(my_app->keys_table.get());
   }
   
   void MobilePasteKeyCmd(const vector<string> &arg) {
@@ -497,13 +512,14 @@ struct MyTerminalWindow : public TerminalWindow {
   
   void MobileHostInfoCmd(const vector<string> &arg) {
     CHECK_EQ(1, arg.size());
-    const string &val = FindOrDie(my_app->remote_db.data, atoi(arg[0]));
+    my_app->updatehost_table_index = atoi(arg[0]);
+    const string &val = FindOrDie(my_app->remote_db.data, my_app->updatehost_table_index);
     const LTerminal::Remote *h = flatbuffers::GetRoot<LTerminal::Remote>(val.data());
     string hostport = h->hostport() ? h->hostport()->data() : "";
     auto colon = hostport.find(":");
     vector<string> updatehost{ h->displayname() ? h->displayname()->data() : "",
-      hostport.substr(0, colon), colon != string::npos ? hostport.substr(colon+1) : "",
-      h->username() ? h->username()->data() : "", ""};
+      StrCat(",", hostport.substr(0, colon), ","), colon != string::npos ? hostport.substr(colon+1) : "22",
+      h->username() ? h->username()->data() : "", "" };
     my_app->updatehost_table->SetSectionValues(updatehost);
     my_app->hosts_nav->PushTable(my_app->updatehost_table.get());
   }
@@ -525,19 +541,47 @@ struct MyTerminalWindow : public TerminalWindow {
     app->OpenTouchKeyboard();
   }
 
-  void MobileNewHostConnectCmd(const vector<string> &arg) {
-    StringPairVec v = my_app->newhost_table->GetSectionText(0);
-    CHECK_EQ(5, v.size());
-    FLAGS_ssh = v[1].second;
-    if (v[2].second != "22") StrAppend(&FLAGS_ssh, ":", v[2].second);
-    FLAGS_login = v[3].second;
-    bool savehost = (arg.size() == 1 && arg[0] == "save");
-    if (!savehost) UseSSHTerminalController();
-    else UseSSHTerminalController([=](){
+  void MobileQuickConnectCmd(const vector<string> &arg) {
+    string host = "", port = "Port", user = "Username", cred = "";
+    if (!my_app->quickconnect_table->GetSectionText(0, {&host, &port, &user, &cred})) return ERROR("parse quickconnect");
+    string displayname = StrCat(FLAGS_ssh, "@", FLAGS_login);
+    MobileConnect(host, port, user, [&](){
+      // ask to save
+    });
+  }
+
+  void UpdateHostConnectCmd(const vector<string> &arg) {
+    string name = "Name", host = "", port = "Port", user = "Username", cred = "";
+    if (!my_app->updatehost_table->GetSectionText(0, {&name, &host, &port, &user, &cred})) return ERROR("parse updatehostconnect");
+    MobileConnect(host, port, user, [&](){
+      LTerminal::CredentialRef credref(0, 0);
       int row_id = my_app->remote_db.Insert
         (MakeBlobPiece(MakeFlatBufferOfType(LTerminal::Remote,
                                             LTerminal::CreateRemote(fb, fb.CreateString(FLAGS_ssh),
-                                                                    fb.CreateString(FLAGS_login))))); });
+                                                                    fb.CreateString(FLAGS_login),
+                                                                    &credref, fb.CreateString(name)))));
+    });
+  }
+
+  void MobileNewHostConnectCmd(const vector<string> &arg) {
+    string name = "Name", host = "", port = "Port", user = "Username", cred = "";
+    if (!my_app->newhost_table->GetSectionText(0, {&name, &host, &port, &user, &cred})) return ERROR("parse newhostconnect");
+    string displayname = name.size() ? move(name) : StrCat(FLAGS_ssh, "@", FLAGS_login);
+    MobileConnect(host, port, user, [&](){
+      LTerminal::CredentialRef credref(0, 0);
+      int row_id = my_app->remote_db.Update(my_app->updatehost_table_index,
+        MakeBlobPiece(MakeFlatBufferOfType(LTerminal::Remote,
+                                           LTerminal::CreateRemote(fb, fb.CreateString(FLAGS_ssh),
+                                                                   fb.CreateString(FLAGS_login),
+                                                                   &credref, fb.CreateString(displayname)))));
+    });
+  }
+
+  void MobileConnect(string host, string port, string user, Callback cb=Callback()) {
+    FLAGS_ssh = move(host);
+    FLAGS_login = move(user);
+    if (port != "22") StrAppend(&FLAGS_ssh, ":", port);
+    UseSSHTerminalController(move(cb));
     MobileStartSession();
   }
 #endif
@@ -564,29 +608,30 @@ void MyWindowStart(Window *W) {
   app->scheduler.AddFrameWaitMouse(W);
 
   W->shell = make_unique<Shell>();
-  W->shell->Add("choosefont",     bind(&MyTerminalWindow::FontCmd,                 tw, _1));
-  W->shell->Add("colors",         bind(&MyTerminalWindow::ColorsCmd,               tw, _1));
-  W->shell->Add("shader",         bind(&MyTerminalWindow::ShaderCmd,               tw, _1));
-  W->shell->Add("fxctl",          bind(&MyTerminalWindow::EffectsControlsCmd,      tw, _1));
-  W->shell->Add("transparency",   bind(&MyTerminalWindow::TransparencyControlsCmd, tw, _1));
-#ifdef LFL_MOBILE                                                                             
-  W->shell->Add("close",          bind(&MyTerminalWindow::MobileCloseCmd,          tw, _1));
-  W->shell->Add("toysmenu",       bind(&MyTerminalWindow::MobileToysMenuCmd,       tw, _1));
-  W->shell->Add("keypress",       bind(&MyTerminalWindow::MobileKeyPressCmd,       tw, _1));
-  W->shell->Add("togglekey",      bind(&MyTerminalWindow::MobileKeyToggleCmd,      tw, _1));
-  W->shell->Add("appsettings",    bind(&MyTerminalWindow::MobileAppSettingsCmd,    tw, _1));
-  W->shell->Add("serversettings", bind(&MyTerminalWindow::MobileServerSettingsCmd, tw, _1));
-  W->shell->Add("newhost",        [=](const vector<string>&) { my_app->hosts_nav->PushTable(my_app->newhost_table.get()); });
-  W->shell->Add("newkey",         [=](const vector<string>&) { my_app->hosts_nav->PushTable(my_app->newkey_table.get()); });
-  W->shell->Add("genkeymenu",     [=](const vector<string>&) { my_app->hosts_nav->PushTable(my_app->genkey_table.get()); });
-  W->shell->Add("genkey",         bind(&MyTerminalWindow::MobileGenKeyCmd,         tw, _1));
-  W->shell->Add("pastekey",       bind(&MyTerminalWindow::MobilePasteKeyCmd,       tw, _1));
-  W->shell->Add("choosekey",      [=](const vector<string>&) { my_app->hosts_nav->PushTable(my_app->keys_table.get()); });
-  W->shell->Add("startshell",     bind(&MyTerminalWindow::MobileStartShellCmd,     tw, _1));
-  W->shell->Add("hostinfo",       bind(&MyTerminalWindow::MobileHostInfoCmd,       tw, _1));
-  W->shell->Add("hostconnect",    bind(&MyTerminalWindow::MobileHostConnectCmd,    tw, _1));
-  W->shell->Add("quickconnect",   [=](const vector<string>&){ my_app->hosts_nav->PushTable(my_app->quickconnect_table.get()); });
-  W->shell->Add("newhostconnect", bind(&MyTerminalWindow::MobileNewHostConnectCmd, tw, _1));
+  W->shell->Add("choosefont",         bind(&MyTerminalWindow::FontCmd,                 tw, _1));
+  W->shell->Add("colors",             bind(&MyTerminalWindow::ColorsCmd,               tw, _1));
+  W->shell->Add("shader",             bind(&MyTerminalWindow::ShaderCmd,               tw, _1));
+  W->shell->Add("fxctl",              bind(&MyTerminalWindow::EffectsControlsCmd,      tw, _1));
+  W->shell->Add("transparency",       bind(&MyTerminalWindow::TransparencyControlsCmd, tw, _1));
+#ifdef LFL_MOBILE                                                                                 
+  W->shell->Add("close",              bind(&MyTerminalWindow::MobileCloseCmd,          tw, _1));
+  W->shell->Add("toysmenu",           bind(&MyTerminalWindow::MobileToysMenuCmd,       tw, _1));
+  W->shell->Add("keypress",           bind(&MyTerminalWindow::MobileKeyPressCmd,       tw, _1));
+  W->shell->Add("togglekey",          bind(&MyTerminalWindow::MobileKeyToggleCmd,      tw, _1));
+  W->shell->Add("appsettings",        bind(&MyTerminalWindow::MobileAppSettingsCmd,    tw, _1));
+  W->shell->Add("serversettingsmenu", [=](const vector<string>&) { my_app->hosts_nav->PushTable(my_app->serversettings_table.get()); });
+  W->shell->Add("newhostmenu",        [=](const vector<string>&) { my_app->hosts_nav->PushTable(my_app->newhost_table.get()); });
+  W->shell->Add("newkeymenu",         [=](const vector<string>&) { my_app->hosts_nav->PushTable(my_app->newkey_table.get()); });
+  W->shell->Add("genkeymenu",         [=](const vector<string>&) { my_app->hosts_nav->PushTable(my_app->genkey_table.get()); });
+  W->shell->Add("choosekeymenu",      [=](const vector<string>&) { my_app->hosts_nav->PushTable(my_app->keys_table.get()); });
+  W->shell->Add("quickconnectmenu",   [=](const vector<string>&) { my_app->hosts_nav->PushTable(my_app->quickconnect_table.get()); });
+  W->shell->Add("genkey",             bind(&MyTerminalWindow::MobileGenKeyCmd,         tw, _1));
+  W->shell->Add("pastekey",           bind(&MyTerminalWindow::MobilePasteKeyCmd,       tw, _1));
+  W->shell->Add("startshell",         bind(&MyTerminalWindow::MobileStartShellCmd,     tw, _1));
+  W->shell->Add("hostinfo",           bind(&MyTerminalWindow::MobileHostInfoCmd,       tw, _1));
+  W->shell->Add("hostconnect",        bind(&MyTerminalWindow::MobileHostConnectCmd,    tw, _1));
+  W->shell->Add("quickconnect",       bind(&MyTerminalWindow::MobileQuickConnectCmd,   tw, _1));
+  W->shell->Add("newhostconnect",     bind(&MyTerminalWindow::MobileNewHostConnectCmd, tw, _1));
   tw->terminal->line_fb.align_top_or_bot = tw->terminal->cmd_fb.align_top_or_bot = true;
 #endif
   if (my_app->image_browser) W->shell->AddBrowserCommands(my_app->image_browser.get());
@@ -662,6 +707,28 @@ extern "C" int MyAppMain() {
   app->input->paste_bind = Bind(Mouse::Button::_2);
 #endif
 
+  my_app->image_browser = make_unique<Browser>();
+  vector<pair<string,string>> passphrase_alert = {
+    { "style", "pwinput" }, { "Passphrase", "Passphrase" }, { "Cancel", "" }, { "Continue", "" } };
+  my_app->passphrase_alert = make_unique<SystemAlertWidget>(passphrase_alert);
+
+  vector<pair<string,string>> keypastefailed_alert = {
+    { "style", "" }, { "Paste key failed", "Load key failed" }, { "", "" }, { "Continue", "" } };
+  my_app->keypastefailed_alert = make_unique<SystemAlertWidget>(keypastefailed_alert);
+
+#ifdef LFL_CRYPTO
+  if (FLAGS_keygen.size()) {
+    string pw = my_app->passphrase_alert->RunModal(""), fn="identity", pubkey, privkey;
+    Crypto::CipherAlgo enc = pw.size() ? Crypto::CipherAlgos::AES256_CBC() : nullptr;
+    if (!Crypto::GenerateKey(FLAGS_keygen, FLAGS_bits, pw, enc, "", &pubkey, &privkey))
+      return ERRORv(-1, "keygen ", FLAGS_keygen, " bits=", FLAGS_bits, ": failed");
+    LocalFile::WriteFile(fn, privkey);
+    LocalFile::WriteFile(StrCat(fn, ".pub"), pubkey);
+    INFO("Wrote ", fn, " and ", fn, ".pub");
+    return 1;
+  }
+#endif
+
   if (start_network_thread) {
     app->net = make_unique<Network>();
 #if !defined(LFL_MOBILE)
@@ -671,15 +738,6 @@ extern "C" int MyAppMain() {
 #endif
     CHECK(app->CreateNetworkThread(false, true));
   }
-
-  my_app->image_browser = make_unique<Browser>();
-  vector<pair<string,string>> passphrase_alert = {
-    { "style", "pwinput" }, { "Passphrase", "Passphrase" }, { "Cancel", "" }, { "Continue", "" } };
-  my_app->passphrase_alert = make_unique<SystemAlertWidget>(passphrase_alert);
-
-  vector<pair<string,string>> keypastefailed_alert = {
-    { "style", "" }, { "Paste key failed", "Load key failed" }, { "", "" }, { "Continue", "" } };
-  my_app->keypastefailed_alert = make_unique<SystemAlertWidget>(keypastefailed_alert);
 
   auto tw = new MyTerminalWindow(screen);
   if (FLAGS_record.size()) tw->record = make_unique<FlatFile>(FLAGS_record);
@@ -732,6 +790,12 @@ extern "C" int MyAppMain() {
   int bolt_icon = CheckNotNull(app->LoadSystemImage("drawable-xhdpi/bolt.png"));
   int terminal_icon = CheckNotNull(app->LoadSystemImage("drawable-xhdpi/terminal.png"));
   int settings_icon = CheckNotNull(app->LoadSystemImage("drawable-xhdpi/settings.png"));
+  int audio_icon = CheckNotNull(app->LoadSystemImage("drawable-xhdpi/audio.png"));
+  int eye_icon = CheckNotNull(app->LoadSystemImage("drawable-xhdpi/eye.png"));
+  int recycle_icon = CheckNotNull(app->LoadSystemImage("drawable-xhdpi/recycle.png"));
+  int fingerprint_icon = CheckNotNull(app->LoadSystemImage("drawable-xhdpi/fingerprint.png"));
+  int info_icon = CheckNotNull(app->LoadSystemImage("drawable-xhdpi/info.png"));
+  int keyboard_icon = CheckNotNull(app->LoadSystemImage("drawable-xhdpi/keyboard.png"));
 
   vector<pair<string,string>> keyboard_tb = { { "ctrl", "togglekey ctrl" },
     { "\U000025C0", "keypress left" }, { "\U000025B6", "keypress right" }, { "\U000025B2", "keypress up" }, 
@@ -739,10 +803,10 @@ extern "C" int MyAppMain() {
     { "fonts", "choosefont" }, { "toys", "toysmenu" } };
   my_app->keyboard_toolbar = make_unique<SystemToolbarWidget>(keyboard_tb);
 
-  vector<pair<string,string>> hosts_tb = { { "\U00002699", "appsettings" }, { "+", "newhost" } };
+  vector<pair<string,string>> hosts_tb = { { "\U00002699", "appsettings" }, { "+", "newhostmenu" } };
   my_app->hosts_toolbar = make_unique<SystemToolbarWidget>(hosts_tb);
 
-  vector<TableItem> hosts_table{ TableItem("Quick connect", "command", "quickconnect", bolt_icon),
+  vector<TableItem> hosts_table{ TableItem("Quick connect", "command", "quickconnectmenu", bolt_icon),
     TableItem("Interactive Shell", "command", "startshell", terminal_icon), TableItem("", "separator", "") };
   my_app->hosts_table = make_unique<SystemTableWidget>("Hosts", "", hosts_table);
   my_app->hosts_table->AddNavigationButton(TableItem("Edit", "", ""), HAlign::Right);
@@ -762,24 +826,25 @@ extern "C" int MyAppMain() {
 
   vector<TableItem> quickconnect_table{ TableItem("Protocol,SSH,Telnet", "dropdown,textinput,textinput", ",,"),
     TableItem("Port", "numinput", "22"), TableItem("Username", "textinput", ""),
-    TableItem("Password", "pwinput", "", 0, key_icon, "choosekey"),
-    TableItem("", "separator", ""), TableItem("Connect", "button", "newhostconnect"),
-    TableItem("", "separator", ""), TableItem("Server Settings", "button", "serversettings")
+    TableItem("Password", "pwinput", "", 0, key_icon, "choosekeymenu"),
+    TableItem("", "separator", ""), TableItem("Connect", "button", "quickconnect"),
+    TableItem("", "separator", ""), TableItem("Server Settings", "button", "serversettingsmenu")
   };
   vector<TableItem> newhost_table = quickconnect_table;
-  newhost_table[5].CheckAssign("Connect", "newhostconnect save");
+  newhost_table[5].CheckAssign("Connect", "newhostconnect");
   newhost_table.insert(newhost_table.begin(), TableItem{"Name", "textinput", ""});
   vector<TableItem> updatehost_table = newhost_table;
-  my_app->newhost_table      = make_unique<SystemTableWidget>("New Host",      "", move(newhost_table));
-  my_app->updatehost_table   = make_unique<SystemTableWidget>("Update Host",   "", move(updatehost_table));
-  my_app->quickconnect_table = make_unique<SystemTableWidget>("Quick Connect", "", move(quickconnect_table));
+  updatehost_table[6].CheckAssign("Connect", "updatehostconnect");
+  my_app->newhost_table      = make_unique<SystemTableWidget>("New Host",      "", move(newhost_table),      120);
+  my_app->updatehost_table   = make_unique<SystemTableWidget>("Update Host",   "", move(updatehost_table),   120);
+  my_app->quickconnect_table = make_unique<SystemTableWidget>("Quick Connect", "", move(quickconnect_table), 120);
 
-  vector<TableItem> settings_table{ TableItem("Theme", "", ""), TableItem("Beep", "", ""),
+  vector<TableItem> settings_table{ TableItem("Theme", "", "", eye_icon), TableItem("Beep", "", "", audio_icon),
     TableItem("Keep Display On", "toggle", ""), TableItem("", "separator", ""),
     TableItem("Timeout", "", ""), TableItem("Autocomplete", "", ""), TableItem("", "separator", ""),
-    TableItem("Keys", "", ""), TableItem("Touch ID & Passcode", "", ""), TableItem("Keyboard", "", ""),
-    TableItem("", "separator", ""), TableItem("About LTerminal", "", ""), TableItem("Support", "", ""),
-    TableItem("Privacy", "", "") };
+    TableItem("Keys", "", "", key_icon), TableItem("Touch ID & Passcode", "", "", fingerprint_icon),
+    TableItem("Keyboard", "", "", keyboard_icon), TableItem("", "separator", ""),
+    TableItem("About LTerminal", "", ""), TableItem("Support", "", ""), TableItem("Privacy", "", "") };
   my_app->settings_table = make_unique<SystemTableWidget>("Settings", "", move(settings_table));
 
   vector<TableItem> serversettings_table{ TableItem("Text Encoding", "", ""), TableItem("Folder", "", ""),
@@ -791,7 +856,7 @@ extern "C" int MyAppMain() {
 
   vector<TableItem> keys_table{};
   my_app->keys_table = make_unique<SystemTableWidget>("Keys", "", move(keys_table));
-  my_app->keys_table->AddNavigationButton(TableItem("+", "", "newkey"), HAlign::Right);
+  my_app->keys_table->AddNavigationButton(TableItem("+", "", "newkeymenu"), HAlign::Right);
   my_app->keys_table->SetEditableSection(0);
   my_app->keys_table->show_cb = [=](SystemTableWidget *table) {
     vector<TableItem> section;
@@ -813,7 +878,7 @@ extern "C" int MyAppMain() {
     TableItem("Type", "separator", ""), TableItem("Algo", "select", "RSA,Ed25519,ECDSA", 0, 0, "",
                                                   {{"RSA", {{2,0,"2048,4096"}}}, {"Ed25519", {{2,0,"256"}}}, {"ECDSA", {{2,0,"256,384,521"}}}}),
     TableItem("Size", "separator", ""), TableItem("Bits", "select", "2048,4096") };
-  my_app->genkey_table = make_unique<SystemTableWidget>("Generate New Key", "", move(genkey_table));
+  my_app->genkey_table = make_unique<SystemTableWidget>("Generate New Key", "", move(genkey_table), 120);
   my_app->genkey_table->AddNavigationButton(TableItem("Generate", "", "genkey"), HAlign::Right);
 
   my_app->hosts_nav = make_unique<SystemNavigationWidget>(my_app->hosts_table.get());
