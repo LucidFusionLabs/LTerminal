@@ -42,6 +42,7 @@ lfl_add_package(lterm SOURCES term.cpp term.rc ${FLATBUFFERS_SRC_OUTPUTS}
 set(LFL_APP_ASSET_FILES ${LFL_APP_ASSET_FILES} ${LFL_SOURCE_DIR}/core/app/shaders/shadertoy/*.frag
     ${LFL_SOURCE_DIR}/core/app/assets/VeraMoBd.*)
 lfl_post_build_start(lterm lterm LTerminal)
+#add_dependencies(lterm mosh)
 
 if(NOT LFL_MOBILE)
   add_dependencies(lterm-render-sandbox lterm)

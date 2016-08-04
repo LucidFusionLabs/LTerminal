@@ -67,7 +67,7 @@ struct MyAppState {
     updatehost_table, quickconnect_table, settings_table, serversettings_table;
   unique_ptr<SystemNavigationWidget> hosts_nav;
   int new_win_width = FLAGS_dim.x*Fonts::InitFontWidth(), new_win_height = FLAGS_dim.y*Fonts::InitFontHeight();
-  int downscale_effects = 1, updatehost_table_index = -1;
+  int downscale_effects = 1, updatehost_remote_id = -1, updatehost_cred_id = -1;
   SQLite::Database db;
   SQLiteIdValueStore credential_db, identity_db, remote_db;
   ~MyAppState() { SQLite::Close(db); }
@@ -142,6 +142,7 @@ struct PTYTerminalController : public Terminal::Controller {
 struct SSHTerminalController : public NetworkTerminalController {
   using NetworkTerminalController::NetworkTerminalController;
   Callback success_cb, savehost_cb;
+  string password;
 
   int Open(TextArea *t) {
     Terminal *term = dynamic_cast<Terminal*>(t);
@@ -158,9 +159,14 @@ struct SSHTerminalController : public NetworkTerminalController {
     return -1;
   }
 
-  bool LoadPasswordCB(string *out) { return false; }
+  bool LoadPasswordCB(string *out) {
+    if (password.size()) { out->clear(); swap(*out, password); return true; }
+    return false;
+  }
+
   bool LoadIdentityCB(shared_ptr<SSHClient::Identity> *out) {
     if (!FLAGS_keyfile.empty()) {
+      INFO("Load keyfile ", FLAGS_keyfile);
       *out = make_shared<SSHClient::Identity>();
       if (!Crypto::ParsePEM(&LocalFile::FileContents(FLAGS_keyfile)[0], &(*out)->rsa, &(*out)->dsa, &(*out)->ec, &(*out)->ed25519,
                             [=](string v) { return my_app->passphrase_alert->RunModal(v); })) { (*out).reset(); return false; }
@@ -288,12 +294,13 @@ struct MyTerminalWindow : public TerminalWindow {
                                                           [=](){ UseSSHTerminalController(); }));
   }
 
-  void UseSSHTerminalController(Callback savehost_cb=Callback()) {
+  void UseSSHTerminalController(string credtype="", string cred="", Callback savehost_cb=Callback()) {
 #ifdef LFL_CRYPTO
     auto ssh_controller =
       make_unique<SSHTerminalController>(app->net->tcp_client.get(), "",
                                          [=](){ UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n"); });
     ssh_controller->savehost_cb = move(savehost_cb);
+    if (credtype == "Password") ssh_controller->password = cred;
     ChangeController(move(ssh_controller));
 #endif
   }
@@ -477,14 +484,10 @@ struct MyTerminalWindow : public TerminalWindow {
     if (name.empty()) name = StrCat(algo, " key");
 
     string pubkey, privkey;
-    if (!Crypto::GenerateKey(algo, atoi(bits)), &pubkey, &privkey) return ERROR("generate ", algo, " key");
+    if (!Crypto::GenerateKey(algo, atoi(bits), "", "", &pubkey, &privkey)) return ERROR("generate ", algo, " key");
     INFO("Generate ", bits, " bits ", algo, " keypair, PEM length", privkey.size());
 
-    int row_id = my_app->credential_db.Insert
-      (MakeBlobPiece(MakeFlatBufferOfType(LTerminal::Credential,
-                                          LTerminal::CreateCredential(fb, LTerminal::CredentialType_PEM,
-                                                                      fb.CreateVector(reinterpret_cast<const uint8_t*>(privkey.data()), privkey.size()),
-                                                                      fb.CreateString(name)))));
+    int row_id = UpdateCredential(LTerminal::CredentialType_PEM, privkey, name);
     my_app->keys_table->show_cb(my_app->keys_table.get());
   }
   
@@ -493,11 +496,7 @@ struct MyTerminalWindow : public TerminalWindow {
     const char *pems=0, *peme=0, *pemhe=0;
     string pemtype = Crypto::ParsePEMHeader(pem.data(), &pems, &peme, &pemhe);
     if (pemtype.size()) {
-      int row_id = my_app->credential_db.Insert
-        (MakeBlobPiece(MakeFlatBufferOfType(LTerminal::Credential,
-                                            LTerminal::CreateCredential(fb, LTerminal::CredentialType_PEM,
-                                                                        fb.CreateVector(reinterpret_cast<const uint8_t*>(pem.data()), pem.size()),
-                                                                        fb.CreateString(pemtype)))));
+      int row_id = UpdateCredential(LTerminal::CredentialType_PEM, pem, pemtype);
       my_app->keys_table->show_cb(my_app->keys_table.get());
     } else {
       my_app->keypastefailed_alert->Show("");
@@ -509,29 +508,45 @@ struct MyTerminalWindow : public TerminalWindow {
     UseShellTerminalController("");
     MobileStartSession();
   }
-  
+
   void MobileHostInfoCmd(const vector<string> &arg) {
     CHECK_EQ(1, arg.size());
-    my_app->updatehost_table_index = atoi(arg[0]);
-    const string &val = FindOrDie(my_app->remote_db.data, my_app->updatehost_table_index);
-    const LTerminal::Remote *h = flatbuffers::GetRoot<LTerminal::Remote>(val.data());
+    my_app->updatehost_remote_id = atoi(arg[0]);
+    const LTerminal::Remote *h;
+    const LTerminal::Credential *cred;
+    GetHostDatabaseId(my_app->updatehost_remote_id, &h, &cred);
+    my_app->updatehost_cred_id = cred ? h->credential()->id() : -1;
+    bool cred_pw  = cred && cred->type() == LTerminal::CredentialType_Password;
+    bool cred_key = cred && cred->type() == LTerminal::CredentialType_PEM;
     string hostport = h->hostport() ? h->hostport()->data() : "";
     auto colon = hostport.find(":");
+
     vector<string> updatehost{ h->displayname() ? h->displayname()->data() : "",
-      StrCat(",", hostport.substr(0, colon), ","), colon != string::npos ? hostport.substr(colon+1) : "22",
-      h->username() ? h->username()->data() : "", "" };
+      StrCat(",", hostport.substr(0, colon), ","),
+      colon != string::npos ? hostport.substr(colon+1) : "22", h->username() ? h->username()->data() : "",
+      StrCat(",", (cred_pw && cred->data()) ? string(MakeSigned(cred->data()->data()), cred->data()->size()) : "",
+             ",", cred_key ? (cred->displayname() ? cred->displayname()->data() : "") : "") };
+    my_app->updatehost_table->BeginUpdates(), 0;
     my_app->updatehost_table->SetSectionValues(updatehost);
+    my_app->updatehost_table->SetSectionDropdownValue(0, 1, 0);
+    my_app->updatehost_table->SetSectionDropdownValue(0, 4, cred_key);
+    my_app->updatehost_table->EndUpdates();
     my_app->hosts_nav->PushTable(my_app->updatehost_table.get());
   }
 
   void MobileHostConnectCmd(const vector<string> &arg) {
     CHECK_EQ(1, arg.size());
-    const string &val = FindOrDie(my_app->remote_db.data, atoi(arg[0]));
-    const LTerminal::Remote *h = flatbuffers::GetRoot<LTerminal::Remote>(val.data());
-    FLAGS_ssh   = h->hostport() ? h->hostport()->data() : "";
-    FLAGS_login = h->username() ? h->username()->data() : "";
-    UseSSHTerminalController();
-    MobileStartSession();
+    const LTerminal::Remote *h;
+    const LTerminal::Credential *cred;
+    GetHostDatabaseId(atoi(arg[0]), &h, &cred);
+    string hostport = h->hostport() ? h->hostport()->data() : "", credtype;
+    auto colon = hostport.find(":");
+    if      (cred && cred->type() == LTerminal::CredentialType_Password) credtype = "Password";
+    else if (cred && cred->type() == LTerminal::CredentialType_PEM)      credtype = "PEM";
+
+    MobileConnect(hostport.substr(0, colon), colon != string::npos ? hostport.substr(colon+1) : "22",
+                  h->username() ? h->username()->data() : "", credtype,
+                  (cred && cred->data()) ? string(MakeSigned(cred->data()->data()), cred->data()->size()) : "");
   }
 
   void MobileStartSession() {
@@ -542,47 +557,75 @@ struct MyTerminalWindow : public TerminalWindow {
   }
 
   void MobileQuickConnectCmd(const vector<string> &arg) {
-    string host = "", port = "Port", user = "Username", cred = "";
+    string host = "", port = "Port", user = "Username", credtype = "Password", cred = "";
     if (!my_app->quickconnect_table->GetSectionText(0, {&host, &port, &user, &cred})) return ERROR("parse quickconnect");
     string displayname = StrCat(FLAGS_ssh, "@", FLAGS_login);
-    MobileConnect(host, port, user, [&](){
+    MobileConnect(host, port, user, credtype, cred, [&](){
       // ask to save
     });
   }
 
-  void UpdateHostConnectCmd(const vector<string> &arg) {
-    string name = "Name", host = "", port = "Port", user = "Username", cred = "";
-    if (!my_app->updatehost_table->GetSectionText(0, {&name, &host, &port, &user, &cred})) return ERROR("parse updatehostconnect");
-    MobileConnect(host, port, user, [&](){
-      LTerminal::CredentialRef credref(0, 0);
-      int row_id = my_app->remote_db.Insert
-        (MakeBlobPiece(MakeFlatBufferOfType(LTerminal::Remote,
-                                            LTerminal::CreateRemote(fb, fb.CreateString(FLAGS_ssh),
-                                                                    fb.CreateString(FLAGS_login),
-                                                                    &credref, fb.CreateString(name)))));
+  void MobileUpdateHostConnectCmd(const vector<string> &arg) {
+    string name = "Name", prot = "Protocol", host = "", port = "Port", user = "Username",
+           credtype = "Credential", cred = "", *flags_ssh = &FLAGS_ssh, *flags_login = &FLAGS_login;
+    if (!my_app->updatehost_table->GetSectionText(0, {&name, &prot, &host, &port, &user, &credtype, &cred})) return ERROR("parse updatehostconnect");
+
+    MobileConnect(host, port, user, credtype, cred, [=](){
+      LTerminal::CredentialRef credref(LTerminal::CredentialDBType_Table, my_app->updatehost_cred_id);
+      UpdateRemote(*flags_ssh, *flags_login, name, credref, my_app->updatehost_remote_id);
     });
   }
 
   void MobileNewHostConnectCmd(const vector<string> &arg) {
-    string name = "Name", host = "", port = "Port", user = "Username", cred = "";
-    if (!my_app->newhost_table->GetSectionText(0, {&name, &host, &port, &user, &cred})) return ERROR("parse newhostconnect");
-    string displayname = name.size() ? move(name) : StrCat(FLAGS_ssh, "@", FLAGS_login);
-    MobileConnect(host, port, user, [&](){
-      LTerminal::CredentialRef credref(0, 0);
-      int row_id = my_app->remote_db.Update(my_app->updatehost_table_index,
-        MakeBlobPiece(MakeFlatBufferOfType(LTerminal::Remote,
-                                           LTerminal::CreateRemote(fb, fb.CreateString(FLAGS_ssh),
-                                                                   fb.CreateString(FLAGS_login),
-                                                                   &credref, fb.CreateString(displayname)))));
+    string name = "Name", prot = "Protocol", host = "", port = "Port", user = "Username",
+           credtype = "Credential", cred = "", *flags_ssh = &FLAGS_ssh, *flags_login = &FLAGS_login;
+    if (!my_app->newhost_table->GetSectionText(0, {&name, &prot, &host, &port, &user, &credtype, &cred})) return ERROR("parse newhostconnect");
+
+    MobileConnect(host, port, user, credtype, cred, [=](){
+      string displayname = name.size() ? move(name) : StrCat(*flags_login, "@", *flags_ssh);
+      int cred_row_id = UpdateCredential(LTerminal::CredentialType_Password, cred, name);
+      LTerminal::CredentialRef credref(LTerminal::CredentialDBType_Table, cred_row_id);
+      UpdateRemote(*flags_ssh, *flags_login, displayname, credref);
     });
   }
 
-  void MobileConnect(string host, string port, string user, Callback cb=Callback()) {
+  void MobileConnect(string host, string port, string user, string credtype, string cred, Callback cb=Callback()) {
     FLAGS_ssh = move(host);
     FLAGS_login = move(user);
     if (port != "22") StrAppend(&FLAGS_ssh, ":", port);
-    UseSSHTerminalController(move(cb));
+    UseSSHTerminalController(move(credtype), move(cred), move(cb));
     MobileStartSession();
+  }
+
+  int UpdateCredential(LFL::LTerminal::CredentialType type, const string &data, const string &name, int row_id=0) {
+    auto proto = MakeFlatBufferOfType
+      (LTerminal::Credential,
+       LTerminal::CreateCredential(fb, type,
+                                   fb.CreateVector(reinterpret_cast<const uint8_t*>(data.data()), data.size()),
+                                   fb.CreateString(name)));
+    if (!row_id) row_id = my_app->credential_db.Insert(        MakeBlobPiece(proto));
+    else                  my_app->credential_db.Update(row_id, MakeBlobPiece(proto));
+    return row_id;
+  }
+
+  int UpdateRemote(const string &host, const string &login, const string &name,
+                   const LTerminal::CredentialRef &credref, int row_id=0) {
+    auto proto = MakeFlatBufferOfType
+      (LTerminal::Remote,
+       LTerminal::CreateRemote(fb, fb.CreateString(host), fb.CreateString(login),
+                               &credref, fb.CreateString(name)));
+    if (!row_id) row_id = my_app->remote_db.Insert(        MakeBlobPiece(proto));
+    else                  my_app->remote_db.Update(row_id, MakeBlobPiece(proto));
+    return row_id;
+  }
+
+  void GetHostDatabaseId(int id, const LTerminal::Remote **host, const LTerminal::Credential **cred) {
+    const string &val = FindRefOrDie(my_app->remote_db.data, id);
+    *host = flatbuffers::GetRoot<LTerminal::Remote>(val.data());
+    if ((*host)->credential() && (*host)->credential()->db() == LTerminal::CredentialDBType_Table) {
+      const string &credval = FindRefOrDie(my_app->credential_db.data, (*host)->credential()->id());
+      *cred = flatbuffers::GetRoot<LTerminal::Credential>(credval.data());
+    } else *cred = nullptr;
   }
 #endif
 };
@@ -632,6 +675,7 @@ void MyWindowStart(Window *W) {
   W->shell->Add("hostconnect",        bind(&MyTerminalWindow::MobileHostConnectCmd,    tw, _1));
   W->shell->Add("quickconnect",       bind(&MyTerminalWindow::MobileQuickConnectCmd,   tw, _1));
   W->shell->Add("newhostconnect",     bind(&MyTerminalWindow::MobileNewHostConnectCmd, tw, _1));
+  W->shell->Add("updatehostconnect",  bind(&MyTerminalWindow::MobileUpdateHostConnectCmd, tw, _1));
   tw->terminal->line_fb.align_top_or_bot = tw->terminal->cmd_fb.align_top_or_bot = true;
 #endif
   if (my_app->image_browser) W->shell->AddBrowserCommands(my_app->image_browser.get());
@@ -719,8 +763,7 @@ extern "C" int MyAppMain() {
 #ifdef LFL_CRYPTO
   if (FLAGS_keygen.size()) {
     string pw = my_app->passphrase_alert->RunModal(""), fn="identity", pubkey, privkey;
-    Crypto::CipherAlgo enc = pw.size() ? Crypto::CipherAlgos::AES256_CBC() : nullptr;
-    if (!Crypto::GenerateKey(FLAGS_keygen, FLAGS_bits, pw, enc, "", &pubkey, &privkey))
+    if (!Crypto::GenerateKey(FLAGS_keygen, FLAGS_bits, pw, "", &pubkey, &privkey))
       return ERRORv(-1, "keygen ", FLAGS_keygen, " bits=", FLAGS_bits, ": failed");
     LocalFile::WriteFile(fn, privkey);
     LocalFile::WriteFile(StrCat(fn, ".pub"), pubkey);
@@ -821,12 +864,14 @@ extern "C" int MyAppMain() {
       section.push_back({StrCat(username, "@", hostport), "command", StrCat("hostconnect ", host.first),
                         host_icon, settings_icon, StrCat("hostinfo ", host.first)});
     }
+    table->BeginUpdates();
     table->ReplaceSection(section, 1);
+    table->EndUpdates();
   };
 
   vector<TableItem> quickconnect_table{ TableItem("Protocol,SSH,Telnet", "dropdown,textinput,textinput", ",,"),
     TableItem("Port", "numinput", "22"), TableItem("Username", "textinput", ""),
-    TableItem("Password", "pwinput", "", 0, key_icon, "choosekeymenu"),
+    TableItem("Credential,Password,Key", "dropdown,pwinput,label", ",,", 0, key_icon, "choosekeymenu"),
     TableItem("", "separator", ""), TableItem("Connect", "button", "quickconnect"),
     TableItem("", "separator", ""), TableItem("Server Settings", "button", "serversettingsmenu")
   };
@@ -867,7 +912,9 @@ extern "C" int MyAppMain() {
       string name = c->displayname() ? c->displayname()->data() : "";
       section.push_back({name, "command", "foo"});
     }
+    table->BeginUpdates();
     table->ReplaceSection(section, 0);
+    table->EndUpdates();
   };
 
   vector<TableItem> newkey_table{ TableItem("Generate New Key", "command", "genkeymenu"),
