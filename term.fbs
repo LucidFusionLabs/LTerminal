@@ -17,10 +17,34 @@ table Identity {
 }
 
 table Remote {
-  hostport:    string;
-  username:    string;
-  credential:  CredentialRef;
-  displayname: string;
+  hostport:         string;
+  username:         string;
+  credential:       CredentialRef;
+  displayname:      string;
+  settings_id:      int;
+  fingerprint_type: int;
+  fingerprint:      [ubyte];
+}
+
+table AppSettings {
+  font_size:           int;
+  beep_type:           int;
+  keep_display_on:     bool;
+  enable_autocomplete: bool;
+  timeout:             int;
+  encrypt_db:          bool;
+}
+
+table RemoteSettings {
+  text_encoding:       int;
+  folder:              string;
+  agent_forwarding:    bool;
+  terminal_type:       string;
+  delete_mode:         int;
+  close_on_disconnect: bool;
+  startup_command:     string;
+  enable_autocomplete: bool;
+  prompt_string:       string;
 }
 
 table RecordLog { stamp: ulong; data: [ubyte]; }
