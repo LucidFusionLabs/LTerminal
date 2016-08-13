@@ -26,17 +26,20 @@ table Remote {
   fingerprint:      [ubyte];
 }
 
+enum BeepType : int { None=0, Audio=1, Visual=2 }
+
 table AppSettings {
-  font_size:           int;
-  beep_type:           int;
+  font_name:           string;
+  font_size:           int = 15;
+  beep_type:           BeepType;
   keep_display_on:     bool;
-  enable_autocomplete: bool;
-  timeout:             int;
   encrypt_db:          bool;
 }
 
+enum TextEncoding : int { UTF8=1, ASCII=2 }
+
 table RemoteSettings {
-  text_encoding:       int;
+  text_encoding:       TextEncoding = UTF8;
   folder:              string;
   agent_forwarding:    bool;
   terminal_type:       string;
