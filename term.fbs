@@ -1,6 +1,7 @@
 namespace LFL.LTerminal;
 
-enum CredentialDBType : int { Identity = 0, Table, Keychain }
+enum Protocol : int { SSH = 1, Telnet }
+enum CredentialDBType : int { Table = 1, Keychain }
 enum CredentialType : int { Ask = 0, Password, PEM }
 struct CredentialRef { db: int; id: int; }
 
@@ -16,37 +17,46 @@ table Identity {
   displayname: string;
 }
 
-table Remote {
+table Host {
+  protocol:         Protocol = SSH;
   hostport:         string;
   username:         string;
   credential:       CredentialRef;
   displayname:      string;
+  folder:           string;
   settings_id:      int;
-  fingerprint_type: int;
   fingerprint:      [ubyte];
 }
 
+enum TextEncoding : int { UTF8=1, ASCII=2 }
+enum DeleteMode : int { Normal=1, ControlH=2 }
 enum BeepType : int { None=0, Audio=1, Visual=2 }
+enum ColorScheme : int { VGA=1, SolarizedDark=2, SolarizedLight=3 }
 
-table AppSettings {
+table RunSettings {
   font_name:           string;
   font_size:           int = 15;
-  beep_type:           BeepType;
-  keep_display_on:     bool;
-  encrypt_db:          bool;
+  color_scheme:        ColorScheme  = VGA;
+  beep_type:           BeepType     = None;
+  text_encoding:       TextEncoding = UTF8;
+  delete_mode:         DeleteMode   = Normal;
 }
 
-enum TextEncoding : int { UTF8=1, ASCII=2 }
+table AppSettings {
+  version:             int;
+  encrypt_db:          bool;
+  keep_display_on:     bool;
+  run_settings:        RunSettings;
+}
 
-table RemoteSettings {
-  text_encoding:       TextEncoding = UTF8;
-  folder:              string;
+table HostSettings {
+  run_settings:        RunSettings;
   agent_forwarding:    bool;
+  compression:         bool = true;
+  close_on_disconnect: bool = true;
   terminal_type:       string;
-  delete_mode:         int;
-  close_on_disconnect: bool;
   startup_command:     string;
-  enable_autocomplete: bool;
+  autocomplete_id:     int;
   prompt_string:       string;
 }
 

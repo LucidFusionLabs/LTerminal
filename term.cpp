@@ -40,50 +40,35 @@
 
 namespace LFL {
 #ifdef LFL_CRYPTO
-DEFINE_string(ssh,         "",     "SSH to host");
-DEFINE_string(login,       "",     "SSH user");
-DEFINE_string(keyfile,     "",     "SSH private key");
-DEFINE_string(keygen,      "",     "Generate key");
-DEFINE_int   (bits,        0,      "Generate key bits");      
+DEFINE_string(ssh,            "",     "SSH to host");
+DEFINE_string(login,          "",     "SSH user");
+DEFINE_string(term,           "",     "SSH TERM var");
+DEFINE_string(keyfile,        "",     "SSH private key");
+DEFINE_bool  (compress,       false,  "SSH compression");
+DEFINE_bool  (forward_agent,  false,  "SSH agent forwarding");
+DEFINE_string(forward_local,  "",     "Forward local_port:remote_host:remote_port");
+DEFINE_string(forward_remote, "",     "Forward remote_port:local_host:local_port");
+DEFINE_string(keygen,         "",     "Generate key");
+DEFINE_int   (bits,           0,      "Generate key bits");      
 #endif
-DEFINE_bool  (interpreter, false,  "Launch interpreter instead of shell");
-DEFINE_string(telnet,      "",     "Telnet to host");
-DEFINE_string(command,     "",     "Execute initial command");
-DEFINE_string(screenshot,  "",     "Screenshot and exit");
-DEFINE_string(record,      "",     "Record session to file");
-DEFINE_string(playback,    "",     "Playback recorded session file");
-DEFINE_bool  (draw_fps,    false,  "Draw FPS");
-DEFINE_bool  (resize_grid, true,   "Resize window in glyph bound increments");
+DEFINE_bool  (interpreter,    false,  "Launch interpreter instead of shell");
+DEFINE_string(telnet,         "",     "Telnet to host");
+DEFINE_string(command,        "",     "Execute initial command");
+DEFINE_string(screenshot,     "",     "Screenshot and exit");
+DEFINE_string(record,         "",     "Record session to file");
+DEFINE_string(playback,       "",     "Playback recorded session file");
+DEFINE_bool  (draw_fps,       false,  "Draw FPS");
+DEFINE_bool  (resize_grid,    true,   "Resize window in glyph bound increments");
 DEFINE_FLAG(dim, point, point(80,25), "Initial terminal dimensions");
 extern FlagOfType<bool> FLAGS_enable_network_;
-
-using LTerminal::CredentialType;
-using LTerminal::CredentialType_Ask;
-using LTerminal::CredentialType_Password;
-using LTerminal::CredentialType_PEM;
-using LTerminal::CredentialDBType;
-using LTerminal::CredentialDBType_Table;
-
-static CredentialType GetCredentialType(const string &x) {
-  if      (x == "Password") return CredentialType_Password;
-  else if (x == "Key")      return CredentialType_PEM;
-  else                      return CredentialType_Ask;
-}
 
 struct MyAppState {
   unordered_map<string, Shader> shader_map;
   unique_ptr<Browser> image_browser;
-  unique_ptr<SystemAlertWidget> passphrase_alert, keypastefailed_alert;
-  unique_ptr<SystemMenuWidget> edit_menu, view_menu, toys_menu;
-  unique_ptr<SystemToolbarWidget> hosts_toolbar, keyboard_toolbar;
-  unique_ptr<SystemTableWidget> hosts_table, keys_table, newkey_table, genkey_table, newhost_table,
-    updatehost_table, quickconnect_table, settings_table, remotesettings_table;
-  unique_ptr<SystemNavigationWidget> hosts_nav;
+  unique_ptr<SystemAlertView> passphrase_alert, keypastefailed_alert;
+  unique_ptr<SystemMenuView> edit_menu, view_menu, toys_menu;
   int new_win_width = FLAGS_dim.x*Fonts::InitFontWidth(), new_win_height = FLAGS_dim.y*Fonts::InitFontHeight();
   int downscale_effects = 1;
-  SQLite::Database db;
-  SQLiteIdValueStore credential_db, remote_db, settings_db;
-  ~MyAppState() { SQLite::Close(db); }
 } *my_app = nullptr;
 
 struct PlaybackTerminalController : public Terminal::Controller {
@@ -124,7 +109,7 @@ struct PTYTerminalController : public Terminal::Controller {
   }
 
   int Open(TextArea*) {
-    setenv("TERM", "xterm", 1);
+    if (FLAGS_term.empty()) setenv("TERM", (FLAGS_term = "xterm").c_str(), 1);
     string shell = BlankNull(getenv("SHELL")), lang = BlankNull(getenv("LANG"));
     if (shell.empty()) setenv("SHELL", (shell = "/bin/bash").c_str(), 1);
     if (lang .empty()) setenv("LANG", "en_US.UTF-8", 1);
@@ -153,17 +138,19 @@ struct PTYTerminalController : public Terminal::Controller {
 
 #ifdef LFL_CRYPTO
 struct SSHTerminalController : public NetworkTerminalController {
-  using NetworkTerminalController::NetworkTerminalController;
+  StringCB metakey_cb;
   Callback success_cb, savehost_cb;
   shared_ptr<SSHClient::Identity> identity;
-  string password;
+  string username, password;
+  SSHTerminalController(Service *s, const string &r, const string &u, const Callback &ccb) :
+    NetworkTerminalController(s, r, ccb), username(u) {}
 
   int Open(TextArea *t) {
     Terminal *term = dynamic_cast<Terminal*>(t);
     SSHReadCB(0, StrCat("Connecting to ", FLAGS_login, "@", FLAGS_ssh, "\r\n"));
     app->RunInNetworkThread([=](){
       success_cb = bind(&SSHTerminalController::SSHLoginCB, this, term);
-      conn = SSHClient::Open(FLAGS_ssh, FLAGS_login, SSHClient::ResponseCB
+      conn = SSHClient::Open(remote, username, FLAGS_term, FLAGS_compress, FLAGS_forward_agent, SSHClient::ResponseCB
                              (bind(&SSHTerminalController::SSHReadCB, this, _1, _2)), &detach_cb, &success_cb);
       if (!conn) { app->RunInMainThread(bind(&NetworkTerminalController::Dispose, this)); return; }
       SSHClient::SetTerminalWindowSize(conn, term->term_width, term->term_height);
@@ -208,7 +195,7 @@ struct SSHTerminalController : public NetworkTerminalController {
 #ifdef LFL_MOBILE
     char buf[1];
     if (b.size() == 1 && ctrl_down && !(ctrl_down = false)) {
-      my_app->keyboard_toolbar->ToggleButton("ctrl");
+      if (metakey_cb) metakey_cb("ctrl");
       b = StringPiece(&(buf[0] = Key::CtrlModified(*MakeUnsigned(b.data()))), 1);
     }
 #endif
@@ -229,9 +216,11 @@ struct SSHTerminalController : public NetworkTerminalController {
 #endif
 
 struct ShellTerminalController : public InteractiveTerminalController {
+  typedef function<void(const string&, const string&, const string&)> SSHCB;
   string ssh_usage="\r\nusage: ssh -l user host[:port]";
-  Callback telnet_cb, ssh_cb;
-  ShellTerminalController(const string &hdr, const Callback &tcb, const Callback &scb) :
+  Callback telnet_cb;
+  SSHCB ssh_cb;
+  ShellTerminalController(const string &hdr, const Callback &tcb, const SSHCB &scb) :
     telnet_cb(tcb), ssh_cb(scb) {
     header = StrCat(hdr, "LTerminal 1.0", ssh_usage, "\r\n\r\n");
 #ifdef LFL_CRYPTO
@@ -244,11 +233,12 @@ struct ShellTerminalController : public InteractiveTerminalController {
 
 #ifdef LFL_CRYPTO
   void MySSHCmd(const vector<string> &arg) {
+    string host, login;
     int ind = 0;
-    for (; ind < arg.size() && arg[ind][0] == '-'; ind += 2) if (arg[ind] == "-l") FLAGS_login = arg[ind+1];
-    if (ind < arg.size()) FLAGS_ssh = arg[ind];
-    if (FLAGS_login.empty() || FLAGS_ssh.empty()) { if (term) term->Write(ssh_usage); }
-    else ssh_cb();
+    for (; ind < arg.size() && arg[ind][0] == '-'; ind += 2) if (arg[ind] == "-l") login = arg[ind+1];
+    if (ind < arg.size()) host = arg[ind];
+    if (login.empty() || host.empty()) { if (term) term->Write(ssh_usage); }
+    else ssh_cb(host, login, FLAGS_term);
   }
 #endif
 
@@ -307,21 +297,24 @@ struct BaseTerminalWindow : public TerminalWindow {
   }
 
   void UseShellTerminalController(const string &m) {
-    ChangeController(make_unique<ShellTerminalController>(m, [=](){ UseTelnetTerminalController(); },
-                                                          [=](){ UseSSHTerminalController(); }));
+    ChangeController(make_unique<ShellTerminalController>
+                     (m, [=](){ UseTelnetTerminalController(); },
+                      [=](const string &h, const string &u, const string &t){ UseSSHTerminalController(h, u, t); }));
   }
 
-  void UseSSHTerminalController(CredentialType credtype=CredentialType_Ask,
-                                string cred="", Callback savehost_cb=Callback()) {
+  void UseSSHTerminalController(const string &hostport, const string &user, const string &term,
+                                const string &pw="", const string &pem="",
+                                StringCB metakey_cb=StringCB(), Callback savehost_cb=Callback()) {
 #ifdef LFL_CRYPTO
     auto ssh =
-      make_unique<SSHTerminalController>(app->net->tcp_client.get(), "",
+      make_unique<SSHTerminalController>(app->net->tcp_client.get(), hostport, user,
                                          [=](){ UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n"); });
+    ssh->metakey_cb = move(metakey_cb);
     ssh->savehost_cb = move(savehost_cb);
-    if (credtype == CredentialType_Password) ssh->password = cred;
-    else if (credtype == CredentialType_PEM) {
+    if (pw.size()) ssh->password = pw;
+    if (pem.size()) {
       ssh->identity = make_shared<SSHClient::Identity>();
-      Crypto::ParsePEM(&cred[0], &ssh->identity->rsa, &ssh->identity->dsa, &ssh->identity->ec, &ssh->identity->ed25519);
+      Crypto::ParsePEM(pem.data(), &ssh->identity->rsa, &ssh->identity->dsa, &ssh->identity->ec, &ssh->identity->ed25519);
     }
     ChangeController(move(ssh));
 #endif
@@ -344,7 +337,7 @@ struct BaseTerminalWindow : public TerminalWindow {
     if      (FLAGS_playback.size()) return UsePlaybackTerminalController(make_unique<FlatFile>(FLAGS_playback));
     else if (FLAGS_interpreter)     return UseShellTerminalController("");
 #ifdef LFL_CRYPTO
-    else if (FLAGS_ssh.size())      return UseSSHTerminalController();
+    else if (FLAGS_ssh.size())      return UseSSHTerminalController(FLAGS_ssh, FLAGS_login, FLAGS_term);
 #endif
     else if (FLAGS_telnet.size())   return UseTelnetTerminalController();
     else                            return UseDefaultTerminalController();
@@ -434,16 +427,16 @@ struct BaseTerminalWindow : public TerminalWindow {
     return 0;
   }
 
-  void FontCmd(const vector<string> &arg) {
-    if (arg.size() < 2) return app->ShowSystemFontChooser(screen->default_font.desc, "choosefont");
+  void ChangeFont(const StringVec &arg) {
+    if (arg.size() < 2) return app->ShowSystemFontChooser
+      (screen->default_font.desc, bind(&BaseTerminalWindow::ChangeFont, this, _1));
     if (arg.size() > 2) FLAGS_font_flag = atoi(arg[2]);
     screen->default_font.desc.name = arg[0];
     SetFontSize(atof(arg[1]));
     app->scheduler.Wakeup(screen);
   }
 
-  void ColorsCmd(const vector<string> &arg) {
-    string colors_name = arg.size() ? arg[0] : "";
+  void ChangeColors(const string &colors_name) {
     if      (colors_name == "vga")             terminal->ChangeColors(Singleton<Terminal::StandardVGAColors>   ::Get());
     else if (colors_name == "solarized_dark")  terminal->ChangeColors(Singleton<Terminal::SolarizedDarkColors> ::Get());
     else if (colors_name == "solarized_light") terminal->ChangeColors(Singleton<Terminal::SolarizedLightColors>::Get());
@@ -451,8 +444,7 @@ struct BaseTerminalWindow : public TerminalWindow {
     app->scheduler.Wakeup(screen);
   }
 
-  void ShaderCmd(const vector<string> &arg) {
-    string shader_name = arg.size() ? arg[0] : "";
+  void ChangeShader(const string &shader_name) {
     auto shader = my_app->shader_map.find(shader_name);
     bool found = shader != my_app->shader_map.end();
     if (found && !shader->second.ID) Shader::CreateShaderToy(shader_name, Asset::FileContents(StrCat(shader_name, ".frag")), &shader->second);
@@ -460,12 +452,12 @@ struct BaseTerminalWindow : public TerminalWindow {
     UpdateTargetFPS(screen);
   }
 
-  void EffectsControlsCmd(const vector<string>&) { 
+  void ShowEffectsControls() { 
     screen->shell->Run("slider shadertoy_blend 1.0 0.01");
     app->scheduler.Wakeup(screen);
   }
 
-  void TransparencyControlsCmd(const vector<string>&) {
+  void ShowTransparencyControls() {
     SliderDialog::UpdatedCB cb(bind([=](Widget::Slider *s){ screen->SetTransparency(s->Percent()); }, _1));
     screen->AddDialog(make_unique<SliderDialog>(screen, "window transparency", cb, 0, 1.0, .025));
     app->scheduler.Wakeup(screen);
@@ -475,10 +467,14 @@ struct BaseTerminalWindow : public TerminalWindow {
 #ifdef LFL_MOBILE
 }; // namespace LFL
 #include "term_menu.h"
+#include "term_menu.cpp"
 namespace LFL {
 typedef TerminalMenuWindow MyTerminalWindow;
 #else
-typedef BaseTerminalWindow MyTerminalWindow;
+struct MyTerminalWindow : public BaseTerminalWindow {
+  using BaseTerminalWindow::BaseTerminalWindow;
+  void SetupApp() {}
+};
 #endif
 
 void MyWindowInit(Window *W) {
@@ -500,17 +496,11 @@ void MyWindowStart(Window *W) {
   W->default_textbox = [=]{ return tw->terminal; };
   if (FLAGS_resize_grid) W->SetResizeIncrements(tw->terminal->style.font->FixedWidth(), tw->terminal->style.font->Height());
   app->scheduler.AddFrameWaitMouse(W);
+#ifdef LFL_MOBILE                                                                                 
+  tw->terminal->line_fb.align_top_or_bot = tw->terminal->cmd_fb.align_top_or_bot = true;
+#endif
 
   W->shell = make_unique<Shell>();
-  W->shell->Add("choosefont",         bind(&MyTerminalWindow::FontCmd,                 tw, _1));
-  W->shell->Add("colors",             bind(&MyTerminalWindow::ColorsCmd,               tw, _1));
-  W->shell->Add("shader",             bind(&MyTerminalWindow::ShaderCmd,               tw, _1));
-  W->shell->Add("fxctl",              bind(&MyTerminalWindow::EffectsControlsCmd,      tw, _1));
-  W->shell->Add("transparency",       bind(&MyTerminalWindow::TransparencyControlsCmd, tw, _1));
-
-#ifdef LFL_MOBILE                                                                                 
-  StartTerminalMenuWindow(W, tw);
-#endif
   if (my_app->image_browser) W->shell->AddBrowserCommands(my_app->image_browser.get());
 
   BindMap *binds = W->AddInputController(make_unique<BindMap>());
@@ -585,13 +575,13 @@ extern "C" int MyAppMain() {
 #endif
 
   my_app->image_browser = make_unique<Browser>();
-  vector<pair<string,string>> passphrase_alert = {
+  AlertItemVec passphrase_alert = {
     { "style", "pwinput" }, { "Passphrase", "Passphrase" }, { "Cancel", "" }, { "Continue", "" } };
-  my_app->passphrase_alert = make_unique<SystemAlertWidget>(passphrase_alert);
+  my_app->passphrase_alert = make_unique<SystemAlertView>(passphrase_alert);
 
-  vector<pair<string,string>> keypastefailed_alert = {
+  AlertItemVec keypastefailed_alert = {
     { "style", "" }, { "Paste key failed", "Load key failed" }, { "", "" }, { "Continue", "" } };
-  my_app->keypastefailed_alert = make_unique<SystemAlertWidget>(keypastefailed_alert);
+  my_app->keypastefailed_alert = make_unique<SystemAlertView>(keypastefailed_alert);
 
 #ifdef LFL_CRYPTO
   if (FLAGS_keygen.size()) {
@@ -618,6 +608,7 @@ extern "C" int MyAppMain() {
   auto tw = new MyTerminalWindow(screen);
   if (FLAGS_record.size()) tw->record = make_unique<FlatFile>(FLAGS_record);
 #ifndef LFL_MOBILE
+  if (FLAGS_term.empty()) FLAGS_term = getenv("TERM");
   tw->UseInitialTerminalController();
 #endif
   screen->user1 = MakeTyped(tw);
@@ -628,27 +619,37 @@ extern "C" int MyAppMain() {
   tw->terminal->Draw(screen->Box());
 
 #ifndef LFL_MOBILE
-  vector<MenuItem> view_menu{
+  my_app->edit_menu = SystemMenuView::CreateEditMenu(vector<MenuItem>());
+  my_app->view_menu = make_unique<SystemMenuView>("View", MenuItemVec{
 #ifdef __APPLE__
-    MenuItem{ "=", "Zoom In", "" }, MenuItem{ "-", "Zoom Out", "" },
+    MenuItem{ "=", "Zoom In" },
+    MenuItem{ "-", "Zoom Out" },
 #endif
-    MenuItem{ "", "Fonts", "choosefont" },
+    MenuItem{ "", "Fonts",        bind(&MyTerminalWindow::ChangeFont, tw, StringVec()) },
 #ifndef LFL_MOBILE
-    MenuItem{ "", "Transparency", "transparency" },
+    MenuItem{ "", "Transparency", bind(&MyTerminalWindow::ShowTransparencyControls, tw) },
 #endif
-    MenuItem{ "", "VGA Colors", "colors vga", }, MenuItem{ "", "Solarized Dark Colors", "colors solarized_dark" }, MenuItem { "", "Solarized Light Colors", "colors solarized_light" }
-  };
-  my_app->edit_menu = SystemMenuWidget::CreateEditMenu(vector<MenuItem>());
-  my_app->view_menu = make_unique<SystemMenuWidget>("View", view_menu);
+    MenuItem{ "", "VGA Colors",             bind(&MyTerminalWindow::ChangeColors, tw, "vga") },
+    MenuItem{ "", "Solarized Dark Colors",  bind(&MyTerminalWindow::ChangeColors, tw, "solarized_dark") },
+    MenuItem{ "", "Solarized Light Colors", bind(&MyTerminalWindow::ChangeColors, tw, "solarized_light") }
+  });
 #endif
 
   vector<MenuItem> effects_menu{
-    MenuItem{ "", "None",     "shader none"     }, MenuItem{ "", "Warper", "shader warper" }, MenuItem{ "", "Water", "shader water" },
-    MenuItem{ "", "Twistery", "shader twistery" }, MenuItem{ "", "Fire",   "shader fire"   }, MenuItem{ "", "Waves", "shader waves" },
-    MenuItem{ "", "Emboss",   "shader emboss"   }, MenuItem{ "", "Stormy", "shader stormy" }, MenuItem{ "", "Alien", "shader alien" },
-    MenuItem{ "", "Fractal",  "shader fractal"  }, MenuItem{ "", "Darkly", "shader darkly" },
-    MenuItem{ "", "<separator>", "" }, MenuItem{ "", "Controls", "fxctl" } };
-  my_app->toys_menu = make_unique<SystemMenuWidget>("Toys", effects_menu);
+    MenuItem{ "", "None",         bind(&MyTerminalWindow::ChangeShader, tw, "none") },
+    MenuItem{ "", "Warper",       bind(&MyTerminalWindow::ChangeShader, tw, "warper") },
+    MenuItem{ "", "Water",        bind(&MyTerminalWindow::ChangeShader, tw, "water") },
+    MenuItem{ "", "Twistery",     bind(&MyTerminalWindow::ChangeShader, tw, "twistery") },
+    MenuItem{ "", "Fire",         bind(&MyTerminalWindow::ChangeShader, tw, "fire") },
+    MenuItem{ "", "Waves",        bind(&MyTerminalWindow::ChangeShader, tw, "waves") },
+    MenuItem{ "", "Emboss",       bind(&MyTerminalWindow::ChangeShader, tw, "emboss") },
+    MenuItem{ "", "Stormy",       bind(&MyTerminalWindow::ChangeShader, tw, "stormy") },
+    MenuItem{ "", "Alien",        bind(&MyTerminalWindow::ChangeShader, tw, "alien") },
+    MenuItem{ "", "Fractal",      bind(&MyTerminalWindow::ChangeShader, tw, "fractal") },
+    MenuItem{ "", "Darkly",       bind(&MyTerminalWindow::ChangeShader, tw, "darkly") },
+    MenuItem{ "", "<separator>" },
+    MenuItem{ "", "Controls",     bind(&MyTerminalWindow::ShowEffectsControls, tw) } };
+  my_app->toys_menu = make_unique<SystemMenuView>("Toys", effects_menu);
 
   MakeValueTuple(&my_app->shader_map, "warper", "water", "twistery");
   MakeValueTuple(&my_app->shader_map, "warper", "water", "twistery");
@@ -656,10 +657,7 @@ extern "C" int MyAppMain() {
   MakeValueTuple(&my_app->shader_map, "stormy", "alien", "fractal");
   MakeValueTuple(&my_app->shader_map, "darkly");
 
-#ifdef LFL_MOBILE
-  SetupTerminalMenuApp();
-#endif
-
+  tw->SetupApp();
   INFO("Starting ", app->name, " ", screen->default_font.desc.name, " (w=", tw->terminal->style.font->FixedWidth(),
        ", h=", tw->terminal->style.font->Height(), ", scale=", my_app->downscale_effects, ")");
   return app->Main();
