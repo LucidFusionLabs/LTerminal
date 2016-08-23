@@ -40,26 +40,27 @@
 
 namespace LFL {
 #ifdef LFL_CRYPTO
-DEFINE_string(ssh,            "",     "SSH to host");
-DEFINE_string(login,          "",     "SSH user");
-DEFINE_string(term,           "",     "SSH TERM var");
-DEFINE_string(keyfile,        "",     "SSH private key");
-DEFINE_bool  (compress,       false,  "SSH compression");
-DEFINE_bool  (forward_agent,  false,  "SSH agent forwarding");
-DEFINE_string(forward_local,  "",     "Forward local_port:remote_host:remote_port");
-DEFINE_string(forward_remote, "",     "Forward remote_port:local_host:local_port");
-DEFINE_string(keygen,         "",     "Generate key");
-DEFINE_int   (bits,           0,      "Generate key bits");      
+DEFINE_string(ssh,             "",     "SSH to host");
+DEFINE_string(login,           "",     "SSH user");
+DEFINE_string(term,            "",     "SSH TERM var");
+DEFINE_string(keyfile,         "",     "SSH private key");
+DEFINE_string(startup_command, "",     "SSH startup command");
+DEFINE_bool  (compress,        false,  "SSH compression");
+DEFINE_bool  (forward_agent,   false,  "SSH agent forwarding");
+DEFINE_string(forward_local,   "",     "Forward local_port:remote_host:remote_port");
+DEFINE_string(forward_remote,  "",     "Forward remote_port:local_host:local_port");
+DEFINE_string(keygen,          "",     "Generate key");
+DEFINE_int   (bits,            0,      "Generate key bits");      
 #endif
-DEFINE_bool  (interpreter,    false,  "Launch interpreter instead of shell");
-DEFINE_string(telnet,         "",     "Telnet to host");
-DEFINE_string(command,        "",     "Execute initial command");
-DEFINE_string(screenshot,     "",     "Screenshot and exit");
-DEFINE_string(record,         "",     "Record session to file");
-DEFINE_string(playback,       "",     "Playback recorded session file");
-DEFINE_bool  (draw_fps,       false,  "Draw FPS");
-DEFINE_bool  (resize_grid,    true,   "Resize window in glyph bound increments");
-DEFINE_FLAG(dim, point, point(80,25), "Initial terminal dimensions");
+DEFINE_bool  (interpreter,     false,  "Launch interpreter instead of shell");
+DEFINE_string(telnet,          "",     "Telnet to host");
+DEFINE_string(command,         "",     "Execute initial command");
+DEFINE_string(screenshot,      "",     "Screenshot and exit");
+DEFINE_string(record,          "",     "Record session to file");
+DEFINE_string(playback,        "",     "Playback recorded session file");
+DEFINE_bool  (draw_fps,        false,  "Draw FPS");
+DEFINE_bool  (resize_grid,     true,   "Resize window in glyph bound increments");
+DEFINE_FLAG(dim, point, point(80,25),  "Initial terminal dimensions");
 extern FlagOfType<bool> FLAGS_enable_network_;
 
 struct MyAppState {
@@ -138,19 +139,20 @@ struct PTYTerminalController : public Terminal::Controller {
 
 #ifdef LFL_CRYPTO
 struct SSHTerminalController : public NetworkTerminalController {
+  SSHClient::Params params;
   StringCB metakey_cb;
   Callback success_cb, savehost_cb;
   shared_ptr<SSHClient::Identity> identity;
-  string username, password;
-  SSHTerminalController(Service *s, const string &r, const string &u, const Callback &ccb) :
-    NetworkTerminalController(s, r, ccb), username(u) {}
+  string password;
+  SSHTerminalController(Service *s, SSHClient::Params p, const Callback &ccb) :
+    NetworkTerminalController(s, p.hostport, ccb), params(move(p)) {}
 
   int Open(TextArea *t) {
     Terminal *term = dynamic_cast<Terminal*>(t);
-    SSHReadCB(0, StrCat("Connecting to ", FLAGS_login, "@", FLAGS_ssh, "\r\n"));
+    SSHReadCB(0, StrCat("Connecting to ", params.user, "@", params.hostport, "\r\n"));
     app->RunInNetworkThread([=](){
       success_cb = bind(&SSHTerminalController::SSHLoginCB, this, term);
-      conn = SSHClient::Open(remote, username, FLAGS_term, FLAGS_compress, FLAGS_forward_agent, SSHClient::ResponseCB
+      conn = SSHClient::Open(move(params), SSHClient::ResponseCB
                              (bind(&SSHTerminalController::SSHReadCB, this, _1, _2)), &detach_cb, &success_cb);
       if (!conn) { app->RunInMainThread(bind(&NetworkTerminalController::Dispose, this)); return; }
       SSHClient::SetTerminalWindowSize(conn, term->term_width, term->term_height);
@@ -216,7 +218,7 @@ struct SSHTerminalController : public NetworkTerminalController {
 #endif
 
 struct ShellTerminalController : public InteractiveTerminalController {
-  typedef function<void(const string&, const string&, const string&)> SSHCB;
+  typedef function<void(SSHClient::Params)> SSHCB;
   string ssh_usage="\r\nusage: ssh -l user host[:port]";
   Callback telnet_cb;
   SSHCB ssh_cb;
@@ -238,7 +240,8 @@ struct ShellTerminalController : public InteractiveTerminalController {
     for (; ind < arg.size() && arg[ind][0] == '-'; ind += 2) if (arg[ind] == "-l") login = arg[ind+1];
     if (ind < arg.size()) host = arg[ind];
     if (login.empty() || host.empty()) { if (term) term->Write(ssh_usage); }
-    else ssh_cb(host, login, FLAGS_term);
+    else ssh_cb(SSHClient::Params{host, login, FLAGS_term, FLAGS_startup_command, FLAGS_compress,
+                FLAGS_forward_agent, false});
   }
 #endif
 
@@ -299,15 +302,14 @@ struct BaseTerminalWindow : public TerminalWindow {
   void UseShellTerminalController(const string &m) {
     ChangeController(make_unique<ShellTerminalController>
                      (m, [=](){ UseTelnetTerminalController(); },
-                      [=](const string &h, const string &u, const string &t){ UseSSHTerminalController(h, u, t); }));
+                      [=](SSHClient::Params p){ UseSSHTerminalController(move(p)); }));
   }
 
-  void UseSSHTerminalController(const string &hostport, const string &user, const string &term,
-                                const string &pw="", const string &pem="",
+  void UseSSHTerminalController(SSHClient::Params params, const string &pw="", const string &pem="",
                                 StringCB metakey_cb=StringCB(), Callback savehost_cb=Callback()) {
 #ifdef LFL_CRYPTO
     auto ssh =
-      make_unique<SSHTerminalController>(app->net->tcp_client.get(), hostport, user,
+      make_unique<SSHTerminalController>(app->net->tcp_client.get(), move(params), 
                                          [=](){ UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n"); });
     ssh->metakey_cb = move(metakey_cb);
     ssh->savehost_cb = move(savehost_cb);
@@ -337,7 +339,9 @@ struct BaseTerminalWindow : public TerminalWindow {
     if      (FLAGS_playback.size()) return UsePlaybackTerminalController(make_unique<FlatFile>(FLAGS_playback));
     else if (FLAGS_interpreter)     return UseShellTerminalController("");
 #ifdef LFL_CRYPTO
-    else if (FLAGS_ssh.size())      return UseSSHTerminalController(FLAGS_ssh, FLAGS_login, FLAGS_term);
+    else if (FLAGS_ssh.size())      return UseSSHTerminalController
+      (SSHClient::Params{FLAGS_ssh, FLAGS_login, FLAGS_term, FLAGS_startup_command, FLAGS_compress,
+       FLAGS_forward_agent, 0});
 #endif
     else if (FLAGS_telnet.size())   return UseTelnetTerminalController();
     else                            return UseDefaultTerminalController();
@@ -473,7 +477,6 @@ typedef TerminalMenuWindow MyTerminalWindow;
 #else
 struct MyTerminalWindow : public BaseTerminalWindow {
   using BaseTerminalWindow::BaseTerminalWindow;
-  void SetupApp() {}
 };
 #endif
 
@@ -657,7 +660,6 @@ extern "C" int MyAppMain() {
   MakeValueTuple(&my_app->shader_map, "stormy", "alien", "fractal");
   MakeValueTuple(&my_app->shader_map, "darkly");
 
-  tw->SetupApp();
   INFO("Starting ", app->name, " ", screen->default_font.desc.name, " (w=", tw->terminal->style.font->FixedWidth(),
        ", h=", tw->terminal->style.font->Height(), ", scale=", my_app->downscale_effects, ")");
   return app->Main();
