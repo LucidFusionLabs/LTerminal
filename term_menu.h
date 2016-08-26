@@ -25,6 +25,7 @@ using LTerminal::CredentialType_Ask;
 using LTerminal::CredentialType_Password;
 using LTerminal::CredentialType_PEM;
 using LTerminal::CredentialDBType;
+using LTerminal::CredentialDBType_Null;
 using LTerminal::CredentialDBType_Table;
 
 struct TerminalMenuWindow;
@@ -84,10 +85,7 @@ struct MyAppSettingsModel {
                          (bind(&MyAppSettingsModel::SaveProto, this, _1)));
   }
 
-  static void InitDatabase(MySettingsDB *settings_db) {
-    if (settings_db->data.find(1) == settings_db->data.end())
-      CHECK_EQ(1, settings_db->Insert(MyAppSettingsModel().SaveBlob()));
-  }
+  void Save(MySettingsDB *settings_db) const { settings_db->Update(1, SaveBlob()); }
 };
 
 struct MyHostSettingsModel {
@@ -151,10 +149,13 @@ struct MyCredentialModel {
   }
 
   void Load(MyCredentialDB *cred_db, int id) {
-    auto cred = flatbuffers::GetRoot<LTerminal::Credential>(FindRefOrDie(cred_db->data, (cred_id = id)).data());
-    credtype = cred->type();
-    creddata = cred->data() ? string(MakeSigned(cred->data()->data()), cred->data()->size()) : "";
-    name = cred->displayname() ? cred->displayname()->data() : "";
+    auto it = cred_db->data.find((cred_id = id));
+    if (it != cred_db->data.end()) {
+      auto cred = flatbuffers::GetRoot<LTerminal::Credential>(it->second.data());
+      credtype = cred->type();
+      creddata = cred->data() ? string(MakeSigned(cred->data()->data()), cred->data()->size()) : "";
+      name = cred->displayname() ? cred->displayname()->data() : "";
+    } else Load();
   }
 
   flatbuffers::Offset<LTerminal::Credential> SaveProto(FlatBufferBuilder &fb) const {
@@ -185,8 +186,8 @@ struct MyHostModel {
   MyHostSettingsModel settings;
   MyCredentialModel cred;
   LTerminal::Protocol protocol;
-  string hostname, username, displayname, folder;
-  int host_id, port;
+  string hostname, username, displayname, fingerprint, folder;
+  int host_id, port, fingerprint_type;
 
   MyHostModel() { Load(); }
   MyHostModel(MyHostDB *host_db, MyCredentialDB *cred_db, MySettingsDB *settings_db, int id) { Load(host_db, cred_db, settings_db, id); }
@@ -204,10 +205,15 @@ struct MyHostModel {
     else { FATAL("unknown protocol"); }
   }
 
+  void SetFingerprint(int t, const string &fp) {
+    fingerprint_type = t;
+    fingerprint = fp;
+  }
+
   void Load() {
-    host_id = port = 0;
+    host_id = port = fingerprint_type = 0;
     protocol = LTerminal::Protocol_SSH;
-    hostname = username = displayname = folder = "";
+    hostname = username = displayname = fingerprint = folder = "";
     settings.Load();
     cred.Load();
   }
@@ -215,6 +221,7 @@ struct MyHostModel {
   void Load(MyHostDB *host_db, MyCredentialDB *cred_db, MySettingsDB *settings_db, int id) {
     auto host = flatbuffers::GetRoot<LTerminal::Host>(FindRefOrDie(host_db->data, (host_id = id)).data());
     protocol = host->protocol();
+    fingerprint_type = host->fingerprint_type();
 
     if (host->hostport()) {
       hostname = host->hostport()->data();
@@ -226,9 +233,10 @@ struct MyHostModel {
       SetPort(0);
     }
 
-    username = host->username() ? host->username()->data() : "";
-    displayname = host->displayname() ? host->displayname()->data() : "";
-    folder = host->folder() ? host->folder()->data() : "";
+    username    = GetFlatBufferString(host->username());
+    displayname = GetFlatBufferString(host->displayname());
+    fingerprint = GetFlatBufferString(host->fingerprint());
+    folder      = GetFlatBufferString(host->folder()); 
     CHECK(host->settings_id());
     settings.Load(settings_db, host->settings_id());
 
@@ -240,7 +248,9 @@ struct MyHostModel {
   SaveProto(FlatBufferBuilder &fb, const LTerminal::CredentialRef &credref, int settings_row_id) const {
     return LTerminal::CreateHost
       (fb, protocol, fb.CreateString(Hostport()), fb.CreateString(username),
-       &credref, fb.CreateString(displayname), fb.CreateString(folder), settings_row_id);
+       &credref, fb.CreateString(displayname), fb.CreateString(folder), settings_row_id,
+       fb.CreateVector(reinterpret_cast<const uint8_t*>(fingerprint.data()), fingerprint.size()),
+       fingerprint_type);
   }
 
   BlobPiece SaveBlob(const LTerminal::CredentialRef &credref, int settings_row_id) const {
@@ -258,20 +268,22 @@ struct MyHostModel {
     int settings_row_id = settings_db->Insert(settings.SaveBlob()), cred_row_id = 0;
     if      (cred.credtype == CredentialType_PEM)      cred_row_id = cred.cred_id;
     else if (cred.credtype == CredentialType_Password) cred_row_id = cred.Save(cred_db);
-    LTerminal::CredentialRef credref(CredentialDBType_Table, cred_row_id);
+    LTerminal::CredentialRef credref
+      (cred.credtype == CredentialType_Ask ? CredentialDBType_Null : CredentialDBType_Table, cred_row_id);
     return Save(host_db, credref, settings_row_id);
   }
 
   int Update(const MyHostModel &prevhost,
              MyHostDB *host_db, MyCredentialDB *cred_db, MySettingsDB *settings_db) const {
-    int cred_id = prevhost.cred.cred_id;
+    int cred_row_id = prevhost.cred.cred_id;
     if (prevhost.cred.credtype == CredentialType_Password) {
-      if (cred.credtype != CredentialType_Password) cred_db->Erase(cred_id);
-      else MyCredentialModel(CredentialType_Password, cred.creddata).Save(cred_db, cred_id);
+      if (cred.credtype != CredentialType_Password) cred_db->Erase(cred_row_id);
+      else MyCredentialModel(CredentialType_Password, cred.creddata).Save(cred_db, cred_row_id);
     } else if (cred.credtype == CredentialType_Password) {
-      cred_id = MyCredentialModel(CredentialType_Password, cred.creddata).Save(cred_db);
-    } else if (cred.credtype == CredentialType_PEM) cred_id = cred.cred_id;
-    LTerminal::CredentialRef credref(cred.credtype == CredentialType_Ask ? 0 : CredentialDBType_Table, cred_id);
+      cred_row_id = MyCredentialModel(CredentialType_Password, cred.creddata).Save(cred_db);
+    } else if (cred.credtype == CredentialType_PEM) cred_row_id = cred.cred_id;
+    LTerminal::CredentialRef credref
+      (cred.credtype == CredentialType_Ask ? CredentialDBType_Null : CredentialDBType_Table, cred_row_id);
     settings_db->Update(prevhost.settings.settings_id, settings.SaveBlob());
     return Save(host_db, credref, prevhost.settings.settings_id, prevhost.host_id);
   }
@@ -290,6 +302,7 @@ struct MyAppearanceViewController {
 struct MyKeyboardSettingsViewController {
   unique_ptr<SystemTableView> view;
   MyKeyboardSettingsViewController();
+  void UpdateViewFromModel(const MyRunSettingsModel&);
 };
 
 struct MyNewKeyViewController {
@@ -306,8 +319,9 @@ struct MyGenKeyViewController {
 struct MyKeysViewController {
   TerminalMenuWindow *tw;
   MyCredentialDB *model;
+  bool add_or_edit;
   unique_ptr<SystemTableView> view;
-  MyKeysViewController(TerminalMenuWindow*, MyCredentialDB *M);
+  MyKeysViewController(TerminalMenuWindow*, MyCredentialDB *M, bool add_or_edit);
   void UpdateViewFromModel();
 };
 
@@ -322,10 +336,16 @@ struct MyRunSettingsViewController {
 
 struct MyAppSettingsViewController {
   unique_ptr<SystemTableView> view;
-  MyAppSettingsViewController(TerminalMenuWindow *w) :
-    view(make_unique<SystemTableView>("Settings", "", GetSchema(w))) {}
+  MyAppSettingsViewController(TerminalMenuWindow *w);
   static vector<TableItem> GetSchema(TerminalMenuWindow*);
   void UpdateViewFromModel(const MyAppSettingsModel &model);
+  void UpdateModelFromView(      MyAppSettingsModel *model);
+};
+
+struct MyHostFingerprintViewController {
+  unique_ptr<SystemTableView> view;
+  MyHostFingerprintViewController(TerminalMenuWindow *w);
+  void UpdateViewFromModel(const MyHostModel &model);
 };
 
 struct MyHostSettingsViewController {
@@ -339,9 +359,9 @@ struct MyHostSettingsViewController {
 
 struct MyQuickConnectViewController {
   unique_ptr<SystemTableView> view;
-  MyQuickConnectViewController(TerminalMenuWindow*) {}
+  MyQuickConnectViewController(TerminalMenuWindow*);
   static vector<TableItem> GetSchema(TerminalMenuWindow*);
-  void UpdateModelFromView(MyHostModel *model) const;
+  bool UpdateModelFromView(MyHostModel *model, MyCredentialDB *cred_db) const;
 };
 
 struct MyNewHostViewController {
@@ -393,7 +413,10 @@ struct TerminalMenuResources {
     info_icon       (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/info.png"))),
     keyboard_icon   (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/keyboard.png"))),
     folder_icon     (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/folder.png"))) {
-    MyAppSettingsModel::InitDatabase(&settings_db);
+    if (settings_db.data.find(1) == settings_db.data.end()) {
+      CHECK_EQ(1, settings_db.Insert(MyAppSettingsModel().SaveBlob()));
+      CHECK_EQ(1, MyHostModel().SaveNew(&host_db, &credential_db, &settings_db));
+    }
   }
 };
 
@@ -405,9 +428,10 @@ struct TerminalMenuWindow : public BaseTerminalWindow {
   MyKeyboardSettingsViewController keyboard;
   MyNewKeyViewController           newkey;
   MyGenKeyViewController           genkey;
-  MyKeysViewController             keys;
+  MyKeysViewController             keys, editkeys;
   MyRunSettingsViewController      runsettings;
   MyAppSettingsViewController      settings;
+  MyHostFingerprintViewController  hostfingerprint;
   MyHostSettingsViewController     hostsettings;
   MyQuickConnectViewController     quickconnect;
   MyNewHostViewController          newhost;
@@ -428,10 +452,9 @@ struct TerminalMenuWindow : public BaseTerminalWindow {
 
   TerminalMenuWindow(Window *W) : BaseTerminalWindow(W), res(Singleton<TerminalMenuResources>::Get()),
   hosts_nav(make_unique<SystemNavigationView>()), runsettings_nav(make_unique<SystemNavigationView>()),
-  appearance(this), newkey(this), genkey(this), keys(this, &res->credential_db), runsettings(this), 
-  settings(this), hostsettings(this), quickconnect(this), newhost(this), updatehost(this),
-  hosts(this, &res->host_db) {
-    MyAppSettingsModel::InitDatabase(&res->settings_db);
+  appearance(this), newkey(this), genkey(this), keys(this, &res->credential_db, true),
+  editkeys(this, &res->credential_db, false), runsettings(this), settings(this), hostfingerprint(this),
+  hostsettings(this), quickconnect(this), newhost(this), updatehost(this), hosts(this, &res->host_db) {
     keyboard_toolbar = make_unique<SystemToolbarView>(MenuItemVec{
       { "\U00002699", "",       bind(&TerminalMenuWindow::ShowRunSettings, this) },
       { "\U000025C0", "",       bind(&TerminalMenuWindow::PressKey,        this, "left") },
@@ -444,6 +467,13 @@ struct TerminalMenuWindow : public BaseTerminalWindow {
     });
     runsettings_nav->PushTable(runsettings.view.get());
     hosts_nav->PushTable(hosts.view.get());
+    hosts_nav->Show(true);
+  }
+
+  void ShellExitCB(const StringVec&) {
+    ChangeController(nullptr);
+    terminal->ResetTerminal();
+    keyboard_toolbar->Show(false);
     hosts_nav->Show(true);
   }
 
@@ -514,34 +544,42 @@ struct TerminalMenuWindow : public BaseTerminalWindow {
   }
 
   void ShowNewHost() {
-    hostsettings.UpdateViewFromModel(MyHostModel()); 
+    MyHostModel host;
+    hostsettings.UpdateViewFromModel(host); 
+    hostfingerprint.UpdateViewFromModel(host);
     hosts_nav->PushTable(newhost.view.get());
   }
 
   void ShowQuickConnect() {
-    hostsettings.UpdateViewFromModel(MyHostModel()); 
+    MyHostModel host;
+    hostsettings.UpdateViewFromModel(host); 
+    hostfingerprint.UpdateViewFromModel(host); 
     hosts_nav->PushTable(quickconnect.view.get());
   }
 
   void StartShell() {
+    connected_host_id = 1;
     UseShellTerminalController("");
     MenuStartSession();
+    app->scheduler.Wakeup(screen);
   }
 
   void QuickConnect() {
+    hosts_nav->PopTable(1);
+    connected_host_id = 0;
     MyHostModel host;
-    quickconnect.UpdateModelFromView(&host);
-    auto proto = MakeFlatBufferOfType(LTerminal::HostSettings, LTerminal::CreateHostSettings(fb));
-#if 0
-    MenuConnect(host, port, user, "xterm-color", CredentialType_Password, cred, [&](){
-                // ask to save
-                });
-#endif
+    quickconnect.UpdateModelFromView(&host, &res->credential_db);
+    hostsettings.UpdateModelFromView(&host.settings, &host.folder);
+    MenuConnect(host, [=](int fingerprint_type, const string &fingerprint){ /* ask to save */ });
   }
 
   void ConnectHost(int host_id) {
     MyHostModel host(&res->host_db, &res->credential_db, &res->settings_db, (connected_host_id = host_id));
     MenuConnect(host);
+  }
+
+  void DeleteKey(int index, int key_id) {
+    res->credential_db.Erase(key_id);
   }
 
   void DeleteHost(int index, int host_id) {
@@ -554,16 +592,22 @@ struct TerminalMenuWindow : public BaseTerminalWindow {
     MyHostModel host(&res->host_db, &res->credential_db, &res->settings_db, host_id);
     updatehost.UpdateViewFromModel(host);
     hostsettings.UpdateViewFromModel(host);
+    hostfingerprint.UpdateViewFromModel(host);
     hosts_nav->PushTable(updatehost.view.get());
   }
 
   void NewHostConnect() {
+    hosts_nav->PopTable(1);
     connected_host_id = 0;
     MyHostModel host;
     newhost.UpdateModelFromView(&host, &res->credential_db);
     hostsettings.UpdateModelFromView(&host.settings, &host.folder);
     if (host.displayname.empty()) host.displayname = StrCat(host.username, "@", host.hostname);
-    MenuConnect(host, [=](){ connected_host_id = host.SaveNew(&res->host_db, &res->credential_db, &res->settings_db); });
+    MenuConnect(host, [=](int fingerprint_type, const string &fingerprint) mutable {
+      host.SetFingerprint(fingerprint_type, fingerprint);           
+      INFO("set fp ", HexEscape(Crypto::MD5(host.fingerprint), ":"));
+      connected_host_id = host.SaveNew(&res->host_db, &res->credential_db, &res->settings_db);
+    });
   }
 
   void UpdateHostConnect() {
@@ -573,8 +617,8 @@ struct TerminalMenuWindow : public BaseTerminalWindow {
     hostsettings.UpdateModelFromView(&host.settings, &host.folder);
     if (host.cred.credtype == CredentialType_PEM)
       if (!(host.cred.cred_id = updatehost.view->GetTag(0, 4))) host.cred.credtype = CredentialType_Ask;
-    MenuConnect(host, [=](){ connected_host_id = host.Update
-                               (updatehost.prev_model, &res->host_db, &res->credential_db, &res->settings_db); });
+    MenuConnect(host, [=](int, const string&){ connected_host_id = host.Update
+                (updatehost.prev_model, &res->host_db, &res->credential_db, &res->settings_db); });
   }
 
   void MenuStartSession() {
@@ -584,9 +628,9 @@ struct TerminalMenuWindow : public BaseTerminalWindow {
     app->OpenTouchKeyboard();
   }
 
-  void MenuConnect(const MyHostModel &host, Callback cb=Callback()) {
-    INFO("do conn compress=", host.settings.compression);
-    UseSSHTerminalController(SSHClient::Params{host.Hostport(), host.username, host.settings.terminal_type, "",
+  void MenuConnect(const MyHostModel &host, SSHTerminalController::SavehostCB cb=SSHTerminalController::SavehostCB()) {
+    UseSSHTerminalController(SSHClient::Params{host.Hostport(), host.username, host.settings.terminal_type,
+                             host.settings.startup_command.size() ? StrCat(host.settings.startup_command, "\r") : "",
                              host.settings.compression, host.settings.agent_forwarding, host.settings.close_on_disconnect},
                              host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "",
                              host.cred.credtype == LTerminal::CredentialType_PEM      ? host.cred.creddata : "",

@@ -140,11 +140,11 @@ template <class TerminalType> struct TerminalWindowT {
     controller.swap(last_controller);
     controller = move(new_controller);
     terminal->sink = controller.get();
-    int fd = controller->Open(terminal);
+    int fd = controller ? controller->Open(terminal) : -1;
     if (fd != -1) app->scheduler.AddFrameWaitSocket(screen, fd, SocketSet::READABLE);
-    if (controller->frame_on_keyboard_input) app->scheduler.AddFrameWaitKeyboard(screen);
-    else                                     app->scheduler.DelFrameWaitKeyboard(screen);
-    OpenedController();
+    if (controller && controller->frame_on_keyboard_input) app->scheduler.AddFrameWaitKeyboard(screen);
+    else                                                   app->scheduler.DelFrameWaitKeyboard(screen);
+    if (controller) OpenedController();
   }
 
   int ReadAndUpdateTerminalFramebuffer() {

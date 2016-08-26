@@ -1,7 +1,7 @@
 namespace LFL.LTerminal;
 
 enum Protocol : int { SSH = 1, Telnet }
-enum CredentialDBType : int { Table = 1, Keychain }
+enum CredentialDBType : int { Null = 0, Table, Keychain }
 enum CredentialType : int { Ask = 0, Password, PEM }
 struct CredentialRef { db: int; id: int; }
 
@@ -26,6 +26,7 @@ table Host {
   folder:           string;
   settings_id:      int;
   fingerprint:      [ubyte];
+  fingerprint_type: int;
 }
 
 enum TextEncoding : int { UTF8=1, ASCII=2 }

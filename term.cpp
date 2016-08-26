@@ -139,11 +139,14 @@ struct PTYTerminalController : public Terminal::Controller {
 
 #ifdef LFL_CRYPTO
 struct SSHTerminalController : public NetworkTerminalController {
+  typedef function<void(int, const string&)> SavehostCB;
   SSHClient::Params params;
+  Callback success_cb;
   StringCB metakey_cb;
-  Callback success_cb, savehost_cb;
+  SavehostCB savehost_cb;
   shared_ptr<SSHClient::Identity> identity;
-  string password;
+  string fingerprint, password;
+  int fingerprint_type=0;
   SSHTerminalController(Service *s, SSHClient::Params p, const Callback &ccb) :
     NetworkTerminalController(s, p.hostport, ccb), params(move(p)) {}
 
@@ -152,14 +155,22 @@ struct SSHTerminalController : public NetworkTerminalController {
     SSHReadCB(0, StrCat("Connecting to ", params.user, "@", params.hostport, "\r\n"));
     app->RunInNetworkThread([=](){
       success_cb = bind(&SSHTerminalController::SSHLoginCB, this, term);
-      conn = SSHClient::Open(move(params), SSHClient::ResponseCB
+      conn = SSHClient::Open(params, SSHClient::ResponseCB
                              (bind(&SSHTerminalController::SSHReadCB, this, _1, _2)), &detach_cb, &success_cb);
       if (!conn) { app->RunInMainThread(bind(&NetworkTerminalController::Dispose, this)); return; }
       SSHClient::SetTerminalWindowSize(conn, term->term_width, term->term_height);
-      SSHClient::SetCredentialCB(conn, bind(&SSHTerminalController::LoadIdentityCB, this, _1),
+      SSHClient::SetCredentialCB(conn, bind(&SSHTerminalController::FingerprintCB, this, _1, _2),
+                                 bind(&SSHTerminalController::LoadIdentityCB, this, _1),
                                  bind(&SSHTerminalController::LoadPasswordCB, this, _1));
     });
     return -1;
+  }
+
+  bool FingerprintCB(int hostkey_type, const StringPiece &in) {
+    string type = SSH::Key::Name((fingerprint_type = hostkey_type));
+    fingerprint = in.str();
+    INFO(params.hostport, ": fingerprint: ", type, " ", "MD5", HexEscape(Crypto::MD5(fingerprint), ":"));
+    return true;
   }
 
   bool LoadPasswordCB(string *out) {
@@ -183,7 +194,7 @@ struct SSHTerminalController : public NetworkTerminalController {
 
   void SSHLoginCB(Terminal *term) {
     SSHReadCB(0, "Connected.\r\n");
-    if (savehost_cb) savehost_cb();
+    if (savehost_cb) savehost_cb(fingerprint_type, fingerprint);
   }
 
   void SSHReadCB(Connection *c, const StringPiece &b) { 
@@ -222,8 +233,9 @@ struct ShellTerminalController : public InteractiveTerminalController {
   string ssh_usage="\r\nusage: ssh -l user host[:port]";
   Callback telnet_cb;
   SSHCB ssh_cb;
-  ShellTerminalController(const string &hdr, const Callback &tcb, const SSHCB &scb) :
-    telnet_cb(tcb), ssh_cb(scb) {
+
+  ShellTerminalController(const string &hdr, Callback tcb, SSHCB scb, StringVecCB ecb) :
+    telnet_cb(move(tcb)), ssh_cb(move(scb)) {
     header = StrCat(hdr, "LTerminal 1.0", ssh_usage, "\r\n\r\n");
 #ifdef LFL_CRYPTO
     shell.Add("ssh",      bind(&ShellTerminalController::MySSHCmd,      this, _1));
@@ -231,6 +243,7 @@ struct ShellTerminalController : public InteractiveTerminalController {
     shell.Add("telnet",   bind(&ShellTerminalController::MyTelnetCmd,   this, _1));
     shell.Add("nslookup", bind(&ShellTerminalController::MyNSLookupCmd, this, _1));
     shell.Add("help",     bind(&ShellTerminalController::MyHelpCmd,     this, _1));
+    shell.Add("exit",     move(ecb));
   }
 
 #ifdef LFL_CRYPTO
@@ -302,15 +315,19 @@ struct BaseTerminalWindow : public TerminalWindow {
   void UseShellTerminalController(const string &m) {
     ChangeController(make_unique<ShellTerminalController>
                      (m, [=](){ UseTelnetTerminalController(); },
-                      [=](SSHClient::Params p){ UseSSHTerminalController(move(p)); }));
+                      [=](SSHClient::Params p){ UseSSHTerminalController(move(p)); },
+                      bind(&BaseTerminalWindow::ShellExitCB, this, _1)));
   }
 
-  void UseSSHTerminalController(SSHClient::Params params, const string &pw="", const string &pem="",
-                                StringCB metakey_cb=StringCB(), Callback savehost_cb=Callback()) {
+  void UseSSHTerminalController(SSHClient::Params params, const string &pw="", const string &pem="", StringCB metakey_cb=StringCB(),
+                                SSHTerminalController::SavehostCB savehost_cb=SSHTerminalController::SavehostCB()) {
 #ifdef LFL_CRYPTO
+    bool close_on_disconn = params.close_on_disconnect;
     auto ssh =
-      make_unique<SSHTerminalController>(app->net->tcp_client.get(), move(params), 
-                                         [=](){ UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n"); });
+      make_unique<SSHTerminalController>
+      (app->net->tcp_client.get(), move(params), 
+       close_on_disconn ? Callback(bind(&BaseTerminalWindow::ShellExitCB, this, StringVec())) :
+       [=](){ UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n"); });
     ssh->metakey_cb = move(metakey_cb);
     ssh->savehost_cb = move(savehost_cb);
     if (pw.size()) ssh->password = pw;
@@ -357,6 +374,8 @@ struct BaseTerminalWindow : public TerminalWindow {
     app->scheduler.SetAnimating(w, animating);
     if (my_app->downscale_effects) app->SetDownScale(animating);
   }
+
+  virtual void ShellExitCB(const StringVec&) { LFAppShutdown(); }
 
   void ConsoleAnimatingCB(Window *w) { 
     UpdateTargetFPS(w);
