@@ -60,7 +60,7 @@ struct MyRunSettingsModel {
 struct MyAppSettingsModel {
   static const int LatestVersion = 1;
   int version = LatestVersion;
-  bool encrypt_db=0, keep_display_on=0;
+  bool keep_display_on=0;
   MyRunSettingsModel runsettings;
 
   MyAppSettingsModel() {}
@@ -72,17 +72,15 @@ struct MyAppSettingsModel {
     CHECK(s->run_settings());
     runsettings.Load(*s->run_settings());
     version = s->version();
-    encrypt_db = s->encrypt_db();
     keep_display_on = s->keep_display_on();
   }
 
   flatbuffers::Offset<LTerminal::AppSettings> SaveProto(FlatBufferBuilder &fb) const {
-    return LTerminal::CreateAppSettings(fb, version, encrypt_db, keep_display_on, runsettings.Save(fb));
+    return LTerminal::CreateAppSettings(fb, version, keep_display_on, runsettings.Save(fb));
   }
 
-  BlobPiece SaveBlob() const {
-    return MakeBlobPiece(CreateFlatBuffer<LTerminal::AppSettings>
-                         (bind(&MyAppSettingsModel::SaveProto, this, _1)));
+  FlatBufferPiece SaveBlob() const {
+    return CreateFlatBuffer<LTerminal::AppSettings>(bind(&MyAppSettingsModel::SaveProto, this, _1));
   }
 
   void Save(MySettingsDB *settings_db) const { settings_db->Update(1, SaveBlob()); }
@@ -127,9 +125,8 @@ struct MyHostSettingsModel {
        fb.CreateString(prompt));
   }
 
-  BlobPiece SaveBlob() const {
-    return MakeBlobPiece(CreateFlatBuffer<LTerminal::HostSettings>
-                         (bind(&MyHostSettingsModel::SaveProto, this, _1)));
+  FlatBufferPiece SaveBlob() const {
+    return CreateFlatBuffer<LTerminal::HostSettings>(bind(&MyHostSettingsModel::SaveProto, this, _1));
   }
 };
 
@@ -153,8 +150,8 @@ struct MyCredentialModel {
     if (it != cred_db->data.end()) {
       auto cred = flatbuffers::GetRoot<LTerminal::Credential>(it->second.data());
       credtype = cred->type();
-      creddata = cred->data() ? string(MakeSigned(cred->data()->data()), cred->data()->size()) : "";
-      name = cred->displayname() ? cred->displayname()->data() : "";
+      creddata = GetFlatBufferString(cred->data());
+      name = GetFlatBufferString(cred->displayname());
     } else Load();
   }
 
@@ -164,9 +161,8 @@ struct MyCredentialModel {
        fb.CreateString(name)); 
   }
 
-  BlobPiece SaveBlob() const {
-    return MakeBlobPiece(CreateFlatBuffer<LTerminal::Credential>
-                         (bind(&MyCredentialModel::SaveProto, this, _1)));
+  FlatBufferPiece SaveBlob() const {
+    return CreateFlatBuffer<LTerminal::Credential>(bind(&MyCredentialModel::SaveProto, this, _1));
   }
 
   int Save(MyCredentialDB *cred_db, int row_id=0) const {
@@ -253,9 +249,9 @@ struct MyHostModel {
        fingerprint_type);
   }
 
-  BlobPiece SaveBlob(const LTerminal::CredentialRef &credref, int settings_row_id) const {
-    return MakeBlobPiece(CreateFlatBuffer<LTerminal::Host>
-                         (bind(&MyHostModel::SaveProto, this, _1, credref, settings_row_id)));
+  FlatBufferPiece SaveBlob(const LTerminal::CredentialRef &credref, int settings_row_id) const {
+    return CreateFlatBuffer<LTerminal::Host>
+      (bind(&MyHostModel::SaveProto, this, _1, credref, settings_row_id));
   }
 
   int Save(MyHostDB *host_db, const LTerminal::CredentialRef &credref, int settings_row_id, int row_id=0) const {
@@ -292,6 +288,11 @@ struct MyHostModel {
 struct MyGenKeyModel {
   string name, pw, algo;
   int bits=0;
+};
+
+struct MyLocalEncryptionViewController {
+  unique_ptr<SystemTableView> view;
+  MyLocalEncryptionViewController(TerminalMenuWindow*);
 };
 
 struct MyAppearanceViewController {
@@ -382,25 +383,29 @@ struct MyUpdateHostViewController {
 };
 
 struct MyHostsViewController {
+  bool menu;
+  string folder;
   unique_ptr<SystemTableView> view;
   unique_ptr<SystemToolbarView> toolbar;
   TerminalMenuWindow *tw;
-  MyHostsViewController(TerminalMenuWindow*, MyHostDB *model);
+  MyHostsViewController(TerminalMenuWindow*, MyHostDB *model, bool menu);
+  void LoadLockedUI();
+  void LoadUnlockedUI(MyHostDB *model);
   void UpdateViewFromModel(MyHostDB *model);
 };
 
 struct TerminalMenuResources {
+  bool db_protected = false, db_opened = false;
   SQLite::Database db;
   MyHostDB host_db;
   MyCredentialDB credential_db;
   MySettingsDB settings_db;
   int key_icon, host_icon, bolt_icon, terminal_icon, settings_icon, audio_icon, eye_icon, recycle_icon, 
       fingerprint_icon, info_icon, keyboard_icon, folder_icon;
-  string pw_default = "\x01""Ask each time";
+  string pw_default = "\x01""Ask each time", pw_empty = "lfl_default";
 
   ~TerminalMenuResources() { SQLite::Close(db); }
   TerminalMenuResources() : db(SQLite::Open(StrCat(app->savedir, "lterm.db"))),
-    credential_db(&db, "credential"), host_db(&db, "remote"), settings_db(&db, "settings"),
     key_icon        (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/key.png"))),
     host_icon       (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/host.png"))),
     bolt_icon       (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/bolt.png"))),
@@ -412,11 +417,18 @@ struct TerminalMenuResources {
     fingerprint_icon(CheckNotNull(app->LoadSystemImage("drawable-xhdpi/fingerprint.png"))),
     info_icon       (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/info.png"))),
     keyboard_icon   (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/keyboard.png"))),
-    folder_icon     (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/folder.png"))) {
+    folder_icon     (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/folder.png"))) {}
+
+  bool UnlockEncryptedDatabase(const string &pw) {
+    if (!(db_opened = SQLite::UsePassphrase(db, pw))) return false;
+    host_db       = MyHostDB      (&db, "host");
+    credential_db = MyCredentialDB(&db, "credential");
+    settings_db   = MySettingsDB  (&db, "settings");
     if (settings_db.data.find(1) == settings_db.data.end()) {
       CHECK_EQ(1, settings_db.Insert(MyAppSettingsModel().SaveBlob()));
       CHECK_EQ(1, MyHostModel().SaveNew(&host_db, &credential_db, &settings_db));
     }
+    return true;
   }
 };
 
@@ -424,6 +436,7 @@ struct TerminalMenuWindow : public BaseTerminalWindow {
   int                              second_col=120, connected_host_id=0;
   TerminalMenuResources           *res;
   unique_ptr<SystemNavigationView> hosts_nav, runsettings_nav;
+  MyLocalEncryptionViewController  encryption;
   MyAppearanceViewController       appearance;
   MyKeyboardSettingsViewController keyboard;
   MyNewKeyViewController           newkey;
@@ -436,7 +449,7 @@ struct TerminalMenuWindow : public BaseTerminalWindow {
   MyQuickConnectViewController     quickconnect;
   MyNewHostViewController          newhost;
   MyUpdateHostViewController       updatehost;
-  MyHostsViewController            hosts;
+  MyHostsViewController            hosts, hostsfolder;
   unique_ptr<SystemToolbarView>    keyboard_toolbar;
 
   unordered_map<string, Callback> mobile_key_cmd = {
@@ -452,9 +465,10 @@ struct TerminalMenuWindow : public BaseTerminalWindow {
 
   TerminalMenuWindow(Window *W) : BaseTerminalWindow(W), res(Singleton<TerminalMenuResources>::Get()),
   hosts_nav(make_unique<SystemNavigationView>()), runsettings_nav(make_unique<SystemNavigationView>()),
-  appearance(this), newkey(this), genkey(this), keys(this, &res->credential_db, true),
+  encryption(this), appearance(this), newkey(this), genkey(this), keys(this, &res->credential_db, true),
   editkeys(this, &res->credential_db, false), runsettings(this), settings(this), hostfingerprint(this),
-  hostsettings(this), quickconnect(this), newhost(this), updatehost(this), hosts(this, &res->host_db) {
+  hostsettings(this), quickconnect(this), newhost(this), updatehost(this), hosts(this, &res->host_db, true),
+  hostsfolder(this, &res->host_db, false) {
     keyboard_toolbar = make_unique<SystemToolbarView>(MenuItemVec{
       { "\U00002699", "",       bind(&TerminalMenuWindow::ShowRunSettings, this) },
       { "\U000025C0", "",       bind(&TerminalMenuWindow::PressKey,        this, "left") },
@@ -466,6 +480,8 @@ struct TerminalMenuWindow : public BaseTerminalWindow {
       { "ctrl",       "toggle", bind(&TerminalMenuWindow::ToggleKey,       this, "ctrl") },
     });
     runsettings_nav->PushTable(runsettings.view.get());
+    if (res->UnlockEncryptedDatabase(res->pw_empty)) hosts.LoadUnlockedUI(&res->host_db);
+    else if ((res->db_protected = true))             hosts.LoadLockedUI();
     hosts_nav->PushTable(hosts.view.get());
     hosts_nav->Show(true);
   }
@@ -480,6 +496,11 @@ struct TerminalMenuWindow : public BaseTerminalWindow {
   void PressKey (const string &key) { FindAndDispatch(mobile_key_cmd,       key); }
   void ToggleKey(const string &key) { FindAndDispatch(mobile_togglekey_cmd, key); }
   void CloseWindow() { controller->Close(); }
+
+  void ChangeLocalEncryptionPassphrase(const string &pw, const string &confirm_pw) {
+    if (pw != confirm_pw) return my_app->passphrasefailed_alert->Show("");
+    SQLite::ChangePassphrase(res->db, pw);
+  }
 
   void GenerateKey() {
     MyGenKeyModel gk;
@@ -605,12 +626,12 @@ struct TerminalMenuWindow : public BaseTerminalWindow {
     if (host.displayname.empty()) host.displayname = StrCat(host.username, "@", host.hostname);
     MenuConnect(host, [=](int fingerprint_type, const string &fingerprint) mutable {
       host.SetFingerprint(fingerprint_type, fingerprint);           
-      INFO("set fp ", HexEscape(Crypto::MD5(host.fingerprint), ":"));
       connected_host_id = host.SaveNew(&res->host_db, &res->credential_db, &res->settings_db);
     });
   }
 
   void UpdateHostConnect() {
+    hosts_nav->PopAll();
     connected_host_id = 0;
     MyHostModel host;
     updatehost.UpdateModelFromView(&host, &res->credential_db);

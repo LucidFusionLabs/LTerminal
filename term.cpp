@@ -66,7 +66,7 @@ extern FlagOfType<bool> FLAGS_enable_network_;
 struct MyAppState {
   unordered_map<string, Shader> shader_map;
   unique_ptr<Browser> image_browser;
-  unique_ptr<SystemAlertView> passphrase_alert, keypastefailed_alert;
+  unique_ptr<SystemAlertView> passphrase_alert, passphraseconfirm_alert, passphrasefailed_alert, keypastefailed_alert;
   unique_ptr<SystemMenuView> edit_menu, view_menu, toys_menu;
   int new_win_width = FLAGS_dim.x*Fonts::InitFontWidth(), new_win_height = FLAGS_dim.y*Fonts::InitFontHeight();
   int downscale_effects = 1;
@@ -597,13 +597,14 @@ extern "C" int MyAppMain() {
 #endif
 
   my_app->image_browser = make_unique<Browser>();
-  AlertItemVec passphrase_alert = {
-    { "style", "pwinput" }, { "Passphrase", "Passphrase" }, { "Cancel", "" }, { "Continue", "" } };
-  my_app->passphrase_alert = make_unique<SystemAlertView>(passphrase_alert);
-
-  AlertItemVec keypastefailed_alert = {
-    { "style", "" }, { "Paste key failed", "Load key failed" }, { "", "" }, { "Continue", "" } };
-  my_app->keypastefailed_alert = make_unique<SystemAlertView>(keypastefailed_alert);
+  my_app->passphrase_alert = make_unique<SystemAlertView>(AlertItemVec{
+    { "style", "pwinput" }, { "Passphrase", "Passphrase" }, { "Cancel", "" }, { "Continue", "" } });
+  my_app->passphraseconfirm_alert = make_unique<SystemAlertView>(AlertItemVec{
+    { "style", "pwinput" }, { "Passphrase", "Confirm Passphrase" }, { "Cancel", "" }, { "Continue", "" } });
+  my_app->passphrasefailed_alert = make_unique<SystemAlertView>(AlertItemVec{
+    { "style", "" }, { "Invalid passphrase", "Passphrase failed" }, { "", "" }, { "Continue", "" } });
+  my_app->keypastefailed_alert = make_unique<SystemAlertView>(AlertItemVec{
+    { "style", "" }, { "Paste key failed", "Load key failed" }, { "", "" }, { "Continue", "" } });
 
 #ifdef LFL_CRYPTO
   if (FLAGS_keygen.size()) {

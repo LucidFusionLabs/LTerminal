@@ -17,6 +17,13 @@
  */
 
 namespace LFL {
+MyLocalEncryptionViewController::MyLocalEncryptionViewController(TerminalMenuWindow *tw) :
+  view(make_unique<SystemTableView>("Local Encryption", "", vector<TableItem>{
+       TableItem("Enable Encryption", "command", "", "", 0, 0, 0,
+                 bind(&SystemAlertView::ShowCB, my_app->passphrase_alert.get(), "Enable encryption", "", [=](const string &pw){
+                      my_app->passphraseconfirm_alert->ShowCB("Confirm enable encryption", "", StringCB(bind(&TerminalMenuWindow::ChangeLocalEncryptionPassphrase, tw, pw, _1))); }))
+  })) {}
+
 MyAppearanceViewController::MyAppearanceViewController(TerminalMenuWindow *tw) :
   view(make_unique<SystemTableView>("Appearance", "", vector<TableItem>{
     TableItem("Font", "command", "", "", 0, 0, 0, bind(&TerminalMenuWindow::ChangeFont, tw, StringVec())),
@@ -147,8 +154,8 @@ MyAppSettingsViewController::MyAppSettingsViewController(TerminalMenuWindow *w) 
 
 vector<TableItem> MyAppSettingsViewController::GetSchema(TerminalMenuWindow *tw) {
   return vector<TableItem>{
-    TableItem("Local Encryption",    "",        "", ">", 0, tw->res->fingerprint_icon),
-    TableItem("Keys",                "command", "", ">", 0, tw->res->key_icon, 0, bind(&SystemNavigationView::PushTable, tw->hosts_nav.get(), tw->editkeys.view.get())),
+    TableItem("Local Encryption",    "command", "", ">", 0, tw->res->fingerprint_icon, 0, bind(&SystemNavigationView::PushTable, tw->hosts_nav.get(), tw->encryption.view.get())),
+    TableItem("Keys",                "command", "", ">", 0, tw->res->key_icon,         0, bind(&SystemNavigationView::PushTable, tw->hosts_nav.get(), tw->editkeys  .view.get())),
     TableItem("Keep Display On",     "toggle",  ""),
     TableItem("", "separator", ""),
     TableItem("About LTerminal",     "", ""),
@@ -170,14 +177,15 @@ void MyAppSettingsViewController::UpdateModelFromView(MyAppSettingsModel *model)
 
 MyHostFingerprintViewController::MyHostFingerprintViewController(TerminalMenuWindow *w) :
   view(make_unique<SystemTableView>("Host Fingerprint", "", TableItemVec{
-    TableItem("Type", "label", ""), TableItem("MD5", "label", ""), TableItem("SHA256", "label", "")
+    TableItem("Type", "label", ""), TableItem("MD5", "label", ""), TableItem("SHA256", "label", ""),
+    TableItem("", "separator", ""), TableItem("Clear", "button", "", "", 0, 0, 0, [=](){})
   })) { view->SelectRow(-1, -1); }
   
 void MyHostFingerprintViewController::UpdateViewFromModel(const MyHostModel &model) {
   view->BeginUpdates();
   view->SetSectionValues(StringVec{ SSH::Key::Name(model.fingerprint_type),
     model.fingerprint.size() ? HexEscape(Crypto::MD5(model.fingerprint), ":").substr(1) : "",
-    model.fingerprint.size() ? "" : ""}, 0);
+    model.fingerprint.size() ? Singleton<Base64>::Get()->Encode(Crypto::SHA256(model.fingerprint)) : ""}, 0);
   view->EndUpdates();
 }
 
@@ -317,34 +325,49 @@ bool MyUpdateHostViewController::UpdateModelFromView(MyHostModel *model, MyCrede
   return true;
 }
 
-MyHostsViewController::MyHostsViewController(TerminalMenuWindow *w, MyHostDB *model) : tw(w) {
+MyHostsViewController::MyHostsViewController(TerminalMenuWindow *w, MyHostDB *model, bool m) : menu(m), tw(w) {
   toolbar = make_unique<SystemToolbarView>(MenuItemVec{
     { "\U00002699", "", bind(&TerminalMenuWindow::ShowAppSettings, tw) },
     { "+",          "", bind(&TerminalMenuWindow::ShowNewHost,     tw) }
   });
-  view = make_unique<SystemTableView>("Hosts", "", TableItemVec{
+  view = make_unique<SystemTableView>("Hosts", "", !menu ? TableItemVec() : TableItemVec{
     TableItem("Quick connect",     "command", "", ">", 0, tw->res->bolt_icon,     0, bind(&TerminalMenuWindow::ShowQuickConnect, tw)),
     TableItem("Interactive Shell", "command", "", ">", 0, tw->res->terminal_icon, 0, bind(&TerminalMenuWindow::StartShell, tw)),
     TableItem("", "separator", "")
   });
+}
+
+void MyHostsViewController::LoadLockedUI() {
+}
+
+void MyHostsViewController::LoadUnlockedUI(MyHostDB *model) {
   view->AddToolbar(toolbar.get());
   view->AddNavigationButton(TableItem("Edit", "", ""), HAlign::Right);
-  view->SetEditableSection(bind(&TerminalMenuWindow::DeleteHost, tw, _1, _2), 1);
+  view->SetEditableSection(bind(&TerminalMenuWindow::DeleteHost, tw, _1, _2), menu);
   view->show_cb = bind(&MyHostsViewController::UpdateViewFromModel, this, model);
 }
 
 void MyHostsViewController::UpdateViewFromModel(MyHostDB *model) {
   vector<TableItem> section; 
+  unordered_set<string> seen_folders;
   for (auto &host : model->data) {
     if (host.first == 1) continue;
     const LTerminal::Host *h = flatbuffers::GetRoot<LTerminal::Host>(host.second.data());
-    string displayname = h->displayname() ? h->displayname()->data() : "";
+    string displayname = GetFlatBufferString(h->displayname()), host_folder = GetFlatBufferString(h->folder());
+    if (folder.size()) { if (host_folder != folder) continue; }
+    else if (host_folder.size()) {
+      if (seen_folders.insert(host_folder).second)
+        section.emplace_back(host_folder, "command", "", "", 0, tw->res->folder_icon, 0, [=](){
+          tw->hostsfolder.view->SetTitle(StrCat((tw->hostsfolder.folder = move(host_folder)), " Folder"));
+          tw->hosts_nav->PushTable(tw->hostsfolder.view.get()); });
+      continue;
+    }
     section.emplace_back(displayname, "command", "", "", host.first, tw->res->host_icon, 
                          tw->res->settings_icon, bind(&TerminalMenuWindow::ConnectHost, tw, host.first),
                          bind(&TerminalMenuWindow::HostInfo, tw, host.first));
   }
   view->BeginUpdates();
-  view->ReplaceSection(section, 1);
+  view->ReplaceSection(section, menu);
   view->EndUpdates();
   view->changed = false;
 }

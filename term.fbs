@@ -45,7 +45,6 @@ table RunSettings {
 
 table AppSettings {
   version:             int;
-  encrypt_db:          bool;
   keep_display_on:     bool;
   run_settings:        RunSettings;
 }
