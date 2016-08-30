@@ -1,6 +1,11 @@
 namespace LFL.LTerminal;
 
 enum Protocol : int { SSH = 1, Telnet }
+enum TextEncoding : int { UTF8=1, ASCII=2 }
+enum DeleteMode : int { Normal=1, ControlH=2 }
+enum BeepType : int { None=0, Audio=1, Visual=2 }
+enum ColorScheme : int { VGA=1, SolarizedDark=2, SolarizedLight=3 }
+
 enum CredentialDBType : int { Null = 0, Table, Keychain }
 enum CredentialType : int { Ask = 0, Password, PEM }
 struct CredentialRef { db: int; id: int; }
@@ -29,35 +34,26 @@ table Host {
   fingerprint_type: int;
 }
 
-enum TextEncoding : int { UTF8=1, ASCII=2 }
-enum DeleteMode : int { Normal=1, ControlH=2 }
-enum BeepType : int { None=0, Audio=1, Visual=2 }
-enum ColorScheme : int { VGA=1, SolarizedDark=2, SolarizedLight=3 }
-
-table RunSettings {
+table HostSettings {
+  agent_forwarding:    bool;
+  compression:         bool = true;
+  close_on_disconnect: bool = true;
+  terminal_type:       string;
+  startup_command:     string;
   font_name:           string;
   font_size:           int = 15;
   color_scheme:        ColorScheme  = VGA;
   beep_type:           BeepType     = None;
   text_encoding:       TextEncoding = UTF8;
   delete_mode:         DeleteMode   = Normal;
+  autocomplete_id:     int;
+  prompt_string:       string;
 }
 
 table AppSettings {
-  version:             int;
-  keep_display_on:     bool;
-  run_settings:        RunSettings;
-}
-
-table HostSettings {
-  run_settings:        RunSettings;
-  agent_forwarding:    bool;
-  compression:         bool = true;
-  close_on_disconnect: bool = true;
-  terminal_type:       string;
-  startup_command:     string;
-  autocomplete_id:     int;
-  prompt_string:       string;
+  version:               int;
+  default_host_settings: HostSettings;
+  keep_display_on:       bool;
 }
 
 table RecordLog { stamp: ulong; data: [ubyte]; }

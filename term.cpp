@@ -63,11 +63,22 @@ DEFINE_bool  (resize_grid,     true,   "Resize window in glyph bound increments"
 DEFINE_FLAG(dim, point, point(80,25),  "Initial terminal dimensions");
 extern FlagOfType<bool> FLAGS_enable_network_;
 
+struct MyTerminalMenus;
+struct MyTerminalTab;
+struct MyTerminalWindow;
+inline MyTerminalWindow *GetActiveWindow() { return screen ? GetTyped<MyTerminalWindow*>(screen->user1) : 0; }
+
+struct MyTerminalWindowInterface : public GUI {
+  virtual void UpdateTargetFPS() = 0;
+  using GUI::GUI;
+};
+
 struct MyAppState {
   unordered_map<string, Shader> shader_map;
   unique_ptr<Browser> image_browser;
   unique_ptr<SystemAlertView> passphrase_alert, passphraseconfirm_alert, passphrasefailed_alert, keypastefailed_alert;
   unique_ptr<SystemMenuView> edit_menu, view_menu, toys_menu;
+  MyTerminalMenus *menus;
   int new_win_width = FLAGS_dim.x*Fonts::InitFontWidth(), new_win_height = FLAGS_dim.y*Fonts::InitFontHeight();
   int downscale_effects = 1;
 } *my_app = nullptr;
@@ -284,15 +295,16 @@ struct ShellTerminalController : public InteractiveTerminalController {
   }
 };
 
-struct BaseTerminalWindow : public TerminalWindow {
+struct MyTerminalTab : public TerminalTab {
+  MyTerminalWindowInterface *parent;
   Shader *activeshader = &app->shaders->shader_default;
   Time join_read_interval = Time(100), refresh_interval = Time(33);
   int join_read_pending = 0;
 
-  BaseTerminalWindow(Window *W) :
-    TerminalWindow(W->AddGUI(make_unique<Terminal>(nullptr, W, W->default_font, FLAGS_dim))) {
-    terminal->new_link_cb      = bind(&BaseTerminalWindow::NewLinkCB,   this, _1);
-    terminal->hover_control_cb = bind(&BaseTerminalWindow::HoverLinkCB, this, _1);
+  MyTerminalTab(Window *W, MyTerminalWindowInterface *P) :
+    TerminalTab(W, W->AddGUI(make_unique<Terminal>(nullptr, W, W->default_font, FLAGS_dim))), parent(P) {
+    terminal->new_link_cb      = bind(&MyTerminalTab::NewLinkCB,   this, _1);
+    terminal->hover_control_cb = bind(&MyTerminalTab::HoverLinkCB, this, _1);
     if (terminal->bg_color) W->gd->clear_color = *terminal->bg_color;
   }
 
@@ -316,7 +328,7 @@ struct BaseTerminalWindow : public TerminalWindow {
     ChangeController(make_unique<ShellTerminalController>
                      (m, [=](){ UseTelnetTerminalController(); },
                       [=](SSHClient::Params p){ UseSSHTerminalController(move(p)); },
-                      bind(&BaseTerminalWindow::ShellExitCB, this, _1)));
+                      bind(&MyTerminalTab::ShellExitCB, this, _1)));
   }
 
   void UseSSHTerminalController(SSHClient::Params params, const string &pw="", const string &pem="", StringCB metakey_cb=StringCB(),
@@ -326,7 +338,7 @@ struct BaseTerminalWindow : public TerminalWindow {
     auto ssh =
       make_unique<SSHTerminalController>
       (app->net->tcp_client.get(), move(params), 
-       close_on_disconn ? Callback(bind(&BaseTerminalWindow::ShellExitCB, this, StringVec())) :
+       close_on_disconn ? Callback(bind(&MyTerminalTab::ShellExitCB, this, StringVec())) :
        [=](){ UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n"); });
     ssh->metakey_cb = move(metakey_cb);
     ssh->savehost_cb = move(savehost_cb);
@@ -368,22 +380,7 @@ struct BaseTerminalWindow : public TerminalWindow {
     if (FLAGS_command.size()) CHECK_EQ(FLAGS_command.size()+1, controller->Write(StrCat(FLAGS_command, "\n")));
   }
 
-  bool CustomShader() const { return activeshader != &app->shaders->shader_default; }
-  void UpdateTargetFPS(Window *w) {
-    bool animating = CustomShader() || (w->console && w->console->animating);
-    app->scheduler.SetAnimating(w, animating);
-    if (my_app->downscale_effects) app->SetDownScale(animating);
-  }
-
   virtual void ShellExitCB(const StringVec&) { LFAppShutdown(); }
-
-  void ConsoleAnimatingCB(Window *w) { 
-    UpdateTargetFPS(w);
-    if (!w->console || !w->console->animating) {
-      if ((w->console && w->console->Active()) || controller->frame_on_keyboard_input) app->scheduler.AddFrameWaitKeyboard(w);
-      else                                                                             app->scheduler.DelFrameWaitKeyboard(w);
-    }
-  }
 
   void NewLinkCB(const shared_ptr<TextBox::Control> &link) {
     const char *args = FindChar(link->val.c_str() + 6, isint2<'?', ':'>);
@@ -413,46 +410,9 @@ struct BaseTerminalWindow : public TerminalWindow {
     screen->gd->ClearDeferred();
   }
 
-  int Frame(Window *W, unsigned clicks, int flag) {
-    bool effects = W->animating, downscale = effects && my_app->downscale_effects > 1;
-    Box draw_box = W->Box();
-
-    if (downscale) W->gd->RestoreViewport(DrawMode::_2D);
-    terminal->CheckResized(draw_box);
-    int read_size = ReadAndUpdateTerminalFramebuffer();
-    if (downscale) {
-      float scale = activeshader->scale = 1.0 / my_app->downscale_effects;
-      draw_box.y *= scale;
-      draw_box.h -= terminal->extra_height * scale;
-    } else W->gd->DrawMode(DrawMode::_2D);
-
-    if (!effects) {
-#if defined(__APPLE__) && !defined(LFL_MOBILE) && !defined(LFL_QT)
-      if (read_size && !(flag & LFApp::Frame::DontSkip)) {
-        int *pending = &join_read_pending;
-        bool join_read = read_size > 255;
-        if (join_read) { if (1            && ++(*pending)) { if (app->scheduler.WakeupIn(W, join_read_interval)) return -1; } }
-        else           { if ((*pending)<1 && ++(*pending)) { if (app->scheduler.WakeupIn(W,   refresh_interval)) return -1; } }
-        *pending = 0;
-      }
-      app->scheduler.ClearWakeupIn(W);
-#endif
-    }
-
-    W->gd->DisableBlend();
-    terminal->Draw(draw_box, downscale ? Terminal::DrawFlag::DrawCursor : Terminal::DrawFlag::Default,
-                   effects ? activeshader : NULL);
-    if (effects) W->gd->UseShader(0);
-
-    W->DrawDialogs();
-    if (FLAGS_draw_fps) W->default_font->Draw(StringPrintf("FPS = %.2f", app->FPS()), point(W->width*.85, 0));
-    if (FLAGS_screenshot.size()) ONCE(W->shell->screenshot(vector<string>(1, FLAGS_screenshot)); app->run=0;);
-    return 0;
-  }
-
   void ChangeFont(const StringVec &arg) {
     if (arg.size() < 2) return app->ShowSystemFontChooser
-      (screen->default_font.desc, bind(&BaseTerminalWindow::ChangeFont, this, _1));
+      (screen->default_font.desc, bind(&MyTerminalTab::ChangeFont, this, _1));
     if (arg.size() > 2) FLAGS_font_flag = atoi(arg[2]);
     screen->default_font.desc.name = arg[0];
     SetFontSize(atof(arg[1]));
@@ -467,17 +427,77 @@ struct BaseTerminalWindow : public TerminalWindow {
     app->scheduler.Wakeup(screen);
   }
 
+  bool CustomShader() const { return activeshader != &app->shaders->shader_default; }
   void ChangeShader(const string &shader_name) {
     auto shader = my_app->shader_map.find(shader_name);
     bool found = shader != my_app->shader_map.end();
     if (found && !shader->second.ID) Shader::CreateShaderToy(shader_name, Asset::FileContents(StrCat(shader_name, ".frag")), &shader->second);
     activeshader = found ? &shader->second : &app->shaders->shader_default;
-    UpdateTargetFPS(screen);
+    parent->UpdateTargetFPS();
   }
 
   void ShowEffectsControls() { 
     screen->shell->Run("slider shadertoy_blend 1.0 0.01");
     app->scheduler.Wakeup(screen);
+  }
+};
+
+struct MyTerminalWindow : public MyTerminalWindowInterface {
+  TabbedDialog<MyTerminalTab> tabs;
+  MyTerminalWindow(Window *W) : MyTerminalWindowInterface(W), tabs(this) {
+    tabs.AddTab(new MyTerminalTab(W, this));
+  }
+
+  int Frame(Window *W, unsigned clicks, int flag) {
+    bool effects = W->animating, downscale = effects && my_app->downscale_effects > 1;
+    Box draw_box = W->Box();
+    MyTerminalTab *tab = tabs.top;
+
+    if (downscale) W->gd->RestoreViewport(DrawMode::_2D);
+    tab->terminal->CheckResized(draw_box);
+    int read_size = tab->ReadAndUpdateTerminalFramebuffer();
+    if (downscale) {
+      float scale = tab->activeshader->scale = 1.0 / my_app->downscale_effects;
+      draw_box.y *= scale;
+      draw_box.h -= tab->terminal->extra_height * scale;
+    } else W->gd->DrawMode(DrawMode::_2D);
+
+    if (!effects) {
+#if defined(__APPLE__) && !defined(LFL_MOBILE) && !defined(LFL_QT)
+      if (read_size && !(flag & LFApp::Frame::DontSkip)) {
+        int *pending = &tab->join_read_pending;
+        bool join_read = read_size > 255;
+        if (join_read) { if (1            && ++(*pending)) { if (app->scheduler.WakeupIn(W, tab->join_read_interval)) return -1; } }
+        else           { if ((*pending)<1 && ++(*pending)) { if (app->scheduler.WakeupIn(W,   tab->refresh_interval)) return -1; } }
+        *pending = 0;
+      }
+      app->scheduler.ClearWakeupIn(W);
+#endif
+    }
+
+    W->gd->DisableBlend();
+    tab->terminal->Draw(draw_box, downscale ? Terminal::DrawFlag::DrawCursor : Terminal::DrawFlag::Default,
+                        effects ? tab->activeshader : NULL);
+    if (effects) W->gd->UseShader(0);
+
+    W->DrawDialogs();
+    if (FLAGS_draw_fps) W->default_font->Draw(StringPrintf("FPS = %.2f", app->FPS()), point(W->width*.85, 0));
+    if (FLAGS_screenshot.size()) ONCE(W->shell->screenshot(vector<string>(1, FLAGS_screenshot)); app->run=0;);
+    return 0;
+  }
+
+  void ConsoleAnimatingCB() { 
+    UpdateTargetFPS();
+    if (!root->console || !root->console->animating) {
+      if ((root->console && root->console->Active()) || tabs.top->controller->frame_on_keyboard_input) app->scheduler.AddFrameWaitKeyboard(root);
+      else                                                                                             app->scheduler.DelFrameWaitKeyboard(root);
+    }
+  }
+
+  void UpdateTargetFPS() {
+    bool animating = tabs.top->CustomShader() || (root->console && root->console->animating);
+    app->scheduler.SetAnimating(root, animating);
+    if (my_app->downscale_effects) app->SetDownScale(animating);
   }
 
   void ShowTransparencyControls() {
@@ -487,16 +507,13 @@ struct BaseTerminalWindow : public TerminalWindow {
   }
 };
 
+inline MyTerminalTab *GetActiveTab() { return GetActiveWindow()->tabs.top; }
+
 #ifdef LFL_MOBILE
 }; // namespace LFL
 #include "term_menu.h"
 #include "term_menu.cpp"
 namespace LFL {
-typedef TerminalMenuWindow MyTerminalWindow;
-#else
-struct MyTerminalWindow : public BaseTerminalWindow {
-  using BaseTerminalWindow::BaseTerminalWindow;
-};
 #endif
 
 void MyWindowInit(Window *W) {
@@ -506,34 +523,36 @@ void MyWindowInit(Window *W) {
 }
 
 void MyWindowStart(Window *W) {
+  CHECK(W->gd->have_framebuffer);
   if (!W->user1.v) {
     auto tw = new MyTerminalWindow(W);
-    tw->UseDefaultTerminalController();
     W->user1 = MakeTyped(tw);
+    tw->tabs.top->UseDefaultTerminalController();
   }
 
   auto tw = GetTyped<MyTerminalWindow*>(W->user1);
-  if (FLAGS_console) W->InitConsole(bind(&MyTerminalWindow::ConsoleAnimatingCB, tw, W));
+  if (FLAGS_console) W->InitConsole(bind(&MyTerminalWindow::ConsoleAnimatingCB, tw));
   W->frame_cb = bind(&MyTerminalWindow::Frame, tw, _1, _2, _3);
-  W->default_textbox = [=]{ return tw->terminal; };
-  if (FLAGS_resize_grid) W->SetResizeIncrements(tw->terminal->style.font->FixedWidth(), tw->terminal->style.font->Height());
-  app->scheduler.AddFrameWaitMouse(W);
-#ifdef LFL_MOBILE                                                                                 
-  tw->terminal->line_fb.align_top_or_bot = tw->terminal->cmd_fb.align_top_or_bot = true;
-#endif
-
+  W->default_textbox = [=]{ return tw->tabs.top->terminal; };
   W->shell = make_unique<Shell>();
   if (my_app->image_browser) W->shell->AddBrowserCommands(my_app->image_browser.get());
 
+#ifdef LFL_MOBILE                                                                                 
+  tw->tabs.top->terminal->line_fb.align_top_or_bot = tw->tabs.top->terminal->cmd_fb.align_top_or_bot = true;
+#else
+  app->scheduler.AddFrameWaitMouse(W);
+  if (FLAGS_resize_grid) W->SetResizeIncrements(tw->tabs.top->terminal->style.font->FixedWidth(),
+                                                tw->tabs.top->terminal->style.font->Height());
   BindMap *binds = W->AddInputController(make_unique<BindMap>());
 #ifndef WIN32
   binds->Add('n',       Key::Modifier::Cmd, Bind::CB(bind(&Application::CreateNewWindow, app)));
 #endif                  
   binds->Add('6',       Key::Modifier::Cmd, Bind::CB(bind([=](){ W->shell->console(vector<string>()); })));
-  binds->Add('=',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->SetFontSize(W->default_font.desc.size + 1); })));
-  binds->Add('-',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->SetFontSize(W->default_font.desc.size - 1); })));
-  binds->Add(Key::Up,   Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->terminal->ScrollUp();   app->scheduler.Wakeup(screen); })));
-  binds->Add(Key::Down, Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->terminal->ScrollDown(); app->scheduler.Wakeup(screen); })));
+  binds->Add('=',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->tabs.top->SetFontSize(W->default_font.desc.size + 1); })));
+  binds->Add('-',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->tabs.top->SetFontSize(W->default_font.desc.size - 1); })));
+  binds->Add(Key::Up,   Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->tabs.top->terminal->ScrollUp();   app->scheduler.Wakeup(W); })));
+  binds->Add(Key::Down, Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->tabs.top->terminal->ScrollDown(); app->scheduler.Wakeup(W); })));
+#endif
 }
 
 void MyWindowClosed(Window *W) {
@@ -547,8 +566,8 @@ using namespace LFL;
 extern "C" void MyAppCreate(int argc, const char* const* argv) {
   FLAGS_enable_video = FLAGS_enable_input = 1;
   app = new Application(argc, argv);
-  screen = new Window();
   my_app = new MyAppState();
+  screen = new Window();
   app->name = "LTerminal";
   app->exit_cb = []() { delete my_app; };
   app->window_closed_cb = MyWindowClosed;
@@ -591,7 +610,6 @@ extern "C" int MyAppMain() {
 #endif
 
   if (app->Init()) return -1;
-  CHECK(screen->gd->have_framebuffer);
 #ifdef WIN32
   app->input->paste_bind = Bind(Mouse::Button::_2);
 #endif
@@ -604,7 +622,44 @@ extern "C" int MyAppMain() {
   my_app->passphrasefailed_alert = make_unique<SystemAlertView>(AlertItemVec{
     { "style", "" }, { "Invalid passphrase", "Passphrase failed" }, { "", "" }, { "Continue", "" } });
   my_app->keypastefailed_alert = make_unique<SystemAlertView>(AlertItemVec{
-    { "style", "" }, { "Paste key failed", "Load key failed" }, { "", "" }, { "Continue", "" } });
+                                                              { "style", "" }, { "Paste key failed", "Load key failed" }, { "", "" }, { "Continue", "" } });
+#ifndef LFL_MOBILE
+  my_app->edit_menu = SystemMenuView::CreateEditMenu(vector<MenuItem>());
+  my_app->view_menu = make_unique<SystemMenuView>("View", MenuItemVec{
+#ifdef __APPLE__
+    MenuItem{ "=", "Zoom In" },
+    MenuItem{ "-", "Zoom Out" },
+#endif
+    MenuItem{ "", "Fonts",        [=](){ if (auto t = GetActiveTab())    t->ChangeFont(StringVec()); } },
+#ifndef LFL_MOBILE
+    MenuItem{ "", "Transparency", [=](){ if (auto w = GetActiveWindow()) w->ShowTransparencyControls(); } },
+#endif
+    MenuItem{ "", "VGA Colors",             [=](){ if (auto t = GetActiveTab()) t->ChangeColors("vga");             } },
+    MenuItem{ "", "Solarized Dark Colors",  [=](){ if (auto t = GetActiveTab()) t->ChangeColors("solarized_dark");  } },
+    MenuItem{ "", "Solarized Light Colors", [=](){ if (auto t = GetActiveTab()) t->ChangeColors("solarized_light"); } }
+  });
+#endif
+
+  my_app->toys_menu = make_unique<SystemMenuView>("Toys", vector<MenuItem>{
+    MenuItem{ "", "None",         [=](){ if (auto t = GetActiveTab()) t->ChangeShader("none");     } },
+    MenuItem{ "", "Warper",       [=](){ if (auto t = GetActiveTab()) t->ChangeShader("warper");   } },
+    MenuItem{ "", "Water",        [=](){ if (auto t = GetActiveTab()) t->ChangeShader("water");    } },
+    MenuItem{ "", "Twistery",     [=](){ if (auto t = GetActiveTab()) t->ChangeShader("twistery"); } },
+    MenuItem{ "", "Fire",         [=](){ if (auto t = GetActiveTab()) t->ChangeShader("fire");     } },
+    MenuItem{ "", "Waves",        [=](){ if (auto t = GetActiveTab()) t->ChangeShader("waves");    } },
+    MenuItem{ "", "Emboss",       [=](){ if (auto t = GetActiveTab()) t->ChangeShader("emboss");   } },
+    MenuItem{ "", "Stormy",       [=](){ if (auto t = GetActiveTab()) t->ChangeShader("stormy");   } },
+    MenuItem{ "", "Alien",        [=](){ if (auto t = GetActiveTab()) t->ChangeShader("alien");    } },
+    MenuItem{ "", "Fractal",      [=](){ if (auto t = GetActiveTab()) t->ChangeShader("fractal");  } },
+    MenuItem{ "", "Darkly",       [=](){ if (auto t = GetActiveTab()) t->ChangeShader("darkly");   } },
+    MenuItem{ "", "<separator>" },
+    MenuItem{ "", "Controls",     [=](){ if (auto t = GetActiveTab()) t->ShowEffectsControls(); } } });
+
+  MakeValueTuple(&my_app->shader_map, "warper", "water", "twistery");
+  MakeValueTuple(&my_app->shader_map, "warper", "water", "twistery");
+  MakeValueTuple(&my_app->shader_map, "fire",   "waves", "emboss");
+  MakeValueTuple(&my_app->shader_map, "stormy", "alien", "fractal");
+  MakeValueTuple(&my_app->shader_map, "darkly");
 
 #ifdef LFL_CRYPTO
   if (FLAGS_keygen.size()) {
@@ -629,58 +684,23 @@ extern "C" int MyAppMain() {
   }
 
   auto tw = new MyTerminalWindow(screen);
-  if (FLAGS_record.size()) tw->record = make_unique<FlatFile>(FLAGS_record);
-#ifndef LFL_MOBILE
-  if (FLAGS_term.empty()) FLAGS_term = getenv("TERM");
-  tw->UseInitialTerminalController();
-#endif
+  auto t = tw->tabs.top;
   screen->user1 = MakeTyped(tw);
+  if (FLAGS_record.size()) t->record = make_unique<FlatFile>(FLAGS_record);
+#ifdef LFL_MOBILE
+  my_app->menus = new MyTerminalMenus();
+  my_app->menus->hosts_nav->Show(true);
+#else
+  if (FLAGS_term.empty()) FLAGS_term = getenv("TERM");
+  t->UseInitialTerminalController();
+#endif
   app->StartNewWindow(screen);
-  tw->SetFontSize(screen->default_font.desc.size);
-  my_app->new_win_width  = tw->terminal->style.font->FixedWidth() * tw->terminal->term_width;
-  my_app->new_win_height = tw->terminal->style.font->Height()     * tw->terminal->term_height;
-  tw->terminal->Draw(screen->Box());
+  t->SetFontSize(screen->default_font.desc.size);
+  my_app->new_win_width  = t->terminal->style.font->FixedWidth() * t->terminal->term_width;
+  my_app->new_win_height = t->terminal->style.font->Height()     * t->terminal->term_height;
+  t->terminal->Draw(screen->Box());
+  INFO("Starting ", app->name, " ", screen->default_font.desc.name, " (w=", t->terminal->style.font->FixedWidth(),
+       ", h=", t->terminal->style.font->Height(), ", scale=", my_app->downscale_effects, ")");
 
-#ifndef LFL_MOBILE
-  my_app->edit_menu = SystemMenuView::CreateEditMenu(vector<MenuItem>());
-  my_app->view_menu = make_unique<SystemMenuView>("View", MenuItemVec{
-#ifdef __APPLE__
-    MenuItem{ "=", "Zoom In" },
-    MenuItem{ "-", "Zoom Out" },
-#endif
-    MenuItem{ "", "Fonts",        bind(&MyTerminalWindow::ChangeFont, tw, StringVec()) },
-#ifndef LFL_MOBILE
-    MenuItem{ "", "Transparency", bind(&MyTerminalWindow::ShowTransparencyControls, tw) },
-#endif
-    MenuItem{ "", "VGA Colors",             bind(&MyTerminalWindow::ChangeColors, tw, "vga") },
-    MenuItem{ "", "Solarized Dark Colors",  bind(&MyTerminalWindow::ChangeColors, tw, "solarized_dark") },
-    MenuItem{ "", "Solarized Light Colors", bind(&MyTerminalWindow::ChangeColors, tw, "solarized_light") }
-  });
-#endif
-
-  vector<MenuItem> effects_menu{
-    MenuItem{ "", "None",         bind(&MyTerminalWindow::ChangeShader, tw, "none") },
-    MenuItem{ "", "Warper",       bind(&MyTerminalWindow::ChangeShader, tw, "warper") },
-    MenuItem{ "", "Water",        bind(&MyTerminalWindow::ChangeShader, tw, "water") },
-    MenuItem{ "", "Twistery",     bind(&MyTerminalWindow::ChangeShader, tw, "twistery") },
-    MenuItem{ "", "Fire",         bind(&MyTerminalWindow::ChangeShader, tw, "fire") },
-    MenuItem{ "", "Waves",        bind(&MyTerminalWindow::ChangeShader, tw, "waves") },
-    MenuItem{ "", "Emboss",       bind(&MyTerminalWindow::ChangeShader, tw, "emboss") },
-    MenuItem{ "", "Stormy",       bind(&MyTerminalWindow::ChangeShader, tw, "stormy") },
-    MenuItem{ "", "Alien",        bind(&MyTerminalWindow::ChangeShader, tw, "alien") },
-    MenuItem{ "", "Fractal",      bind(&MyTerminalWindow::ChangeShader, tw, "fractal") },
-    MenuItem{ "", "Darkly",       bind(&MyTerminalWindow::ChangeShader, tw, "darkly") },
-    MenuItem{ "", "<separator>" },
-    MenuItem{ "", "Controls",     bind(&MyTerminalWindow::ShowEffectsControls, tw) } };
-  my_app->toys_menu = make_unique<SystemMenuView>("Toys", effects_menu);
-
-  MakeValueTuple(&my_app->shader_map, "warper", "water", "twistery");
-  MakeValueTuple(&my_app->shader_map, "warper", "water", "twistery");
-  MakeValueTuple(&my_app->shader_map, "fire",   "waves", "emboss");
-  MakeValueTuple(&my_app->shader_map, "stormy", "alien", "fractal");
-  MakeValueTuple(&my_app->shader_map, "darkly");
-
-  INFO("Starting ", app->name, " ", screen->default_font.desc.name, " (w=", tw->terminal->style.font->FixedWidth(),
-       ", h=", tw->terminal->style.font->Height(), ", scale=", my_app->downscale_effects, ")");
   return app->Main();
 }

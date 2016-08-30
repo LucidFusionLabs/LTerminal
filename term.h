@@ -114,12 +114,12 @@ struct InteractiveTerminalController : public Terminal::Controller {
   }
 };
 
-template <class TerminalType> struct TerminalWindowT {
+template <class TerminalType> struct TerminalTabT : public Dialog {
   TerminalType *terminal;
   unique_ptr<Terminal::Controller> controller, last_controller;
   unique_ptr<FlatFile> record;
 
-  TerminalWindowT(TerminalType *t) : terminal(t) {
+  TerminalTabT(Window *W, TerminalType *t) : Dialog(W, 1.0, 1.0), terminal(t) {
 #ifdef FUZZ_DEBUG
     for (int i=0; i<256; i++) {
       INFO("fuzz i = ", i);
@@ -132,7 +132,7 @@ template <class TerminalType> struct TerminalWindowT {
 #endif
   }
 
-  virtual ~TerminalWindowT() {}
+  virtual ~TerminalTabT() {}
   virtual void OpenedController() {}
 
   void ChangeController(unique_ptr<Terminal::Controller> new_controller) {
@@ -161,7 +161,7 @@ template <class TerminalType> struct TerminalWindowT {
     return s.len;
   }
 };
-typedef TerminalWindowT<Terminal> TerminalWindow;
+typedef TerminalTabT<Terminal> TerminalTab;
 
 }; // namespace LFL
 #endif // LFL_TERM_TERM_H__
