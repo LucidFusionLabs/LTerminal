@@ -418,18 +418,18 @@ struct MyTerminalMenus {
   unique_ptr<SystemToolbarView>    keyboard_toolbar;
 
   unordered_map<string, Callback> mobile_key_cmd = {
-    { "left",   bind([=]{ auto t = GetActiveTab(); t->terminal->CursorLeft();  if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); }) },
-    { "right",  bind([=]{ auto t = GetActiveTab(); t->terminal->CursorRight(); if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); }) },
-    { "up",     bind([=]{ auto t = GetActiveTab(); t->terminal->HistUp();      if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); }) },
-    { "down",   bind([=]{ auto t = GetActiveTab(); t->terminal->HistDown();    if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); }) },
-    { "pgup",   bind([=]{ auto t = GetActiveTab(); t->terminal->PageUp();      if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); }) },
-    { "pgdown", bind([=]{ auto t = GetActiveTab(); t->terminal->PageDown();    if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); }) },
-    { "home",   bind([=]{ auto t = GetActiveTab(); t->terminal->Home();        if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); }) },
-    { "end",    bind([=]{ auto t = GetActiveTab(); t->terminal->End();         if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); }) } };
+    { "left",   bind([=]{ if (auto t = GetActiveTab()) { t->terminal->CursorLeft();  if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); } }) },
+    { "right",  bind([=]{ if (auto t = GetActiveTab()) { t->terminal->CursorRight(); if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); } }) },
+    { "up",     bind([=]{ if (auto t = GetActiveTab()) { t->terminal->HistUp();      if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); } }) },
+    { "down",   bind([=]{ if (auto t = GetActiveTab()) { t->terminal->HistDown();    if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); } }) },
+    { "pgup",   bind([=]{ if (auto t = GetActiveTab()) { t->terminal->PageUp();      if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); } }) },
+    { "pgdown", bind([=]{ if (auto t = GetActiveTab()) { t->terminal->PageDown();    if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); } }) },
+    { "home",   bind([=]{ if (auto t = GetActiveTab()) { t->terminal->Home();        if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); } }) },
+    { "end",    bind([=]{ if (auto t = GetActiveTab()) { t->terminal->End();         if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); } }) } };
 
   unordered_map<string, Callback> mobile_togglekey_cmd = {
-    { "ctrl", bind([&]{ auto t = GetActiveTab(); t->controller->ctrl_down = !t->controller->ctrl_down; }) },
-    { "alt",  bind([&]{ auto t = GetActiveTab(); t->controller->alt_down  = !t->controller->alt_down;  }) } };
+    { "ctrl", bind([&]{ if (auto t = GetActiveTab()) { t->controller->ctrl_down = !t->controller->ctrl_down; } }) },
+    { "alt",  bind([&]{ if (auto t = GetActiveTab()) { t->controller->alt_down  = !t->controller->alt_down;  } }) } };
 
   ~MyTerminalMenus() { SQLite::Close(db); }
   MyTerminalMenus() : db(SQLite::Open(StrCat(app->savedir, "lterm.db"))),
@@ -487,17 +487,8 @@ struct MyTerminalMenus {
     return true;
   }
 
-  void ShellExitCB(const StringVec&) {
-    auto t = GetActiveTab();
-    t->ChangeController(nullptr);
-    t->terminal->ResetTerminal();
-    keyboard_toolbar->Show(false);
-    hosts_nav->Show(true);
-  }
-
   void PressKey (const string &key) { FindAndDispatch(mobile_key_cmd,       key); }
   void ToggleKey(const string &key) { FindAndDispatch(mobile_togglekey_cmd, key); }
-  void CloseWindow() { GetActiveTab()->controller->Close(); }
 
   void UnlockLocalEncryption(const string &pw, const string &confirm_pw) {
     if (pw != confirm_pw) return my_app->passphrasefailed_alert->Show("");
@@ -589,7 +580,7 @@ struct MyTerminalMenus {
 
   void StartShell() {
     connected_host_id = 1;
-    GetActiveTab()->UseShellTerminalController("");
+    GetActiveWindow()->AddTab()->UseShellTerminalController("");
     MenuStartSession();
     app->scheduler.Wakeup(screen);
   }
@@ -659,7 +650,7 @@ struct MyTerminalMenus {
   }
 
   void MenuConnect(const MyHostModel &host, SSHTerminalController::SavehostCB cb=SSHTerminalController::SavehostCB()) {
-    GetActiveTab()->UseSSHTerminalController
+    GetActiveWindow()->AddTab()->UseSSHTerminalController
       (SSHClient::Params{host.Hostport(), host.username, host.settings.terminal_type,
        host.settings.startup_command.size() ? StrCat(host.settings.startup_command, "\r") : "",
        host.settings.compression, host.settings.agent_forwarding, host.settings.close_on_disconnect},

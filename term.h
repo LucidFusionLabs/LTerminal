@@ -134,6 +134,8 @@ template <class TerminalType> struct TerminalTabT : public Dialog {
 
   virtual ~TerminalTabT() {}
   virtual void OpenedController() {}
+  virtual void TakeFocus() { terminal->Activate(); }
+  virtual void LoseFocus() { terminal->Deactivate(); }
 
   void ChangeController(unique_ptr<Terminal::Controller> new_controller) {
     if (auto ic = dynamic_cast<InteractiveTerminalController*>(controller.get())) ic->done = true;
@@ -141,9 +143,9 @@ template <class TerminalType> struct TerminalTabT : public Dialog {
     controller = move(new_controller);
     terminal->sink = controller.get();
     int fd = controller ? controller->Open(terminal) : -1;
-    if (fd != -1) app->scheduler.AddFrameWaitSocket(screen, fd, SocketSet::READABLE);
-    if (controller && controller->frame_on_keyboard_input) app->scheduler.AddFrameWaitKeyboard(screen);
-    else                                                   app->scheduler.DelFrameWaitKeyboard(screen);
+    if (fd != -1) app->scheduler.AddFrameWaitSocket(root, fd, SocketSet::READABLE);
+    if (controller && controller->frame_on_keyboard_input) app->scheduler.AddFrameWaitKeyboard(root);
+    else                                                   app->scheduler.DelFrameWaitKeyboard(root);
     if (controller) OpenedController();
   }
 

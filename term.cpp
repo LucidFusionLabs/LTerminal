@@ -66,7 +66,7 @@ extern FlagOfType<bool> FLAGS_enable_network_;
 struct MyTerminalMenus;
 struct MyTerminalTab;
 struct MyTerminalWindow;
-inline MyTerminalWindow *GetActiveWindow() { return screen ? GetTyped<MyTerminalWindow*>(screen->user1) : 0; }
+inline MyTerminalWindow *GetActiveWindow() { return screen ? screen->GetOwnGUI<MyTerminalWindow>(0) : 0; }
 
 struct MyTerminalWindowInterface : public GUI {
   virtual void UpdateTargetFPS() = 0;
@@ -78,9 +78,10 @@ struct MyAppState {
   unique_ptr<Browser> image_browser;
   unique_ptr<SystemAlertView> passphrase_alert, passphraseconfirm_alert, passphrasefailed_alert, keypastefailed_alert;
   unique_ptr<SystemMenuView> edit_menu, view_menu, toys_menu;
-  MyTerminalMenus *menus;
+  unique_ptr<MyTerminalMenus> menus;
   int new_win_width = FLAGS_dim.x*Fonts::InitFontWidth(), new_win_height = FLAGS_dim.y*Fonts::InitFontHeight();
   int downscale_effects = 1;
+  virtual ~MyAppState();
 } *my_app = nullptr;
 
 struct PlaybackTerminalController : public Terminal::Controller {
@@ -297,10 +298,12 @@ struct ShellTerminalController : public InteractiveTerminalController {
 
 struct MyTerminalTab : public TerminalTab {
   MyTerminalWindowInterface *parent;
+  Callback closed_cb;
   Shader *activeshader = &app->shaders->shader_default;
   Time join_read_interval = Time(100), refresh_interval = Time(33);
   int join_read_pending = 0;
 
+  virtual ~MyTerminalTab() { root->DelGUI(terminal); }
   MyTerminalTab(Window *W, MyTerminalWindowInterface *P) :
     TerminalTab(W, W->AddGUI(make_unique<Terminal>(nullptr, W, W->default_font, FLAGS_dim))), parent(P) {
     terminal->new_link_cb      = bind(&MyTerminalTab::NewLinkCB,   this, _1);
@@ -328,7 +331,7 @@ struct MyTerminalTab : public TerminalTab {
     ChangeController(make_unique<ShellTerminalController>
                      (m, [=](){ UseTelnetTerminalController(); },
                       [=](SSHClient::Params p){ UseSSHTerminalController(move(p)); },
-                      bind(&MyTerminalTab::ShellExitCB, this, _1)));
+                      [=](const StringVec&) { closed_cb(); }));
   }
 
   void UseSSHTerminalController(SSHClient::Params params, const string &pw="", const string &pem="", StringCB metakey_cb=StringCB(),
@@ -338,8 +341,7 @@ struct MyTerminalTab : public TerminalTab {
     auto ssh =
       make_unique<SSHTerminalController>
       (app->net->tcp_client.get(), move(params), 
-       close_on_disconn ? Callback(bind(&MyTerminalTab::ShellExitCB, this, StringVec())) :
-       [=](){ UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n"); });
+       close_on_disconn ? closed_cb : [=](){ UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n"); });
     ssh->metakey_cb = move(metakey_cb);
     ssh->savehost_cb = move(savehost_cb);
     if (pw.size()) ssh->password = pw;
@@ -379,8 +381,6 @@ struct MyTerminalTab : public TerminalTab {
   void OpenedController() {
     if (FLAGS_command.size()) CHECK_EQ(FLAGS_command.size()+1, controller->Write(StrCat(FLAGS_command, "\n")));
   }
-
-  virtual void ShellExitCB(const StringVec&) { LFAppShutdown(); }
 
   void NewLinkCB(const shared_ptr<TextBox::Control> &link) {
     const char *args = FindChar(link->val.c_str() + 6, isint2<'?', ':'>);
@@ -444,14 +444,21 @@ struct MyTerminalTab : public TerminalTab {
 
 struct MyTerminalWindow : public MyTerminalWindowInterface {
   TabbedDialog<MyTerminalTab> tabs;
-  MyTerminalWindow(Window *W) : MyTerminalWindowInterface(W), tabs(this) {
-    tabs.AddTab(new MyTerminalTab(W, this));
+  MyTerminalWindow(Window *W) : MyTerminalWindowInterface(W), tabs(this) {}
+  virtual ~MyTerminalWindow() { for (auto t : tabs.tabs) delete t; }
+
+  MyTerminalTab *AddTab();
+  void CloseActiveTab() {
+    MyTerminalTab *tab = tabs.top;
+    if (!tab) return;
+    tab->deleted_cb();
   }
 
   int Frame(Window *W, unsigned clicks, int flag) {
     bool effects = W->animating, downscale = effects && my_app->downscale_effects > 1;
     Box draw_box = W->Box();
     MyTerminalTab *tab = tabs.top;
+    if (!tab) return 0;
 
     if (downscale) W->gd->RestoreViewport(DrawMode::_2D);
     tab->terminal->CheckResized(draw_box);
@@ -514,7 +521,28 @@ inline MyTerminalTab *GetActiveTab() { return GetActiveWindow()->tabs.top; }
 #include "term_menu.h"
 #include "term_menu.cpp"
 namespace LFL {
+#else
+struct MyTerminalMenus { int unused; };
 #endif
+
+MyAppState::~MyAppState() {}
+  
+MyTerminalTab *MyTerminalWindow::AddTab() {
+  auto t = new MyTerminalTab(root, this);
+#ifdef LFL_MOBILE
+  t->closed_cb = [=]() {
+    t->deleted_cb();
+    my_app->menus->keyboard_toolbar->Show(false);
+    my_app->menus->hosts_nav->Show(true);
+  };
+  t->terminal->line_fb.align_top_or_bot = t->terminal->cmd_fb.align_top_or_bot = true;
+#else
+  t->closed_cb = [](){ LFAppShutdown(); };
+#endif
+  t->deleted_cb = [=](){ tabs.DelTab(t); delete t; };
+  tabs.AddTab(t);
+  return t;
+}
 
 void MyWindowInit(Window *W) {
   W->width = my_app->new_win_width;
@@ -524,34 +552,33 @@ void MyWindowInit(Window *W) {
 
 void MyWindowStart(Window *W) {
   CHECK(W->gd->have_framebuffer);
-  if (!W->user1.v) {
-    auto tw = new MyTerminalWindow(W);
-    W->user1 = MakeTyped(tw);
-    tw->tabs.top->UseDefaultTerminalController();
-  }
-
-  auto tw = GetTyped<MyTerminalWindow*>(W->user1);
+  CHECK_EQ(0, W->NewGUI());
+  auto tw = W->ReplaceGUI(0, make_unique<MyTerminalWindow>(W));
   if (FLAGS_console) W->InitConsole(bind(&MyTerminalWindow::ConsoleAnimatingCB, tw));
   W->frame_cb = bind(&MyTerminalWindow::Frame, tw, _1, _2, _3);
-  W->default_textbox = [=]{ return tw->tabs.top->terminal; };
+  W->default_textbox = [=]{ return tw->tabs.top ? tw->tabs.top->terminal : nullptr; };
   W->shell = make_unique<Shell>();
   if (my_app->image_browser) W->shell->AddBrowserCommands(my_app->image_browser.get());
 
-#ifdef LFL_MOBILE                                                                                 
-  tw->tabs.top->terminal->line_fb.align_top_or_bot = tw->tabs.top->terminal->cmd_fb.align_top_or_bot = true;
-#else
+#ifndef LFL_MOBILE                                                                                 
+  auto t = tw->AddTab();
+  t->UseDefaultTerminalController();
   app->scheduler.AddFrameWaitMouse(W);
-  if (FLAGS_resize_grid) W->SetResizeIncrements(tw->tabs.top->terminal->style.font->FixedWidth(),
-                                                tw->tabs.top->terminal->style.font->Height());
+  if (FLAGS_resize_grid) W->SetResizeIncrements(t->terminal->style.font->FixedWidth(),
+                                                t->terminal->style.font->Height());
   BindMap *binds = W->AddInputController(make_unique<BindMap>());
 #ifndef WIN32
   binds->Add('n',       Key::Modifier::Cmd, Bind::CB(bind(&Application::CreateNewWindow, app)));
 #endif                  
+  binds->Add('t',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->AddTab()->UseDefaultTerminalController(); })));
+  binds->Add('w',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->CloseActiveTab();      app->scheduler.Wakeup(W); })));
+  binds->Add(']',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->tabs.SelectNextTab();  app->scheduler.Wakeup(W); })));
+  binds->Add('[',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->tabs.SelectPrevTab();  app->scheduler.Wakeup(W); })));
+  binds->Add(Key::Up,   Key::Modifier::Cmd, Bind::CB(bind([=](){ t->terminal->ScrollUp();   app->scheduler.Wakeup(W); })));
+  binds->Add(Key::Down, Key::Modifier::Cmd, Bind::CB(bind([=](){ t->terminal->ScrollDown(); app->scheduler.Wakeup(W); })));
+  binds->Add('=',       Key::Modifier::Cmd, Bind::CB(bind([=](){ t->SetFontSize(W->default_font.desc.size + 1); })));
+  binds->Add('-',       Key::Modifier::Cmd, Bind::CB(bind([=](){ t->SetFontSize(W->default_font.desc.size - 1); })));
   binds->Add('6',       Key::Modifier::Cmd, Bind::CB(bind([=](){ W->shell->console(vector<string>()); })));
-  binds->Add('=',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->tabs.top->SetFontSize(W->default_font.desc.size + 1); })));
-  binds->Add('-',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->tabs.top->SetFontSize(W->default_font.desc.size - 1); })));
-  binds->Add(Key::Up,   Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->tabs.top->terminal->ScrollUp();   app->scheduler.Wakeup(W); })));
-  binds->Add(Key::Down, Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->tabs.top->terminal->ScrollDown(); app->scheduler.Wakeup(W); })));
 #endif
 }
 
@@ -622,7 +649,7 @@ extern "C" int MyAppMain() {
   my_app->passphrasefailed_alert = make_unique<SystemAlertView>(AlertItemVec{
     { "style", "" }, { "Invalid passphrase", "Passphrase failed" }, { "", "" }, { "Continue", "" } });
   my_app->keypastefailed_alert = make_unique<SystemAlertView>(AlertItemVec{
-                                                              { "style", "" }, { "Paste key failed", "Load key failed" }, { "", "" }, { "Continue", "" } });
+    { "style", "" }, { "Paste key failed", "Load key failed" }, { "", "" }, { "Continue", "" } });
 #ifndef LFL_MOBILE
   my_app->edit_menu = SystemMenuView::CreateEditMenu(vector<MenuItem>());
   my_app->view_menu = make_unique<SystemMenuView>("View", MenuItemVec{
@@ -683,24 +710,23 @@ extern "C" int MyAppMain() {
     CHECK(app->CreateNetworkThread(false, true));
   }
 
-  auto tw = new MyTerminalWindow(screen);
-  auto t = tw->tabs.top;
-  screen->user1 = MakeTyped(tw);
-  if (FLAGS_record.size()) t->record = make_unique<FlatFile>(FLAGS_record);
+  app->StartNewWindow(screen);
 #ifdef LFL_MOBILE
-  my_app->menus = new MyTerminalMenus();
+  my_app->menus = make_unique<MyTerminalMenus>();
   my_app->menus->hosts_nav->Show(true);
 #else
+  auto tw = GetActiveWindow();
+  auto t = tw->tabs.top;
+  if (FLAGS_record.size()) t->record = make_unique<FlatFile>(FLAGS_record);
   if (FLAGS_term.empty()) FLAGS_term = getenv("TERM");
   t->UseInitialTerminalController();
-#endif
-  app->StartNewWindow(screen);
   t->SetFontSize(screen->default_font.desc.size);
   my_app->new_win_width  = t->terminal->style.font->FixedWidth() * t->terminal->term_width;
   my_app->new_win_height = t->terminal->style.font->Height()     * t->terminal->term_height;
   t->terminal->Draw(screen->Box());
   INFO("Starting ", app->name, " ", screen->default_font.desc.name, " (w=", t->terminal->style.font->FixedWidth(),
        ", h=", t->terminal->style.font->Height(), ", scale=", my_app->downscale_effects, ")");
+#endif
 
   return app->Main();
 }
