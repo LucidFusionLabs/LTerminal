@@ -38,6 +38,10 @@
 #include <termios.h>
 #endif
 
+#if defined(__APPLE__) && !defined(LFL_MOBILE) && !defined(LFL_QT)
+#define LFL_TERMINAL_JOIN_READS
+#endif
+
 namespace LFL {
 #ifdef LFL_CRYPTO
 DEFINE_string(ssh,             "",     "SSH to host");
@@ -68,11 +72,6 @@ struct MyTerminalTab;
 struct MyTerminalWindow;
 inline MyTerminalWindow *GetActiveWindow() { return screen ? screen->GetOwnGUI<MyTerminalWindow>(0) : 0; }
 
-struct MyTerminalWindowInterface : public GUI {
-  virtual void UpdateTargetFPS() = 0;
-  using GUI::GUI;
-};
-
 struct MyAppState {
   unordered_map<string, Shader> shader_map;
   unique_ptr<Browser> image_browser;
@@ -84,9 +83,10 @@ struct MyAppState {
   virtual ~MyAppState();
 } *my_app = nullptr;
 
-struct PlaybackTerminalController : public Terminal::Controller {
+struct PlaybackTerminalController : public TerminalControllerInterface {
   unique_ptr<FlatFile> playback;
-  PlaybackTerminalController(unique_ptr<FlatFile> f) : playback(move(f)) {}
+  PlaybackTerminalController(TerminalTabInterface *p, unique_ptr<FlatFile> f) :
+    TerminalControllerInterface(p), playback(move(f)) {}
   int Open(TextArea*) { return -1; }
   int Write(const StringPiece &b) { return b.size(); }
   StringPiece Read() {
@@ -112,13 +112,13 @@ struct ReadBuffer {
   void Reset() { stamp=Now(); data.resize(size); }
 };
 
-struct PTYTerminalController : public Terminal::Controller {
+struct PTYTerminalController : public TerminalControllerInterface {
   int fd = -1;
   ProcessPipe process;
   ReadBuffer read_buf;
-  PTYTerminalController() : read_buf(65536) {}
+  PTYTerminalController(TerminalTabInterface *p) : TerminalControllerInterface(p), read_buf(65536) {}
   virtual ~PTYTerminalController() {
-    if (process.in) app->scheduler.DelFrameWaitSocket(screen, fileno(process.in));
+    if (process.in) app->scheduler.DelMainWaitSocket(screen, fileno(process.in));
   }
 
   int Open(TextArea*) {
@@ -143,8 +143,15 @@ struct PTYTerminalController : public Terminal::Controller {
   StringPiece Read() {
     if (!process.in) return StringPiece();
     read_buf.Reset();
-    NBRead(fd, &read_buf.data);
+    if (NBRead(fd, &read_buf.data) < 0) { ERROR("PTYTerminalController read"); Close(); return ""; }
     return read_buf.data;
+  }
+
+  void Close() {
+    if (process.in) {
+      app->scheduler.DelMainWaitSocket(screen, fileno(process.in));
+      process.Close();
+    }
   }
 };
 #endif
@@ -159,8 +166,8 @@ struct SSHTerminalController : public NetworkTerminalController {
   shared_ptr<SSHClient::Identity> identity;
   string fingerprint, password;
   int fingerprint_type=0;
-  SSHTerminalController(Service *s, SSHClient::Params p, const Callback &ccb) :
-    NetworkTerminalController(s, p.hostport, ccb), params(move(p)) {}
+  SSHTerminalController(TerminalTabInterface *p, Service *s, SSHClient::Params a, const Callback &ccb) :
+    NetworkTerminalController(p, s, a.hostport, ccb), params(move(a)) {}
 
   int Open(TextArea *t) {
     Terminal *term = dynamic_cast<Terminal*>(t);
@@ -246,8 +253,8 @@ struct ShellTerminalController : public InteractiveTerminalController {
   Callback telnet_cb;
   SSHCB ssh_cb;
 
-  ShellTerminalController(const string &hdr, Callback tcb, SSHCB scb, StringVecCB ecb) :
-    telnet_cb(move(tcb)), ssh_cb(move(scb)) {
+  ShellTerminalController(TerminalTabInterface *p, const string &hdr, Callback tcb, SSHCB scb, StringVecCB ecb) :
+    InteractiveTerminalController(p), telnet_cb(move(tcb)), ssh_cb(move(scb)) {
     header = StrCat(hdr, "LTerminal 1.0", ssh_usage, "\r\n\r\n");
 #ifdef LFL_CRYPTO
     shell.Add("ssh",      bind(&ShellTerminalController::MySSHCmd,      this, _1));
@@ -297,14 +304,14 @@ struct ShellTerminalController : public InteractiveTerminalController {
 };
 
 struct MyTerminalTab : public TerminalTab {
-  MyTerminalWindowInterface *parent;
+  TerminalWindowInterface<MyTerminalTab> *parent;
   Callback closed_cb;
   Shader *activeshader = &app->shaders->shader_default;
   Time join_read_interval = Time(100), refresh_interval = Time(33);
   int join_read_pending = 0;
 
   virtual ~MyTerminalTab() { root->DelGUI(terminal); }
-  MyTerminalTab(Window *W, MyTerminalWindowInterface *P) :
+  MyTerminalTab(Window *W, TerminalWindowInterface<MyTerminalTab> *P) :
     TerminalTab(W, W->AddGUI(make_unique<Terminal>(nullptr, W, W->default_font, FLAGS_dim))), parent(P) {
     terminal->new_link_cb      = bind(&MyTerminalTab::NewLinkCB,   this, _1);
     terminal->hover_control_cb = bind(&MyTerminalTab::HoverLinkCB, this, _1);
@@ -313,23 +320,23 @@ struct MyTerminalTab : public TerminalTab {
 
   void SetFontSize(int n) {
     bool drew = false;
-    screen->default_font.desc.size = n;
-    CHECK((terminal->style.font = screen->default_font.Load()));
+    root->default_font.desc.size = n;
+    CHECK((terminal->style.font = root->default_font.Load()));
     int font_width  = terminal->style.font->FixedWidth(), new_width  = font_width  * terminal->term_width;
     int font_height = terminal->style.font->Height(),     new_height = font_height * terminal->term_height;
-    if (FLAGS_resize_grid) screen->SetResizeIncrements(font_width, font_height);
-    if (new_width != screen->width || new_height != screen->height) drew = screen->Reshape(new_width, new_height);
+    if (FLAGS_resize_grid) root->SetResizeIncrements(font_width, font_height);
+    if (new_width != root->width || new_height != root->height) drew = root->Reshape(new_width, new_height);
     if (!drew) terminal->Redraw(true, true);
     INFO("Font: ", app->fonts->DefaultFontEngine()->DebugString(terminal->style.font));
   }
 
   void UsePlaybackTerminalController(unique_ptr<FlatFile> f) {
-    ChangeController(make_unique<PlaybackTerminalController>(move(f)));
+    ChangeController(make_unique<PlaybackTerminalController>(this, move(f)));
   }
 
   void UseShellTerminalController(const string &m) {
     ChangeController(make_unique<ShellTerminalController>
-                     (m, [=](){ UseTelnetTerminalController(); },
+                     (this, m, [=](){ UseTelnetTerminalController(); },
                       [=](SSHClient::Params p){ UseSSHTerminalController(move(p)); },
                       [=](const StringVec&) { closed_cb(); }));
   }
@@ -340,7 +347,7 @@ struct MyTerminalTab : public TerminalTab {
     bool close_on_disconn = params.close_on_disconnect;
     auto ssh =
       make_unique<SSHTerminalController>
-      (app->net->tcp_client.get(), move(params), 
+      (this, app->net->tcp_client.get(), move(params), 
        close_on_disconn ? closed_cb : [=](){ UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n"); });
     ssh->metakey_cb = move(metakey_cb);
     ssh->savehost_cb = move(savehost_cb);
@@ -354,7 +361,7 @@ struct MyTerminalTab : public TerminalTab {
   }
 
   void UseTelnetTerminalController() {
-    ChangeController(make_unique<NetworkTerminalController>(app->net->tcp_client.get(), FLAGS_telnet,
+    ChangeController(make_unique<NetworkTerminalController>(this, app->net->tcp_client.get(), FLAGS_telnet,
                                                             [=](){ UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n"); }));
   }
 
@@ -362,7 +369,7 @@ struct MyTerminalTab : public TerminalTab {
 #if defined(WIN32) || defined(LFL_MOBILE)
     UseShellTerminalController("");
 #else
-    ChangeController(make_unique<PTYTerminalController>());
+    ChangeController(make_unique<PTYTerminalController>(this));
 #endif
   }
 
@@ -380,6 +387,22 @@ struct MyTerminalTab : public TerminalTab {
 
   void OpenedController() {
     if (FLAGS_command.size()) CHECK_EQ(FLAGS_command.size()+1, controller->Write(StrCat(FLAGS_command, "\n")));
+  }
+
+  bool ControllerReadableCB() {
+    int read_size = ReadAndUpdateTerminalFramebuffer();
+    if (!parent->root->animating) {
+#ifdef LFL_TERMINAL_JOIN_READS
+      if (read_size) {
+        int *pending = &join_read_pending;
+        bool join_read = read_size > 255;
+        if (join_read) { if (1            && ++(*pending)) { if (app->scheduler.WakeupIn(parent->root, join_read_interval)) return false; } }
+        else           { if ((*pending)<1 && ++(*pending)) { if (app->scheduler.WakeupIn(parent->root, refresh_interval))   return false; } }
+        *pending = 0;
+      }
+#endif
+    }
+    return parent->tabs.top == this;
   }
 
   void NewLinkCB(const shared_ptr<TextBox::Control> &link) {
@@ -403,28 +426,28 @@ struct MyTerminalTab : public TerminalTab {
     Texture *tex = link ? link->image.get() : 0;
     if (!tex) return;
     tex->Bind();
-    screen->gd->EnableBlend();
-    screen->gd->SetColor(Color::white - Color::Alpha(0.25));
+    root->gd->EnableBlend();
+    root->gd->SetColor(Color::white - Color::Alpha(0.25));
     GraphicsContext::DrawTexturedBox1
-      (screen->gd, Box::DelBorder(screen->Box(), screen->width*.2, screen->height*.2), tex->coord);
-    screen->gd->ClearDeferred();
+      (root->gd, Box::DelBorder(root->Box(), root->width*.2, root->height*.2), tex->coord);
+    root->gd->ClearDeferred();
   }
 
   void ChangeFont(const StringVec &arg) {
     if (arg.size() < 2) return app->ShowSystemFontChooser
-      (screen->default_font.desc, bind(&MyTerminalTab::ChangeFont, this, _1));
+      (root->default_font.desc, bind(&MyTerminalTab::ChangeFont, this, _1));
     if (arg.size() > 2) FLAGS_font_flag = atoi(arg[2]);
-    screen->default_font.desc.name = arg[0];
+    root->default_font.desc.name = arg[0];
     SetFontSize(atof(arg[1]));
-    app->scheduler.Wakeup(screen);
+    app->scheduler.Wakeup(root);
   }
 
   void ChangeColors(const string &colors_name) {
     if      (colors_name == "vga")             terminal->ChangeColors(Singleton<Terminal::StandardVGAColors>   ::Get());
     else if (colors_name == "solarized_dark")  terminal->ChangeColors(Singleton<Terminal::SolarizedDarkColors> ::Get());
     else if (colors_name == "solarized_light") terminal->ChangeColors(Singleton<Terminal::SolarizedLightColors>::Get());
-    if (terminal->bg_color) screen->gd->clear_color = *terminal->bg_color;
-    app->scheduler.Wakeup(screen);
+    if (terminal->bg_color) root->gd->clear_color = *terminal->bg_color;
+    app->scheduler.Wakeup(root);
   }
 
   bool CustomShader() const { return activeshader != &app->shaders->shader_default; }
@@ -437,14 +460,13 @@ struct MyTerminalTab : public TerminalTab {
   }
 
   void ShowEffectsControls() { 
-    screen->shell->Run("slider shadertoy_blend 1.0 0.01");
-    app->scheduler.Wakeup(screen);
+    root->shell->Run("slider shadertoy_blend 1.0 0.01");
+    app->scheduler.Wakeup(root);
   }
 };
 
-struct MyTerminalWindow : public MyTerminalWindowInterface {
-  TabbedDialog<MyTerminalTab> tabs;
-  MyTerminalWindow(Window *W) : MyTerminalWindowInterface(W), tabs(this) {}
+struct MyTerminalWindow : public TerminalWindowInterface<MyTerminalTab> {
+  MyTerminalWindow(Window *W) : TerminalWindowInterface(W) {}
   virtual ~MyTerminalWindow() { for (auto t : tabs.tabs) delete t; }
 
   MyTerminalTab *AddTab();
@@ -455,6 +477,9 @@ struct MyTerminalWindow : public MyTerminalWindowInterface {
   }
 
   int Frame(Window *W, unsigned clicks, int flag) {
+#ifdef LFL_TERMINAL_JOIN_READS
+    app->scheduler.ClearWakeupIn(root);
+#endif
     bool effects = W->animating, downscale = effects && my_app->downscale_effects > 1;
     Box draw_box = W->Box();
     MyTerminalTab *tab = tabs.top;
@@ -462,25 +487,11 @@ struct MyTerminalWindow : public MyTerminalWindowInterface {
 
     if (downscale) W->gd->RestoreViewport(DrawMode::_2D);
     tab->terminal->CheckResized(draw_box);
-    int read_size = tab->ReadAndUpdateTerminalFramebuffer();
     if (downscale) {
       float scale = tab->activeshader->scale = 1.0 / my_app->downscale_effects;
       draw_box.y *= scale;
       draw_box.h -= tab->terminal->extra_height * scale;
     } else W->gd->DrawMode(DrawMode::_2D);
-
-    if (!effects) {
-#if defined(__APPLE__) && !defined(LFL_MOBILE) && !defined(LFL_QT)
-      if (read_size && !(flag & LFApp::Frame::DontSkip)) {
-        int *pending = &tab->join_read_pending;
-        bool join_read = read_size > 255;
-        if (join_read) { if (1            && ++(*pending)) { if (app->scheduler.WakeupIn(W, tab->join_read_interval)) return -1; } }
-        else           { if ((*pending)<1 && ++(*pending)) { if (app->scheduler.WakeupIn(W,   tab->refresh_interval)) return -1; } }
-        *pending = 0;
-      }
-      app->scheduler.ClearWakeupIn(W);
-#endif
-    }
 
     W->gd->DisableBlend();
     tab->terminal->Draw(draw_box, downscale ? Terminal::DrawFlag::DrawCursor : Terminal::DrawFlag::Default,
@@ -496,8 +507,8 @@ struct MyTerminalWindow : public MyTerminalWindowInterface {
   void ConsoleAnimatingCB() { 
     UpdateTargetFPS();
     if (!root->console || !root->console->animating) {
-      if ((root->console && root->console->Active()) || tabs.top->controller->frame_on_keyboard_input) app->scheduler.AddFrameWaitKeyboard(root);
-      else                                                                                             app->scheduler.DelFrameWaitKeyboard(root);
+      if ((root->console && root->console->Active()) || tabs.top->controller->frame_on_keyboard_input) app->scheduler.AddMainWaitKeyboard(root);
+      else                                                                                             app->scheduler.DelMainWaitKeyboard(root);
     }
   }
 
@@ -508,9 +519,9 @@ struct MyTerminalWindow : public MyTerminalWindowInterface {
   }
 
   void ShowTransparencyControls() {
-    SliderDialog::UpdatedCB cb(bind([=](Widget::Slider *s){ screen->SetTransparency(s->Percent()); }, _1));
-    screen->AddDialog(make_unique<SliderDialog>(screen, "window transparency", cb, 0, 1.0, .025));
-    app->scheduler.Wakeup(screen);
+    SliderDialog::UpdatedCB cb(bind([=](Widget::Slider *s){ root->SetTransparency(s->Percent()); }, _1));
+    root->AddDialog(make_unique<SliderDialog>(root, "window transparency", cb, 0, 1.0, .025));
+    app->scheduler.Wakeup(root);
   }
 };
 
@@ -539,7 +550,7 @@ MyTerminalTab *MyTerminalWindow::AddTab() {
 #else
   t->closed_cb = [](){ LFAppShutdown(); };
 #endif
-  t->deleted_cb = [=](){ tabs.DelTab(t); delete t; };
+  t->deleted_cb = [=](){ tabs.DelTab(t); app->RunInMainThread([=]{ delete t; }); };
   tabs.AddTab(t);
   return t;
 }
@@ -561,9 +572,9 @@ void MyWindowStart(Window *W) {
   if (my_app->image_browser) W->shell->AddBrowserCommands(my_app->image_browser.get());
 
 #ifndef LFL_MOBILE                                                                                 
+  app->scheduler.AddMainWaitMouse(W);
   auto t = tw->AddTab();
-  t->UseDefaultTerminalController();
-  app->scheduler.AddFrameWaitMouse(W);
+  ONCE_ELSE(t->UseInitialTerminalController(), t->UseDefaultTerminalController());
   if (FLAGS_resize_grid) W->SetResizeIncrements(t->terminal->style.font->FixedWidth(),
                                                 t->terminal->style.font->Height());
   BindMap *binds = W->AddInputController(make_unique<BindMap>());
@@ -658,13 +669,12 @@ extern "C" int MyAppMain() {
     MenuItem{ "-", "Zoom Out" },
 #endif
     MenuItem{ "", "Fonts",        [=](){ if (auto t = GetActiveTab())    t->ChangeFont(StringVec()); } },
-#ifndef LFL_MOBILE
     MenuItem{ "", "Transparency", [=](){ if (auto w = GetActiveWindow()) w->ShowTransparencyControls(); } },
-#endif
     MenuItem{ "", "VGA Colors",             [=](){ if (auto t = GetActiveTab()) t->ChangeColors("vga");             } },
     MenuItem{ "", "Solarized Dark Colors",  [=](){ if (auto t = GetActiveTab()) t->ChangeColors("solarized_dark");  } },
     MenuItem{ "", "Solarized Light Colors", [=](){ if (auto t = GetActiveTab()) t->ChangeColors("solarized_light"); } }
   });
+  if (FLAGS_term.empty()) FLAGS_term = BlankNull(getenv("TERM"));
 #endif
 
   my_app->toys_menu = make_unique<SystemMenuView>("Toys", vector<MenuItem>{
@@ -717,12 +727,9 @@ extern "C" int MyAppMain() {
 #else
   auto tw = GetActiveWindow();
   auto t = tw->tabs.top;
-  if (FLAGS_record.size()) t->record = make_unique<FlatFile>(FLAGS_record);
-  if (FLAGS_term.empty()) FLAGS_term = getenv("TERM");
-  t->UseInitialTerminalController();
-  t->SetFontSize(screen->default_font.desc.size);
   my_app->new_win_width  = t->terminal->style.font->FixedWidth() * t->terminal->term_width;
   my_app->new_win_height = t->terminal->style.font->Height()     * t->terminal->term_height;
+  if (FLAGS_record.size()) t->record = make_unique<FlatFile>(FLAGS_record);
   t->terminal->Draw(screen->Box());
   INFO("Starting ", app->name, " ", screen->default_font.desc.name, " (w=", t->terminal->style.font->FixedWidth(),
        ", h=", t->terminal->style.font->Height(), ", scale=", my_app->downscale_effects, ")");

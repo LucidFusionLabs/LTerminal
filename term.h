@@ -19,15 +19,34 @@
 #ifndef LFL_TERM_TERM_H__
 #define LFL_TERM_TERM_H__
 namespace LFL {
+
+template <class X> struct TerminalWindowInterface : public GUI {
+  TabbedDialog<X> tabs;
+  TerminalWindowInterface(Window *W) : GUI(W), tabs(this) {}
+  virtual void UpdateTargetFPS() = 0;
+};
+
+struct TerminalTabInterface : public Dialog {
+  unique_ptr<Terminal::Controller> controller, last_controller;
+  virtual int ReadAndUpdateTerminalFramebuffer() = 0;
+  virtual bool ControllerReadableCB() { ReadAndUpdateTerminalFramebuffer(); return true; }
+  using Dialog::Dialog;
+};
+
+struct TerminalControllerInterface : public Terminal::Controller {
+  TerminalTabInterface *parent;
+  TerminalControllerInterface(TerminalTabInterface *P) : parent(P) {}
+};
   
-struct NetworkTerminalController : public Terminal::Controller {
+struct NetworkTerminalController : public TerminalControllerInterface {
   Service *svc=0;
   Connection *conn=0;
   Callback detach_cb, close_cb;
   string remote, read_buf, ret_buf;
-  NetworkTerminalController(Service *s, const string &r, const Callback &ccb)
-    : svc(s), detach_cb(bind(&NetworkTerminalController::ConnectedCB, this)), close_cb(ccb), remote(r) {}
-  virtual ~NetworkTerminalController() { if (conn) app->scheduler.DelFrameWaitSocket(screen, conn->socket); }
+  NetworkTerminalController(TerminalTabInterface *p, Service *s, const string &r, const Callback &ccb) :
+    TerminalControllerInterface(p), svc(s), detach_cb(bind(&NetworkTerminalController::ConnectedCB, this)),
+    close_cb(ccb), remote(r) {}
+  virtual ~NetworkTerminalController() { if (conn) app->scheduler.DelMainWaitSocket(parent->root, conn->socket); }
 
   virtual int Open(TextArea *t) {
     if (remote.empty()) return -1;
@@ -40,14 +59,15 @@ struct NetworkTerminalController : public Terminal::Controller {
 
   virtual void Close() {
     if (!conn || conn->state != Connection::Connected) return;
-    if (app->network_thread) app->scheduler.DelFrameWaitSocket(screen, conn->socket);
+    if (app->network_thread) app->scheduler.DelMainWaitSocket(parent->root, conn->socket);
     app->net->ConnCloseDetached(svc, conn);
     conn = 0;
     close_cb();
   }
 
   virtual void ConnectedCB() {
-    if (app->network_thread) app->scheduler.AddFrameWaitSocket(screen, conn->socket, SocketSet::READABLE);
+    if (app->network_thread) app->scheduler.AddMainWaitSocket
+      (parent->root, conn->socket, SocketSet::READABLE, bind(&TerminalTabInterface::ControllerReadableCB, parent));
   }
 
   virtual StringPiece Read() {
@@ -66,7 +86,7 @@ struct NetworkTerminalController : public Terminal::Controller {
   }
 };
 
-struct InteractiveTerminalController : public Terminal::Controller {
+struct InteractiveTerminalController : public TerminalControllerInterface {
   TextArea *term=0;
   Shell shell;
   UnbackedTextBox cmd;
@@ -79,7 +99,8 @@ struct InteractiveTerminalController : public Terminal::Controller {
     { "OD", bind([&] { if (cmd.cursor.i.x)                       { WriteText("\x08");                                       cmd.CursorLeft();  } }) },
   };
 
-  InteractiveTerminalController() : cmd(FontDesc::Default()) {
+  InteractiveTerminalController(TerminalTabInterface *p) :
+    TerminalControllerInterface(p), cmd(FontDesc::Default()) {
     cmd.runcb = bind(&Shell::Run, &shell, _1);
     cmd.ReadHistory(app->savedir, "shell");
     frame_on_keyboard_input = true;
@@ -109,17 +130,16 @@ struct InteractiveTerminalController : public Terminal::Controller {
   }
 
   void WriteText(const StringPiece &b) {
-    if (screen->animating) read_buf.append(b.data(), b.size());
+    if (parent->root->animating) read_buf.append(b.data(), b.size());
     else if (term) term->Write(b);
   }
 };
 
-template <class TerminalType> struct TerminalTabT : public Dialog {
+template <class TerminalType> struct TerminalTabT : public TerminalTabInterface {
   TerminalType *terminal;
-  unique_ptr<Terminal::Controller> controller, last_controller;
   unique_ptr<FlatFile> record;
 
-  TerminalTabT(Window *W, TerminalType *t) : Dialog(W, 1.0, 1.0), terminal(t) {
+  TerminalTabT(Window *W, TerminalType *t) : TerminalTabInterface(W, 1.0, 1.0), terminal(t) {
 #ifdef FUZZ_DEBUG
     for (int i=0; i<256; i++) {
       INFO("fuzz i = ", i);
@@ -143,9 +163,10 @@ template <class TerminalType> struct TerminalTabT : public Dialog {
     controller = move(new_controller);
     terminal->sink = controller.get();
     int fd = controller ? controller->Open(terminal) : -1;
-    if (fd != -1) app->scheduler.AddFrameWaitSocket(root, fd, SocketSet::READABLE);
-    if (controller && controller->frame_on_keyboard_input) app->scheduler.AddFrameWaitKeyboard(root);
-    else                                                   app->scheduler.DelFrameWaitKeyboard(root);
+    if (fd != -1) app->scheduler.AddMainWaitSocket
+      (root, fd, SocketSet::READABLE, bind(&TerminalTabInterface::ControllerReadableCB, this));
+    if (controller && controller->frame_on_keyboard_input) app->scheduler.AddMainWaitKeyboard(root);
+    else                                                   app->scheduler.DelMainWaitKeyboard(root);
     if (controller) OpenedController();
   }
 
