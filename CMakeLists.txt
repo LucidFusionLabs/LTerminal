@@ -8,7 +8,8 @@ endif()
 
 if(LFL_MOBILE OR LFL_WINDOWS OR LFL_DEBUG)
   set(CRYPTO_DEF -DLFL_CRYPTO)
-  set(CRYPTO_LIB ${LFL_APP_CRYPTO} app_openssl_pk app_openssl_dh app_ref10_25519 app_bcrypt_pbkdf)
+  set(CRYPTO_LIB app_net_ssh app_net_rfb
+      ${LFL_APP_CRYPTO} app_openssl_pk app_openssl_dh app_ref10_25519 app_bcrypt_pbkdf)
 else()
   set(CRYPTO_DEF)
   set(CRYPTO_LIB app_null_crypto)
@@ -32,7 +33,7 @@ endif()
 
 lfl_project(lterm)
 lfl_add_package(lterm SOURCES term.cpp term.rc ${FLATBUFFERS_SRC_OUTPUTS}
-                COMPILE_DEFINITIONS ${CRYPTO_DEF}
+                COMPILE_DEFINITIONS ${CRYPTO_DEF} -DLFL_RFB
                 LINK_LIBRARIES ${LFL_APP_LIB} ${LFL_APP_FRAMEWORK} ${LFL_APP_GRAPHICS}
                 app_null_audio app_null_camera app_null_matrix app_null_fft
                 app_simple_resampler app_simple_loader ${LFL_APP_CONVERT} app_libpng_png

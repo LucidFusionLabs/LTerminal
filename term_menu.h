@@ -187,6 +187,12 @@ struct MyHostModel {
     return ret;
   }
 
+  void SetProtocol(const string &p) {
+    if      (p == "SSH")    protocol = LTerminal::Protocol_SSH;
+    else if (p == "Telnet") protocol = LTerminal::Protocol_Telnet;
+    else { FATAL("unknown protocol"); }
+  }
+
   void SetPort(int p) {
     if (p) port = p;
     else if (protocol == LTerminal::Protocol_SSH)    port = 22;
@@ -418,18 +424,18 @@ struct MyTerminalMenus {
   unique_ptr<SystemToolbarView>    keyboard_toolbar;
 
   unordered_map<string, Callback> mobile_key_cmd = {
-    { "left",   bind([=]{ if (auto t = GetActiveTab()) { t->terminal->CursorLeft();  if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); } }) },
-    { "right",  bind([=]{ if (auto t = GetActiveTab()) { t->terminal->CursorRight(); if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); } }) },
-    { "up",     bind([=]{ if (auto t = GetActiveTab()) { t->terminal->HistUp();      if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); } }) },
-    { "down",   bind([=]{ if (auto t = GetActiveTab()) { t->terminal->HistDown();    if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); } }) },
-    { "pgup",   bind([=]{ if (auto t = GetActiveTab()) { t->terminal->PageUp();      if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); } }) },
-    { "pgdown", bind([=]{ if (auto t = GetActiveTab()) { t->terminal->PageDown();    if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); } }) },
-    { "home",   bind([=]{ if (auto t = GetActiveTab()) { t->terminal->Home();        if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); } }) },
-    { "end",    bind([=]{ if (auto t = GetActiveTab()) { t->terminal->End();         if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); } }) } };
+    { "left",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->CursorLeft();  if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); } }) },
+    { "right",  bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->CursorRight(); if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); } }) },
+    { "up",     bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->HistUp();      if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); } }) },
+    { "down",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->HistDown();    if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); } }) },
+    { "pgup",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->PageUp();      if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); } }) },
+    { "pgdown", bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->PageDown();    if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); } }) },
+    { "home",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->Home();        if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); } }) },
+    { "end",    bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->End();         if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(screen); } }) } };
 
   unordered_map<string, Callback> mobile_togglekey_cmd = {
-    { "ctrl", bind([&]{ if (auto t = GetActiveTab()) { t->controller->ctrl_down = !t->controller->ctrl_down; } }) },
-    { "alt",  bind([&]{ if (auto t = GetActiveTab()) { t->controller->alt_down  = !t->controller->alt_down;  } }) } };
+    { "ctrl", bind([&]{ if (auto t = GetActiveTerminalTab()) { t->controller->ctrl_down = !t->controller->ctrl_down; } }) },
+    { "alt",  bind([&]{ if (auto t = GetActiveTerminalTab()) { t->controller->alt_down  = !t->controller->alt_down;  } }) } };
 
   ~MyTerminalMenus() { SQLite::Close(db); }
   MyTerminalMenus() : db(SQLite::Open(StrCat(app->savedir, "lterm.db"))),
@@ -453,19 +459,19 @@ struct MyTerminalMenus {
     updatehost(this), hosts(this, true), hostsfolder(this, false) {
 
     keyboard_toolbar = make_unique<SystemToolbarView>(MenuItemVec{
-      { "\U00002699", "",       bind(&MyTerminalMenus::ShowRunSettings, this) },
-      { "esc",        "toggle", bind(&MyTerminalMenus::ToggleKey,       this, "esc") },
-      { "\U000025C0", "",       bind(&MyTerminalMenus::PressKey,        this, "left") },
-      { "\U000025B6", "",       bind(&MyTerminalMenus::PressKey,        this, "right") },
-      { "\U000025B2", "",       bind(&MyTerminalMenus::PressKey,        this, "up") }, 
-      { "\U000025BC", "",       bind(&MyTerminalMenus::PressKey,        this, "down") },
-      { "\U000023EB", "",       bind(&MyTerminalMenus::PressKey,        this, "pgup") },
-      { "\U000023EC", "",       bind(&MyTerminalMenus::PressKey,        this, "pgdown") }, 
-      { "\U000023EA", "",       bind(&MyTerminalMenus::PressKey,        this, "home") },
-      { "\U000023E9", "",       bind(&MyTerminalMenus::PressKey,        this, "end") }, 
-      { "ctrl",       "toggle", bind(&MyTerminalMenus::ToggleKey,       this, "ctrl") },
-      { "alt",        "toggle", bind(&MyTerminalMenus::ToggleKey,       this, "alt") },
-      { "\U000025F0", "",       bind(&MyTerminalMenus::ShowRunSettings, this) },
+      { "\U00002699", "",       bind(&MyTerminalMenus::ShowRunSettings,  this) },
+      { "esc",        "toggle", bind(&MyTerminalMenus::ToggleKey,        this, "esc") },
+      { "\U000025C0", "",       bind(&MyTerminalMenus::PressKey,         this, "left") },
+      { "\U000025B6", "",       bind(&MyTerminalMenus::PressKey,         this, "right") },
+      { "\U000025B2", "",       bind(&MyTerminalMenus::PressKey,         this, "up") }, 
+      { "\U000025BC", "",       bind(&MyTerminalMenus::PressKey,         this, "down") },
+      { "\U000023EB", "",       bind(&MyTerminalMenus::PressKey,         this, "pgup") },
+      { "\U000023EC", "",       bind(&MyTerminalMenus::PressKey,         this, "pgdown") }, 
+      { "\U000023EA", "",       bind(&MyTerminalMenus::PressKey,         this, "home") },
+      { "\U000023E9", "",       bind(&MyTerminalMenus::PressKey,         this, "end") }, 
+      { "ctrl",       "toggle", bind(&MyTerminalMenus::ToggleKey,        this, "ctrl") },
+      { "alt",        "toggle", bind(&MyTerminalMenus::ToggleKey,        this, "alt") },
+      { "\U000025F0", "",       bind(&MyTerminalMenus::ShowSessionsMenu, this) },
     });
 
     runsettings_nav->PushTable(runsettings.view.get());
@@ -535,18 +541,25 @@ struct MyTerminalMenus {
   }
 
   void ShowSessionsMenu() {
+    runsettings_nav->PopAll();
+    runsettings_nav->Show(false);
     MenuItemVec v;
-    v.push_back(MenuItem{"", screen->caption, [=](){} });
+    auto tw = GetActiveWindow();
+    for (auto t : tw->tabs.tabs) v.push_back
+      (MenuItem{"", t->title, [=](){ tw->tabs.SelectTab(t); app->scheduler.Wakeup(tw->root); } });
+    v.push_back(MenuItem{"", "New", [=](){ hosts_nav->Show(true); } }); 
     sessions_menu = make_unique<SystemMenuView>("Sessions", v);
     sessions_menu->Show();
   }
 
   void ShowToysMenu() {
-    GetActiveTab()->ChangeShader("none");
+    runsettings_nav->PopAll();
+    runsettings_nav->Show(false);
     my_app->toys_menu->Show();
   }
 
   void ShowRunSettings() {
+    if (auto t = GetActiveTerminalTab()) t->ChangeShader("none");
     if (!connected_host_id || runsettings_nav->shown) return;
     MyAppSettingsModel app_model(&settings_db);
     MyHostModel host_model(&host_db, &credential_db, &settings_db, connected_host_id);
@@ -580,7 +593,7 @@ struct MyTerminalMenus {
 
   void StartShell() {
     connected_host_id = 1;
-    GetActiveWindow()->AddTab()->UseShellTerminalController("");
+    GetActiveWindow()->AddTerminalTab()->UseShellTerminalController("");
     MenuStartSession();
     app->scheduler.Wakeup(screen);
   }
@@ -644,19 +657,26 @@ struct MyTerminalMenus {
 
   void MenuStartSession() {
     hosts_nav->Show(false);
+    hosts.view->AddNavigationButton(HAlign::Left, TableItem("Back", "", "", "", 0, 0, 0, [=](){ hosts_nav->Show(false); }));
     keyboard_toolbar->Show(true);
     app->CloseTouchKeyboardAfterReturn(false);
     app->OpenTouchKeyboard();
   }
 
   void MenuConnect(const MyHostModel &host, SSHTerminalController::SavehostCB cb=SSHTerminalController::SavehostCB()) {
-    GetActiveWindow()->AddTab()->UseSSHTerminalController
-      (SSHClient::Params{host.Hostport(), host.username, host.settings.terminal_type,
-       host.settings.startup_command.size() ? StrCat(host.settings.startup_command, "\r") : "",
-       host.settings.compression, host.settings.agent_forwarding, host.settings.close_on_disconnect},
-       host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "",
-       host.cred.credtype == LTerminal::CredentialType_PEM      ? host.cred.creddata : "",
-       bind(&SystemToolbarView::ToggleButton, keyboard_toolbar.get(), _1), move(cb));
+    if (host.protocol == LTerminal::Protocol_SSH) {
+      GetActiveWindow()->AddTerminalTab()->UseSSHTerminalController
+        (SSHClient::Params{host.Hostport(), host.username, host.settings.terminal_type,
+         host.settings.startup_command.size() ? StrCat(host.settings.startup_command, "\r") : "",
+         host.settings.compression, host.settings.agent_forwarding, host.settings.close_on_disconnect},
+         host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "",
+         host.cred.credtype == LTerminal::CredentialType_PEM      ? host.cred.creddata : "",
+         bind(&SystemToolbarView::ToggleButton, keyboard_toolbar.get(), _1), move(cb));
+    } else if (host.protocol == LTerminal::Protocol_Telnet) {
+      GetActiveWindow()->AddTerminalTab()->UseTelnetTerminalController(host.Hostport());
+    } else if (host.protocol == LTerminal::Protocol_RFB) {
+      GetActiveWindow()->AddRFBTab(RFBClient::Params{host.Hostport(), host.username});
+    }
     MenuStartSession();
   }
 };

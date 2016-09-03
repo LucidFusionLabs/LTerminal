@@ -20,17 +20,18 @@
 #define LFL_TERM_TERM_H__
 namespace LFL {
 
-template <class X> struct TerminalWindowInterface : public GUI {
-  TabbedDialog<X> tabs;
-  TerminalWindowInterface(Window *W) : GUI(W), tabs(this) {}
-  virtual void UpdateTargetFPS() = 0;
-};
-
 struct TerminalTabInterface : public Dialog {
+  string title;
+  Callback closed_cb;
   unique_ptr<Terminal::Controller> controller, last_controller;
+  using Dialog::Dialog;
+
+  virtual bool Animating() const = 0;
   virtual int ReadAndUpdateTerminalFramebuffer() = 0;
   virtual bool ControllerReadableCB() { ReadAndUpdateTerminalFramebuffer(); return true; }
-  using Dialog::Dialog;
+  virtual void SetFontSize(int) = 0;
+  virtual void ScrollUp() = 0;
+  virtual void ScrollDown() = 0;
 };
 
 struct TerminalControllerInterface : public Terminal::Controller {
@@ -41,7 +42,7 @@ struct TerminalControllerInterface : public Terminal::Controller {
 struct NetworkTerminalController : public TerminalControllerInterface {
   Service *svc=0;
   Connection *conn=0;
-  Callback detach_cb, close_cb;
+  Callback detach_cb, close_cb, success_cb;
   string remote, read_buf, ret_buf;
   NetworkTerminalController(TerminalTabInterface *p, Service *s, const string &r, const Callback &ccb) :
     TerminalControllerInterface(p), svc(s), detach_cb(bind(&NetworkTerminalController::ConnectedCB, this)),
@@ -90,7 +91,7 @@ struct InteractiveTerminalController : public TerminalControllerInterface {
   TextArea *term=0;
   Shell shell;
   UnbackedTextBox cmd;
-  string buf, read_buf, ret_buf, prompt="> ", header;
+  string buf, prompt="> ", header;
   bool blocking=0, done=0;
   unordered_map<string, Callback> escapes = {
     { "OA", bind([&] { cmd.HistUp();   WriteText(StrCat("\x0d", prompt, String::ToUTF8(cmd.cmd_line.Text16()), "\x1b[K")); }) },
@@ -107,8 +108,8 @@ struct InteractiveTerminalController : public TerminalControllerInterface {
   }
   virtual ~InteractiveTerminalController() { cmd.WriteHistory(app->savedir, "shell", ""); }
 
+  StringPiece Read() { return ""; }
   int Open(TextArea *T) { (term=T)->Write(StrCat(header, prompt)); return -1; }
-  StringPiece Read() { swap(read_buf, ret_buf); read_buf.clear(); return ret_buf; }
   void UnBlockWithResponse(const string &t) { blocking=0; WriteText(StrCat(t, "\r\n", prompt)); }
 
   void IOCtlWindowSize(int w, int h) {}
@@ -129,10 +130,7 @@ struct InteractiveTerminalController : public TerminalControllerInterface {
     return l;
   }
 
-  void WriteText(const StringPiece &b) {
-    if (parent->root->animating) read_buf.append(b.data(), b.size());
-    else if (term) term->Write(b);
-  }
+  void WriteText(const StringPiece &b) { if (term) term->Write(b); }
 };
 
 template <class TerminalType> struct TerminalTabT : public TerminalTabInterface {
@@ -154,8 +152,10 @@ template <class TerminalType> struct TerminalTabT : public TerminalTabInterface 
 
   virtual ~TerminalTabT() {}
   virtual void OpenedController() {}
-  virtual void TakeFocus() { terminal->Activate(); }
-  virtual void LoseFocus() { terminal->Deactivate(); }
+  virtual void TakeFocus()  { terminal->Activate(); }
+  virtual void LoseFocus()  { terminal->Deactivate(); }
+  virtual void ScrollUp()   { terminal->ScrollUp(); }
+  virtual void ScrollDown() { terminal->ScrollDown(); }
 
   void ChangeController(unique_ptr<Terminal::Controller> new_controller) {
     if (auto ic = dynamic_cast<InteractiveTerminalController*>(controller.get())) ic->done = true;

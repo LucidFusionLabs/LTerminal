@@ -26,6 +26,7 @@
 #include "core/app/crypto.h"
 #include "core/app/net/ssh.h"
 #endif
+#include "core/app/net/rfb.h"
 #include "core/app/db/sqlite.h"
 #ifdef LFL_FLATBUFFERS
 #include "term/term_generated.h"
@@ -46,7 +47,6 @@ namespace LFL {
 #ifdef LFL_CRYPTO
 DEFINE_string(ssh,             "",     "SSH to host");
 DEFINE_string(login,           "",     "SSH user");
-DEFINE_string(term,            "",     "SSH TERM var");
 DEFINE_string(keyfile,         "",     "SSH private key");
 DEFINE_string(startup_command, "",     "SSH startup command");
 DEFINE_bool  (compress,        false,  "SSH compression");
@@ -57,7 +57,9 @@ DEFINE_string(keygen,          "",     "Generate key");
 DEFINE_int   (bits,            0,      "Generate key bits");      
 #endif
 DEFINE_bool  (interpreter,     false,  "Launch interpreter instead of shell");
+DEFINE_string(term,            "",     "TERM var");
 DEFINE_string(telnet,          "",     "Telnet to host");
+DEFINE_string(vnc,             "",     "VNC to host");
 DEFINE_string(command,         "",     "Execute initial command");
 DEFINE_string(screenshot,      "",     "Screenshot and exit");
 DEFINE_string(record,          "",     "Record session to file");
@@ -66,6 +68,13 @@ DEFINE_bool  (draw_fps,        false,  "Draw FPS");
 DEFINE_bool  (resize_grid,     true,   "Resize window in glyph bound increments");
 DEFINE_FLAG(dim, point, point(80,25),  "Initial terminal dimensions");
 extern FlagOfType<bool> FLAGS_enable_network_;
+
+template <class X> struct TerminalWindowInterface : public GUI {
+  TabbedDialog<X> tabs;
+  TerminalWindowInterface(Window *W) : GUI(W), tabs(this) {}
+  virtual void UpdateTargetFPS() = 0;
+  virtual X *AddRFBTab(RFBClient::Params p) = 0;
+};
 
 struct MyTerminalMenus;
 struct MyTerminalTab;
@@ -160,7 +169,6 @@ struct PTYTerminalController : public TerminalControllerInterface {
 struct SSHTerminalController : public NetworkTerminalController {
   typedef function<void(int, const string&)> SavehostCB;
   SSHClient::Params params;
-  Callback success_cb;
   StringCB metakey_cb;
   SavehostCB savehost_cb;
   shared_ptr<SSHClient::Identity> identity;
@@ -248,17 +256,20 @@ struct SSHTerminalController : public NetworkTerminalController {
 #endif
 
 struct ShellTerminalController : public InteractiveTerminalController {
-  typedef function<void(SSHClient::Params)> SSHCB;
   string ssh_usage="\r\nusage: ssh -l user host[:port]";
-  Callback telnet_cb;
-  SSHCB ssh_cb;
+  StringCB telnet_cb;
+  function<void(RFBClient::Params)> vnc_cb;
+#ifdef LFL_CRYPTO
+  function<void(SSHClient::Params)> ssh_cb;
+#endif
 
-  ShellTerminalController(TerminalTabInterface *p, const string &hdr, Callback tcb, SSHCB scb, StringVecCB ecb) :
-    InteractiveTerminalController(p), telnet_cb(move(tcb)), ssh_cb(move(scb)) {
+  ShellTerminalController(TerminalTabInterface *p, const string &hdr, StringCB tcb, StringVecCB ecb) :
+    InteractiveTerminalController(p), telnet_cb(move(tcb)) {
     header = StrCat(hdr, "LTerminal 1.0", ssh_usage, "\r\n\r\n");
 #ifdef LFL_CRYPTO
     shell.Add("ssh",      bind(&ShellTerminalController::MySSHCmd,      this, _1));
 #endif
+    shell.Add("vnc",      bind(&ShellTerminalController::MyVNCCmd,      this, _1));
     shell.Add("telnet",   bind(&ShellTerminalController::MyTelnetCmd,   this, _1));
     shell.Add("nslookup", bind(&ShellTerminalController::MyNSLookupCmd, this, _1));
     shell.Add("help",     bind(&ShellTerminalController::MyHelpCmd,     this, _1));
@@ -268,18 +279,23 @@ struct ShellTerminalController : public InteractiveTerminalController {
 #ifdef LFL_CRYPTO
   void MySSHCmd(const vector<string> &arg) {
     string host, login;
-    int ind = 0;
-    for (; ind < arg.size() && arg[ind][0] == '-'; ind += 2) if (arg[ind] == "-l") login = arg[ind+1];
-    if (ind < arg.size()) host = arg[ind];
+    ParseHostAndLogin(arg, &host, &login);
     if (login.empty() || host.empty()) { if (term) term->Write(ssh_usage); }
     else ssh_cb(SSHClient::Params{host, login, FLAGS_term, FLAGS_startup_command, FLAGS_compress,
                 FLAGS_forward_agent, false});
   }
 #endif
 
+  void MyVNCCmd(const vector<string> &arg) {
+    string host, login;
+    ParseHostAndLogin(arg, &host, &login);
+    if (login.empty() || host.empty()) { if (term) term->Write("\r\nusage: vnc -l user host[:port]"); }
+    else vnc_cb(RFBClient::Params{host, login});
+  }
+
   void MyTelnetCmd(const vector<string> &arg) {
     if (arg.empty()) { if (term) term->Write("\r\nusage: telnet host"); }
-    else { FLAGS_telnet=arg[0]; telnet_cb(); }
+    else telnet_cb(arg[0]);
   }
 
   void MyNSLookupCmd(const vector<string> &arg) {
@@ -298,24 +314,49 @@ struct ShellTerminalController : public InteractiveTerminalController {
   void MyHelpCmd(const vector<string> &arg) {
     WriteText("\r\n\r\nLTerminal interpreter commands:\r\n\r\n"
               "* ssh -l user host[:port]\r\n"
+              "* vnc -l user host[:port]\r\n"
               "* telnet host[:port]\r\n"
               "* nslookup host\r\n");
+  }
+
+  static void ParseHostAndLogin(const vector<string> &arg, string *host, string *login) {
+    int ind = 0;
+    for (; ind < arg.size() && arg[ind][0] == '-'; ind += 2) if (arg[ind] == "-l") *login = arg[ind+1];
+    if (ind < arg.size()) *host = arg[ind];
   }
 };
 
 struct MyTerminalTab : public TerminalTab {
-  TerminalWindowInterface<MyTerminalTab> *parent;
-  Callback closed_cb;
+  TerminalWindowInterface<TerminalTabInterface> *parent;
   Shader *activeshader = &app->shaders->shader_default;
   Time join_read_interval = Time(100), refresh_interval = Time(33);
   int join_read_pending = 0;
 
   virtual ~MyTerminalTab() { root->DelGUI(terminal); }
-  MyTerminalTab(Window *W, TerminalWindowInterface<MyTerminalTab> *P) :
+  MyTerminalTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P) :
     TerminalTab(W, W->AddGUI(make_unique<Terminal>(nullptr, W, W->default_font, FLAGS_dim))), parent(P) {
     terminal->new_link_cb      = bind(&MyTerminalTab::NewLinkCB,   this, _1);
     terminal->hover_control_cb = bind(&MyTerminalTab::HoverLinkCB, this, _1);
     if (terminal->bg_color) W->gd->clear_color = *terminal->bg_color;
+  }
+  
+  bool Animating() const { return activeshader != &app->shaders->shader_default; }
+
+  void Draw() {
+    Box draw_box = root->Box();
+    bool effects = root->animating, downscale = effects && my_app->downscale_effects > 1;
+    if (downscale) root->gd->RestoreViewport(DrawMode::_2D);
+    terminal->CheckResized(draw_box);
+    if (downscale) {
+      float scale = activeshader->scale = 1.0 / my_app->downscale_effects;
+      draw_box.y *= scale;
+      draw_box.h -= terminal->extra_height * scale;
+    } else root->gd->DrawMode(DrawMode::_2D);
+
+    root->gd->DisableBlend();
+    terminal->Draw(draw_box, downscale ? Terminal::DrawFlag::DrawCursor : Terminal::DrawFlag::Default,
+                   effects ? activeshader : NULL);
+    if (effects) root->gd->UseShader(0);
   }
 
   void SetFontSize(int n) {
@@ -331,19 +372,26 @@ struct MyTerminalTab : public TerminalTab {
   }
 
   void UsePlaybackTerminalController(unique_ptr<FlatFile> f) {
+    title = "Playback";
     ChangeController(make_unique<PlaybackTerminalController>(this, move(f)));
   }
 
   void UseShellTerminalController(const string &m) {
-    ChangeController(make_unique<ShellTerminalController>
-                     (this, m, [=](){ UseTelnetTerminalController(); },
-                      [=](SSHClient::Params p){ UseSSHTerminalController(move(p)); },
-                      [=](const StringVec&) { closed_cb(); }));
+    title = "Interactive Shell";
+    auto c = make_unique<ShellTerminalController>
+      (this, m, [=](const string &h){ UseTelnetTerminalController(h); },
+       [=](const StringVec&) { closed_cb(); });
+#ifdef LFL_CRYPTO
+    c->ssh_cb = [=](SSHClient::Params p){ UseSSHTerminalController(move(p)); };
+#endif
+    c->vnc_cb = [=](RFBClient::Params p){ parent->AddRFBTab(move(p)); };
+    ChangeController(move(c));
   }
 
+#ifdef LFL_CRYPTO
   void UseSSHTerminalController(SSHClient::Params params, const string &pw="", const string &pem="", StringCB metakey_cb=StringCB(),
                                 SSHTerminalController::SavehostCB savehost_cb=SSHTerminalController::SavehostCB()) {
-#ifdef LFL_CRYPTO
+    title = StrCat("SSH ", params.user, "@", params.hostport);
     bool close_on_disconn = params.close_on_disconnect;
     auto ssh =
       make_unique<SSHTerminalController>
@@ -357,11 +405,12 @@ struct MyTerminalTab : public TerminalTab {
       Crypto::ParsePEM(pem.data(), &ssh->identity->rsa, &ssh->identity->dsa, &ssh->identity->ec, &ssh->identity->ed25519);
     }
     ChangeController(move(ssh));
-#endif
   }
+#endif
 
-  void UseTelnetTerminalController() {
-    ChangeController(make_unique<NetworkTerminalController>(this, app->net->tcp_client.get(), FLAGS_telnet,
+  void UseTelnetTerminalController(const string &hostport) {
+    title = StrCat("Telnet ", hostport);
+    ChangeController(make_unique<NetworkTerminalController>(this, app->net->tcp_client.get(), hostport,
                                                             [=](){ UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n"); }));
   }
 
@@ -381,7 +430,7 @@ struct MyTerminalTab : public TerminalTab {
       (SSHClient::Params{FLAGS_ssh, FLAGS_login, FLAGS_term, FLAGS_startup_command, FLAGS_compress,
        FLAGS_forward_agent, 0});
 #endif
-    else if (FLAGS_telnet.size())   return UseTelnetTerminalController();
+    else if (FLAGS_telnet.size())   return UseTelnetTerminalController(FLAGS_telnet);
     else                            return UseDefaultTerminalController();
   }
 
@@ -450,7 +499,6 @@ struct MyTerminalTab : public TerminalTab {
     app->scheduler.Wakeup(root);
   }
 
-  bool CustomShader() const { return activeshader != &app->shaders->shader_default; }
   void ChangeShader(const string &shader_name) {
     auto shader = my_app->shader_map.find(shader_name);
     bool found = shader != my_app->shader_map.end();
@@ -465,13 +513,72 @@ struct MyTerminalTab : public TerminalTab {
   }
 };
 
-struct MyTerminalWindow : public TerminalWindowInterface<MyTerminalTab> {
+struct RFBTerminalController : public NetworkTerminalController {
+  RFBClient::Params params;
+  RFBTerminalController(TerminalTabInterface *p, Service *s, RFBClient::Params a, const Callback &ccb) :
+    NetworkTerminalController(p, s, a.hostport, ccb), params(move(a)) {}
+
+  int Open(TextArea*) {
+    INFO("Connecting to vnc://", params.user, "@", params.hostport);
+    app->RunInNetworkThread([=](){
+      success_cb = bind(&RFBTerminalController::RFBLoginCB, this);
+      conn = RFBClient::Open(params, RFBClient::ResponseCB
+                             (bind(&RFBTerminalController::RFBReadCB, this, _1, _2)), &detach_cb, &success_cb);
+      if (!conn) { app->RunInMainThread(bind(&NetworkTerminalController::Dispose, this)); return; }
+    });
+    return -1;
+  }
+
+  StringPiece Read() {
+    if (conn && conn->state == Connection::Connected && NBReadable(conn->socket)) {
+      if (conn->Read() < 0)                                 { ERROR(conn->Name(), ": Read");       Close(); return ""; }
+      if (conn->rb.size() && conn->handler->Read(conn) < 0) { ERROR(conn->Name(), ": query read"); Close(); return ""; }
+    }
+    return StringPiece();
+  }
+
+  void RFBLoginCB() {}
+  void RFBReadCB(Connection *c, const StringPiece &b) {}
+};
+
+struct MyRFBTab : public TerminalTabInterface {
+  TerminalWindowInterface<TerminalTabInterface> *parent;
+  RFBTerminalController *rfb;
+  MyRFBTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P, RFBClient::Params a) :
+    TerminalTabInterface(W, 1.0, 1.0), parent(P) {
+    title = StrCat("VNC: ", a.hostport);
+    auto c = make_unique<RFBTerminalController>(this, app->net->tcp_client.get(), move(a), closed_cb);
+    rfb = c.get();
+    (controller = move(c))->Open(nullptr);
+  }
+
+  bool Animating() const { return false; }
+  void SetFontSize(int) {}
+  void ScrollDown() {}
+  void ScrollUp() {}
+
+  void Draw() {
+  }
+
+  int ReadAndUpdateTerminalFramebuffer() {
+    if (!controller) return 0;
+    StringPiece s = controller->Read();
+    if (s.len) {
+    }
+    return s.len;
+  }
+};
+
+struct MyTerminalWindow : public TerminalWindowInterface<TerminalTabInterface> {
   MyTerminalWindow(Window *W) : TerminalWindowInterface(W) {}
   virtual ~MyTerminalWindow() { for (auto t : tabs.tabs) delete t; }
 
-  MyTerminalTab *AddTab();
+  MyTerminalTab *AddTerminalTab();
+  TerminalTabInterface *AddRFBTab(RFBClient::Params p);
+  void InitTab(TerminalTabInterface*);
+
   void CloseActiveTab() {
-    MyTerminalTab *tab = tabs.top;
+    TerminalTabInterface *tab = tabs.top;
     if (!tab) return;
     tab->deleted_cb();
   }
@@ -480,24 +587,7 @@ struct MyTerminalWindow : public TerminalWindowInterface<MyTerminalTab> {
 #ifdef LFL_TERMINAL_JOIN_READS
     app->scheduler.ClearWakeupIn(root);
 #endif
-    bool effects = W->animating, downscale = effects && my_app->downscale_effects > 1;
-    Box draw_box = W->Box();
-    MyTerminalTab *tab = tabs.top;
-    if (!tab) return 0;
-
-    if (downscale) W->gd->RestoreViewport(DrawMode::_2D);
-    tab->terminal->CheckResized(draw_box);
-    if (downscale) {
-      float scale = tab->activeshader->scale = 1.0 / my_app->downscale_effects;
-      draw_box.y *= scale;
-      draw_box.h -= tab->terminal->extra_height * scale;
-    } else W->gd->DrawMode(DrawMode::_2D);
-
-    W->gd->DisableBlend();
-    tab->terminal->Draw(draw_box, downscale ? Terminal::DrawFlag::DrawCursor : Terminal::DrawFlag::Default,
-                        effects ? tab->activeshader : NULL);
-    if (effects) W->gd->UseShader(0);
-
+    if (tabs.top) tabs.top->Draw();
     W->DrawDialogs();
     if (FLAGS_draw_fps) W->default_font->Draw(StringPrintf("FPS = %.2f", app->FPS()), point(W->width*.85, 0));
     if (FLAGS_screenshot.size()) ONCE(W->shell->screenshot(vector<string>(1, FLAGS_screenshot)); app->run=0;);
@@ -513,7 +603,7 @@ struct MyTerminalWindow : public TerminalWindowInterface<MyTerminalTab> {
   }
 
   void UpdateTargetFPS() {
-    bool animating = tabs.top->CustomShader() || (root->console && root->console->animating);
+    bool animating = tabs.top->Animating() || (root->console && root->console->animating);
     app->scheduler.SetAnimating(root, animating);
     if (my_app->downscale_effects) app->SetDownScale(animating);
   }
@@ -525,7 +615,8 @@ struct MyTerminalWindow : public TerminalWindowInterface<MyTerminalTab> {
   }
 };
 
-inline MyTerminalTab *GetActiveTab() { return GetActiveWindow()->tabs.top; }
+inline TerminalTabInterface *GetActiveTab() { return GetActiveWindow()->tabs.top; }
+inline MyTerminalTab *GetActiveTerminalTab() { return dynamic_cast<MyTerminalTab*>(GetActiveTab()); }
 
 #ifdef LFL_MOBILE
 }; // namespace LFL
@@ -538,21 +629,36 @@ struct MyTerminalMenus { int unused; };
 
 MyAppState::~MyAppState() {}
   
-MyTerminalTab *MyTerminalWindow::AddTab() {
+MyTerminalTab *MyTerminalWindow::AddTerminalTab() {
   auto t = new MyTerminalTab(root, this);
+#ifdef LFL_MOBILE
+  t->terminal->line_fb.align_top_or_bot = t->terminal->cmd_fb.align_top_or_bot = true;
+#endif
+  InitTab(t);
+  return t;
+}
+
+TerminalTabInterface *MyTerminalWindow::AddRFBTab(RFBClient::Params p) {
+  auto t = new MyRFBTab(root, this, move(p));
+  InitTab(t);
+  return t;
+}
+
+void MyTerminalWindow::InitTab(TerminalTabInterface *t) {
 #ifdef LFL_MOBILE
   t->closed_cb = [=]() {
     t->deleted_cb();
-    my_app->menus->keyboard_toolbar->Show(false);
-    my_app->menus->hosts_nav->Show(true);
+    if (!tabs.top) {
+      my_app->menus->keyboard_toolbar->Show(false);
+      my_app->menus->hosts.view->DelNavigationButton(HAlign::Left);
+      my_app->menus->hosts_nav->Show(true);
+    }
   };
-  t->terminal->line_fb.align_top_or_bot = t->terminal->cmd_fb.align_top_or_bot = true;
 #else
   t->closed_cb = [](){ LFAppShutdown(); };
 #endif
   t->deleted_cb = [=](){ tabs.DelTab(t); app->RunInMainThread([=]{ delete t; }); };
   tabs.AddTab(t);
-  return t;
 }
 
 void MyWindowInit(Window *W) {
@@ -567,26 +673,31 @@ void MyWindowStart(Window *W) {
   auto tw = W->ReplaceGUI(0, make_unique<MyTerminalWindow>(W));
   if (FLAGS_console) W->InitConsole(bind(&MyTerminalWindow::ConsoleAnimatingCB, tw));
   W->frame_cb = bind(&MyTerminalWindow::Frame, tw, _1, _2, _3);
-  W->default_textbox = [=]{ return tw->tabs.top ? tw->tabs.top->terminal : nullptr; };
+  W->default_textbox = [=]() -> TextBox* { auto t = GetActiveTerminalTab(); return t ? t->terminal : nullptr; };
   W->shell = make_unique<Shell>();
   if (my_app->image_browser) W->shell->AddBrowserCommands(my_app->image_browser.get());
 
 #ifndef LFL_MOBILE                                                                                 
   app->scheduler.AddMainWaitMouse(W);
-  auto t = tw->AddTab();
-  ONCE_ELSE(t->UseInitialTerminalController(), t->UseDefaultTerminalController());
-  if (FLAGS_resize_grid) W->SetResizeIncrements(t->terminal->style.font->FixedWidth(),
-                                                t->terminal->style.font->Height());
+  TerminalTabInterface *t = nullptr;
+  ONCE_ELSE({ if (FLAGS_vnc.size()) t = tw->AddRFBTab(RFBClient::Params{FLAGS_vnc, FLAGS_login});
+              else { auto tt = tw->AddTerminalTab(); tt->UseInitialTerminalController(); t=tt; }
+              },   { auto tt = tw->AddTerminalTab(); tt->UseDefaultTerminalController(); t=tt; });
+  if (FLAGS_resize_grid)
+    if (auto tt = dynamic_cast<MyTerminalTab*>(t))
+      W->SetResizeIncrements(tt->terminal->style.font->FixedWidth(),
+                             tt->terminal->style.font->Height());
+
   BindMap *binds = W->AddInputController(make_unique<BindMap>());
 #ifndef WIN32
   binds->Add('n',       Key::Modifier::Cmd, Bind::CB(bind(&Application::CreateNewWindow, app)));
 #endif                  
-  binds->Add('t',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->AddTab()->UseDefaultTerminalController(); })));
+  binds->Add('t',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->AddTerminalTab()->UseDefaultTerminalController(); })));
   binds->Add('w',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->CloseActiveTab();      app->scheduler.Wakeup(W); })));
   binds->Add(']',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->tabs.SelectNextTab();  app->scheduler.Wakeup(W); })));
   binds->Add('[',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->tabs.SelectPrevTab();  app->scheduler.Wakeup(W); })));
-  binds->Add(Key::Up,   Key::Modifier::Cmd, Bind::CB(bind([=](){ t->terminal->ScrollUp();   app->scheduler.Wakeup(W); })));
-  binds->Add(Key::Down, Key::Modifier::Cmd, Bind::CB(bind([=](){ t->terminal->ScrollDown(); app->scheduler.Wakeup(W); })));
+  binds->Add(Key::Up,   Key::Modifier::Cmd, Bind::CB(bind([=](){ t->ScrollUp();             app->scheduler.Wakeup(W); })));
+  binds->Add(Key::Down, Key::Modifier::Cmd, Bind::CB(bind([=](){ t->ScrollDown();           app->scheduler.Wakeup(W); })));
   binds->Add('=',       Key::Modifier::Cmd, Bind::CB(bind([=](){ t->SetFontSize(W->default_font.desc.size + 1); })));
   binds->Add('-',       Key::Modifier::Cmd, Bind::CB(bind([=](){ t->SetFontSize(W->default_font.desc.size - 1); })));
   binds->Add('6',       Key::Modifier::Cmd, Bind::CB(bind([=](){ W->shell->console(vector<string>()); })));
@@ -668,29 +779,29 @@ extern "C" int MyAppMain() {
     MenuItem{ "=", "Zoom In" },
     MenuItem{ "-", "Zoom Out" },
 #endif
-    MenuItem{ "", "Fonts",        [=](){ if (auto t = GetActiveTab())    t->ChangeFont(StringVec()); } },
+    MenuItem{ "", "Fonts",        [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeFont(StringVec()); } },
     MenuItem{ "", "Transparency", [=](){ if (auto w = GetActiveWindow()) w->ShowTransparencyControls(); } },
-    MenuItem{ "", "VGA Colors",             [=](){ if (auto t = GetActiveTab()) t->ChangeColors("vga");             } },
-    MenuItem{ "", "Solarized Dark Colors",  [=](){ if (auto t = GetActiveTab()) t->ChangeColors("solarized_dark");  } },
-    MenuItem{ "", "Solarized Light Colors", [=](){ if (auto t = GetActiveTab()) t->ChangeColors("solarized_light"); } }
+    MenuItem{ "", "VGA Colors",             [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeColors("vga");             } },
+    MenuItem{ "", "Solarized Dark Colors",  [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeColors("solarized_dark");  } },
+    MenuItem{ "", "Solarized Light Colors", [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeColors("solarized_light"); } }
   });
   if (FLAGS_term.empty()) FLAGS_term = BlankNull(getenv("TERM"));
 #endif
 
   my_app->toys_menu = make_unique<SystemMenuView>("Toys", vector<MenuItem>{
-    MenuItem{ "", "None",         [=](){ if (auto t = GetActiveTab()) t->ChangeShader("none");     } },
-    MenuItem{ "", "Warper",       [=](){ if (auto t = GetActiveTab()) t->ChangeShader("warper");   } },
-    MenuItem{ "", "Water",        [=](){ if (auto t = GetActiveTab()) t->ChangeShader("water");    } },
-    MenuItem{ "", "Twistery",     [=](){ if (auto t = GetActiveTab()) t->ChangeShader("twistery"); } },
-    MenuItem{ "", "Fire",         [=](){ if (auto t = GetActiveTab()) t->ChangeShader("fire");     } },
-    MenuItem{ "", "Waves",        [=](){ if (auto t = GetActiveTab()) t->ChangeShader("waves");    } },
-    MenuItem{ "", "Emboss",       [=](){ if (auto t = GetActiveTab()) t->ChangeShader("emboss");   } },
-    MenuItem{ "", "Stormy",       [=](){ if (auto t = GetActiveTab()) t->ChangeShader("stormy");   } },
-    MenuItem{ "", "Alien",        [=](){ if (auto t = GetActiveTab()) t->ChangeShader("alien");    } },
-    MenuItem{ "", "Fractal",      [=](){ if (auto t = GetActiveTab()) t->ChangeShader("fractal");  } },
-    MenuItem{ "", "Darkly",       [=](){ if (auto t = GetActiveTab()) t->ChangeShader("darkly");   } },
+    MenuItem{ "", "None",         [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeShader("none");     } },
+    MenuItem{ "", "Warper",       [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeShader("warper");   } },
+    MenuItem{ "", "Water",        [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeShader("water");    } },
+    MenuItem{ "", "Twistery",     [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeShader("twistery"); } },
+    MenuItem{ "", "Fire",         [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeShader("fire");     } },
+    MenuItem{ "", "Waves",        [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeShader("waves");    } },
+    MenuItem{ "", "Emboss",       [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeShader("emboss");   } },
+    MenuItem{ "", "Stormy",       [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeShader("stormy");   } },
+    MenuItem{ "", "Alien",        [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeShader("alien");    } },
+    MenuItem{ "", "Fractal",      [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeShader("fractal");  } },
+    MenuItem{ "", "Darkly",       [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeShader("darkly");   } },
     MenuItem{ "", "<separator>" },
-    MenuItem{ "", "Controls",     [=](){ if (auto t = GetActiveTab()) t->ShowEffectsControls(); } } });
+    MenuItem{ "", "Controls",     [=](){ if (auto t = GetActiveTerminalTab()) t->ShowEffectsControls(); } } });
 
   MakeValueTuple(&my_app->shader_map, "warper", "water", "twistery");
   MakeValueTuple(&my_app->shader_map, "warper", "water", "twistery");
@@ -726,13 +837,14 @@ extern "C" int MyAppMain() {
   my_app->menus->hosts_nav->Show(true);
 #else
   auto tw = GetActiveWindow();
-  auto t = tw->tabs.top;
-  my_app->new_win_width  = t->terminal->style.font->FixedWidth() * t->terminal->term_width;
-  my_app->new_win_height = t->terminal->style.font->Height()     * t->terminal->term_height;
-  if (FLAGS_record.size()) t->record = make_unique<FlatFile>(FLAGS_record);
-  t->terminal->Draw(screen->Box());
-  INFO("Starting ", app->name, " ", screen->default_font.desc.name, " (w=", t->terminal->style.font->FixedWidth(),
-       ", h=", t->terminal->style.font->Height(), ", scale=", my_app->downscale_effects, ")");
+  if (auto t = dynamic_cast<MyTerminalTab*>(tw->tabs.top)) {
+    my_app->new_win_width  = t->terminal->style.font->FixedWidth() * t->terminal->term_width;
+    my_app->new_win_height = t->terminal->style.font->Height()     * t->terminal->term_height;
+    if (FLAGS_record.size()) t->record = make_unique<FlatFile>(FLAGS_record);
+    t->terminal->Draw(screen->Box());
+    INFO("Starting ", app->name, " ", screen->default_font.desc.name, " (w=", t->terminal->style.font->FixedWidth(),
+         ", h=", t->terminal->style.font->Height(), ", scale=", my_app->downscale_effects, ")");
+  }
 #endif
 
   return app->Main();

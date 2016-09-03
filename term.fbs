@@ -1,6 +1,6 @@
 namespace LFL.LTerminal;
 
-enum Protocol : int { SSH = 1, Telnet }
+enum Protocol : int { SSH=1, Telnet, RFB }
 enum TextEncoding : int { UTF8=1, ASCII=2 }
 enum DeleteMode : int { Normal=1, ControlH=2 }
 enum BeepType : int { None=0, Audio=1, Visual=2 }

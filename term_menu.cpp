@@ -26,8 +26,8 @@ MyLocalEncryptionViewController::MyLocalEncryptionViewController(MyTerminalMenus
 
 MyAppearanceViewController::MyAppearanceViewController(MyTerminalMenus *m) :
   view(make_unique<SystemTableView>("Appearance", "", vector<TableItem>{
-    TableItem("Font", "command", "", "", 0, 0, 0, [=](){ GetActiveTab()->ChangeFont(StringVec()); }),
-    TableItem("Toys", "command", "", "", 0, 0, 0, bind(&MyTerminalMenus::ShowToysMenu, m))
+    TableItem("Font", "command", "", ">", 0, 0, 0, [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeFont(StringVec()); }),
+    TableItem("Toys", "command", "", ">", 0, 0, 0, bind(&MyTerminalMenus::ShowToysMenu, m))
   })) {}
 
 MyKeyboardSettingsViewController::MyKeyboardSettingsViewController(MyTerminalMenus *m) :
@@ -58,7 +58,7 @@ MyGenKeyViewController::MyGenKeyViewController(MyTerminalMenus *m) {
     TableItem("Size", "separator", ""),
     TableItem("Bits", "select", "2048,4096")
   }, m->second_col);
-  view->AddNavigationButton(TableItem("Generate", "", "", "", 0, 0, 0, bind(&MyTerminalMenus::GenerateKey, m)), HAlign::Right);
+  view->AddNavigationButton(HAlign::Right, TableItem("Generate", "", "", "", 0, 0, 0, bind(&MyTerminalMenus::GenerateKey, m)));
 }
 
 bool MyGenKeyViewController::UpdateModelFromView(MyGenKeyModel *model) const {
@@ -76,9 +76,9 @@ bool MyGenKeyViewController::UpdateModelFromView(MyGenKeyModel *model) const {
 
 MyKeysViewController::MyKeysViewController(MyTerminalMenus *m, MyCredentialDB *mo, bool add) :
   menus(m), model(mo), add_or_edit(add), view(make_unique<SystemTableView>("Keys", "", vector<TableItem>{})) {
-  if (add_or_edit) view->AddNavigationButton(TableItem("+", "", "", "", 0, 0, 0, [=](){ m->hosts_nav->PushTable(m->newkey.view.get()); }), HAlign::Right);
+  if (add_or_edit) view->AddNavigationButton(HAlign::Right, TableItem("+", "", "", "", 0, 0, 0, [=](){ m->hosts_nav->PushTable(m->newkey.view.get()); }));
   else {
-    view->AddNavigationButton(TableItem("Edit", "", ""), HAlign::Right);
+    view->AddNavigationButton(HAlign::Right, TableItem("Edit", "", ""));
     view->SetEditableSection(0, 0, bind(&MyTerminalMenus::DeleteKey, m, _1, _2));
   }
   view->show_cb = bind(&MyKeysViewController::UpdateViewFromModel, this);
@@ -103,9 +103,9 @@ void MyKeysViewController::UpdateViewFromModel() {
 
 MyRunSettingsViewController::MyRunSettingsViewController(MyTerminalMenus *m) :
   view(make_unique<SystemTableView>("Settings", "", GetSchema(m, m->runsettings_nav.get()))) {
-  view->AddNavigationButton(TableItem("Back", "", "", "", 0, 0, 0,
-                                      bind(&SystemNavigationView::Show, m->runsettings_nav.get(), false)),
-                            HAlign::Left);
+  view->AddNavigationButton(HAlign::Left,
+                            TableItem("Back", "", "", "", 0, 0, 0,
+                                      bind(&SystemNavigationView::Show, m->runsettings_nav.get(), false)));
 }
 
 vector<TableItem> MyRunSettingsViewController::GetBaseSchema(MyTerminalMenus *m, SystemNavigationView *nav) {
@@ -156,9 +156,9 @@ vector<TableItem> MyAppSettingsViewController::GetSchema(MyTerminalMenus *m) {
     TableItem("Keys",                "command", "", ">", 0, m->key_icon,         0, bind(&SystemNavigationView::PushTable, m->hosts_nav.get(), m->editkeys  .view.get())),
     TableItem("Keep Display On",     "toggle",  ""),
     TableItem("", "separator", ""),
-    TableItem("About LTerminal",     "", ""),
-    TableItem("Support",             "", ""),
-    TableItem("Privacy",             "", "") };
+    TableItem("About LTerminal",     "", "", ">"),
+    TableItem("Support",             "", "", ">"),
+    TableItem("Privacy",             "", "", ">") };
 }
 
 void MyAppSettingsViewController::UpdateViewFromModel(const MyAppSettingsModel &model) {
@@ -250,6 +250,7 @@ bool MyQuickConnectViewController::UpdateModelFromView(MyHostModel *model, MyCre
                             &credtype, &cred})) return ERRORv(false, "parse quickconnect");
 
   model->displayname = StrCat(model->hostname, "@", model->username);
+  model->SetProtocol(prot);
   model->SetPort(atoi(port));
   auto ct = MyCredentialModel::GetCredentialType(credtype);
   if      (ct == CredentialType_Password) model->cred.Load(CredentialType_Password, cred);
@@ -276,6 +277,7 @@ bool MyNewHostViewController::UpdateModelFromView(MyHostModel *model, MyCredenti
   if (!view->GetSectionText(0, {&model->displayname, &prot, &model->hostname, &port, &model->username,
                             &credtype, &cred})) return ERRORv(false, "parse newhostconnect");
 
+  model->SetProtocol(prot);
   model->SetPort(atoi(port));
   auto ct = MyCredentialModel::GetCredentialType(credtype);
   if      (ct == CredentialType_Password) model->cred.Load(CredentialType_Password, cred);
@@ -314,6 +316,7 @@ bool MyUpdateHostViewController::UpdateModelFromView(MyHostModel *model, MyCrede
   if (!view->GetSectionText(0, {&model->displayname, &prot, &model->hostname, &port, &model->username,
                             &credtype, &cred})) return ERRORv(false, "parse updatehostconnect");
 
+  model->SetProtocol(prot);
   model->SetPort(atoi(port));
   auto ct = MyCredentialModel::GetCredentialType(credtype);
   if      (ct == CredentialType_Password) model->cred.Load(CredentialType_Password, cred);
@@ -334,7 +337,7 @@ vector<TableItem> MyHostsViewController::GetBaseSchema(MyTerminalMenus *m) {
 
 void MyHostsViewController::LoadFolderUI(MyHostDB *model) {
   CHECK(!menu);
-  view->AddNavigationButton(TableItem("Edit", "", ""), HAlign::Right);
+  view->AddNavigationButton(HAlign::Right, TableItem("Edit", "", ""));
   view->SetEditableSection(0, 0, bind(&MyTerminalMenus::DeleteHost, menus, _1, _2));
   view->show_cb = bind(&MyHostsViewController::UpdateViewFromModel, this, model);
 }
