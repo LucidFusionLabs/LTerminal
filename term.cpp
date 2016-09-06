@@ -515,7 +515,7 @@ struct MyTerminalTab : public TerminalTab {
   }
 };
 
-struct RFBTerminalController : public NetworkTerminalController {
+struct RFBTerminalController : public NetworkTerminalController, public KeyboardController, public MouseController {
   RFBClient::Params params;
   Texture *fb;
   RFBTerminalController(TerminalTabInterface *p, Service *s, RFBClient::Params a, const Callback &ccb, Texture *f) :
@@ -541,32 +541,37 @@ struct RFBTerminalController : public NetworkTerminalController {
     return StringPiece();
   }
 
+  int SendKeyEvent(InputEvent::Id event, bool down) {
+    if (conn && conn->state == Connection::Connected)
+      RFBClient::WriteKeyEvent(conn, InputEvent::GetKey(event), down);
+    return 1;
+  }
+
+  int SendMouseEvent(InputEvent::Id id, const point &p, int down, int flag) {
+    uint8_t buttons = app->input->MouseButton1Down() | app->input->MouseButton2Down()<<2;
+    if (conn && conn->state == Connection::Connected)
+      RFBClient::WritePointerEvent(conn, float(p.x) / parent->root->width * fb->width,
+                                   (1.0 - float(p.y) / parent->root->height) * fb->height, buttons);
+    return 1;
+  }
+
   bool LoadPasswordCB(string *out) { *out = my_app->passphrase_alert->RunModal(""); return true; }
   void RFBLoginCB() {}
 
   void RFBUpdateCB(Connection *c, const Box &b, int pf, const StringPiece &data) {
-    INFO("RFBUpdateCB box=", b.DebugString());
     CHECK(pf);
-    if (!data.buf) {
-      CHECK_EQ(0, b.x);
-      CHECK_EQ(0, b.y);
-      fb->Create(b.w, b.h, pf);
-    } else {
-      fb->UpdateGL(MakeUnsigned(data.buf), b, Texture::Flag::FlipY); 
-    }
+    if (!data.buf) { CHECK_EQ(0, b.x); CHECK_EQ(0, b.y); fb->Create(b.w, b.h, pf); }
+    else fb->UpdateGL(MakeUnsigned(data.buf), b, Texture::Flag::FlipY); 
   }
 };
 
-struct MyRFBTab : public TerminalTabInterface, public InputController {
+struct MyRFBTab : public TerminalTabInterface {
   TerminalWindowInterface<TerminalTabInterface> *parent;
   Texture fb;
   RFBTerminalController *rfb;
 
-  virtual ~MyRFBTab() { root->RemoveInputController(this); }
   MyRFBTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P, RFBClient::Params a) :
     TerminalTabInterface(W, 1.0, 1.0), parent(P) {
-    W->input.push_back(this);
-    InputController::Activate();
     title = StrCat("VNC: ", a.hostport);
     auto c = make_unique<RFBTerminalController>(this, app->net->tcp_client.get(), move(a),
                                                 [=](){ closed_cb(); }, &fb);
@@ -574,13 +579,12 @@ struct MyRFBTab : public TerminalTabInterface, public InputController {
     (controller = move(c))->Open(nullptr);
   }
 
-  bool Animating() const { return false; }
+  bool                Animating() const   { return false; }
+  MouseController    *GetMouseTarget()    { return rfb; }
+  KeyboardController *GetKeyboardTarget() { return rfb; }
   void SetFontSize(int) {}
   void ScrollDown() {}
   void ScrollUp() {}
-
-  void Button(InputEvent::Id event, bool down) { INFO("button"); }
-  void Move(InputEvent::Id event, point p, point d) { INFO("move"); }
 
   void Draw() {
     GraphicsContext gc(root->gd);
@@ -699,7 +703,8 @@ void MyWindowStart(Window *W) {
   auto tw = W->ReplaceGUI(0, make_unique<MyTerminalWindow>(W));
   if (FLAGS_console) W->InitConsole(bind(&MyTerminalWindow::ConsoleAnimatingCB, tw));
   W->frame_cb = bind(&MyTerminalWindow::Frame, tw, _1, _2, _3);
-  W->default_textbox = [=]() -> TextBox* { auto t = GetActiveTerminalTab(); return t ? t->terminal : nullptr; };
+  W->default_controller = [=]() -> MouseController* { if (auto t = GetActiveTab()) return t->GetMouseTarget();    return nullptr; };
+  W->default_textbox = [=]() -> KeyboardController* { if (auto t = GetActiveTab()) return t->GetKeyboardTarget(); return nullptr; };
   W->shell = make_unique<Shell>(W);
   if (my_app->image_browser) W->shell->AddBrowserCommands(my_app->image_browser.get());
 

@@ -32,6 +32,10 @@ struct TerminalTabInterface : public Dialog {
   virtual void SetFontSize(int) = 0;
   virtual void ScrollUp() = 0;
   virtual void ScrollDown() = 0;
+  virtual MouseController *GetMouseTarget() = 0;
+  virtual KeyboardController *GetKeyboardTarget() = 0;
+  virtual void TakeFocus() { root->active_textbox = GetKeyboardTarget();     root->active_controller = GetMouseTarget(); }
+  virtual void LoseFocus() { root->active_textbox = root->default_textbox(); root->active_controller = root->default_controller(); }
 };
 
 struct TerminalControllerInterface : public Terminal::Controller {
@@ -152,10 +156,10 @@ template <class TerminalType> struct TerminalTabT : public TerminalTabInterface 
 
   virtual ~TerminalTabT() {}
   virtual void OpenedController() {}
-  virtual void TakeFocus()  { terminal->Activate(); }
-  virtual void LoseFocus()  { terminal->Deactivate(); }
   virtual void ScrollUp()   { terminal->ScrollUp(); }
   virtual void ScrollDown() { terminal->ScrollDown(); }
+  virtual MouseController    *GetMouseTarget()    { return &terminal->mouse; }
+  virtual KeyboardController *GetKeyboardTarget() { return terminal; }
 
   void ChangeController(unique_ptr<Terminal::Controller> new_controller) {
     if (auto ic = dynamic_cast<InteractiveTerminalController*>(controller.get())) ic->done = true;
