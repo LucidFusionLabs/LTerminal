@@ -48,7 +48,6 @@ namespace LFL {
 DEFINE_string(ssh,             "",     "SSH to host");
 DEFINE_string(login,           "",     "SSH user");
 DEFINE_string(keyfile,         "",     "SSH private key");
-DEFINE_string(startup_command, "",     "SSH startup command");
 DEFINE_bool  (compress,        false,  "SSH compression");
 DEFINE_bool  (forward_agent,   false,  "SSH agent forwarding");
 DEFINE_string(forward_local,   "",     "Forward local_port:remote_host:remote_port");
@@ -79,7 +78,10 @@ template <class X> struct TerminalWindowInterface : public GUI {
 struct MyTerminalMenus;
 struct MyTerminalTab;
 struct MyTerminalWindow;
-inline MyTerminalWindow *GetActiveWindow() { return screen ? screen->GetOwnGUI<MyTerminalWindow>(0) : 0; }
+inline MyTerminalWindow *GetActiveWindow() {
+  if (auto w = app->focused) return w->GetOwnGUI<MyTerminalWindow>(0);
+  else                       return nullptr;
+}
 
 struct MyAppState {
   unordered_map<string, Shader> shader_map;
@@ -127,7 +129,7 @@ struct PTYTerminalController : public TerminalControllerInterface {
   ReadBuffer read_buf;
   PTYTerminalController(TerminalTabInterface *p) : TerminalControllerInterface(p), read_buf(65536) {}
   virtual ~PTYTerminalController() {
-    if (process.in) app->scheduler.DelMainWaitSocket(screen, fileno(process.in));
+    if (process.in) app->scheduler.DelMainWaitSocket(app->focused, fileno(process.in));
   }
 
   int Open(TextArea*) {
@@ -158,7 +160,7 @@ struct PTYTerminalController : public TerminalControllerInterface {
 
   void Close() {
     if (process.in) {
-      app->scheduler.DelMainWaitSocket(screen, fileno(process.in));
+      app->scheduler.DelMainWaitSocket(app->focused, fileno(process.in));
       process.Close();
     }
   }
@@ -281,7 +283,7 @@ struct ShellTerminalController : public InteractiveTerminalController {
     string host, login;
     ParseHostAndLogin(arg, &host, &login);
     if (login.empty() || host.empty()) { if (term) term->Write(ssh_usage); }
-    else ssh_cb(SSHClient::Params{host, login, FLAGS_term, FLAGS_startup_command, FLAGS_compress,
+    else ssh_cb(SSHClient::Params{host, login, FLAGS_term, FLAGS_command, FLAGS_compress,
                 FLAGS_forward_agent, false});
   }
 #endif
@@ -427,7 +429,7 @@ struct MyTerminalTab : public TerminalTab {
     else if (FLAGS_interpreter)     return UseShellTerminalController("");
 #ifdef LFL_CRYPTO
     else if (FLAGS_ssh.size())      return UseSSHTerminalController
-      (SSHClient::Params{FLAGS_ssh, FLAGS_login, FLAGS_term, FLAGS_startup_command, FLAGS_compress,
+      (SSHClient::Params{FLAGS_ssh, FLAGS_login, FLAGS_term, FLAGS_command, FLAGS_compress,
        FLAGS_forward_agent, 0});
 #endif
     else if (FLAGS_telnet.size())   return UseTelnetTerminalController(FLAGS_telnet);
@@ -515,15 +517,17 @@ struct MyTerminalTab : public TerminalTab {
 
 struct RFBTerminalController : public NetworkTerminalController {
   RFBClient::Params params;
-  RFBTerminalController(TerminalTabInterface *p, Service *s, RFBClient::Params a, const Callback &ccb) :
-    NetworkTerminalController(p, s, a.hostport, ccb), params(move(a)) {}
+  Texture *fb;
+  RFBTerminalController(TerminalTabInterface *p, Service *s, RFBClient::Params a, const Callback &ccb, Texture *f) :
+    NetworkTerminalController(p, s, a.hostport, ccb), params(move(a)), fb(f) {}
 
   int Open(TextArea*) {
     INFO("Connecting to vnc://", params.user, "@", params.hostport);
     app->RunInNetworkThread([=](){
       success_cb = bind(&RFBTerminalController::RFBLoginCB, this);
-      conn = RFBClient::Open(params, RFBClient::ResponseCB
-                             (bind(&RFBTerminalController::RFBReadCB, this, _1, _2)), &detach_cb, &success_cb);
+      conn = RFBClient::Open(params, bind(&RFBTerminalController::LoadPasswordCB, this, _1), 
+                             bind(&RFBTerminalController::RFBUpdateCB, this, _1, _2, _3, _4),
+                             &detach_cb, &success_cb);
       if (!conn) { app->RunInMainThread(bind(&NetworkTerminalController::Dispose, this)); return; }
     });
     return -1;
@@ -537,17 +541,35 @@ struct RFBTerminalController : public NetworkTerminalController {
     return StringPiece();
   }
 
+  bool LoadPasswordCB(string *out) { *out = my_app->passphrase_alert->RunModal(""); return true; }
   void RFBLoginCB() {}
-  void RFBReadCB(Connection *c, const StringPiece &b) {}
+
+  void RFBUpdateCB(Connection *c, const Box &b, int pf, const StringPiece &data) {
+    INFO("RFBUpdateCB box=", b.DebugString());
+    CHECK(pf);
+    if (!data.buf) {
+      CHECK_EQ(0, b.x);
+      CHECK_EQ(0, b.y);
+      fb->Create(b.w, b.h, pf);
+    } else {
+      fb->UpdateGL(MakeUnsigned(data.buf), b, Texture::Flag::FlipY); 
+    }
+  }
 };
 
-struct MyRFBTab : public TerminalTabInterface {
+struct MyRFBTab : public TerminalTabInterface, public InputController {
   TerminalWindowInterface<TerminalTabInterface> *parent;
+  Texture fb;
   RFBTerminalController *rfb;
+
+  virtual ~MyRFBTab() { root->RemoveInputController(this); }
   MyRFBTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P, RFBClient::Params a) :
     TerminalTabInterface(W, 1.0, 1.0), parent(P) {
+    W->input.push_back(this);
+    InputController::Activate();
     title = StrCat("VNC: ", a.hostport);
-    auto c = make_unique<RFBTerminalController>(this, app->net->tcp_client.get(), move(a), closed_cb);
+    auto c = make_unique<RFBTerminalController>(this, app->net->tcp_client.get(), move(a),
+                                                [=](){ closed_cb(); }, &fb);
     rfb = c.get();
     (controller = move(c))->Open(nullptr);
   }
@@ -557,15 +579,19 @@ struct MyRFBTab : public TerminalTabInterface {
   void ScrollDown() {}
   void ScrollUp() {}
 
+  void Button(InputEvent::Id event, bool down) { INFO("button"); }
+  void Move(InputEvent::Id event, point p, point d) { INFO("move"); }
+
   void Draw() {
+    GraphicsContext gc(root->gd);
+    Box draw_box = root->Box();
+    root->gd->DisableBlend();
+    fb.DrawCrimped(root->gd, draw_box, 1, 0, 0);
   }
 
   int ReadAndUpdateTerminalFramebuffer() {
     if (!controller) return 0;
-    StringPiece s = controller->Read();
-    if (s.len) {
-    }
-    return s.len;
+    return controller->Read().len;
   }
 };
 
@@ -674,7 +700,7 @@ void MyWindowStart(Window *W) {
   if (FLAGS_console) W->InitConsole(bind(&MyTerminalWindow::ConsoleAnimatingCB, tw));
   W->frame_cb = bind(&MyTerminalWindow::Frame, tw, _1, _2, _3);
   W->default_textbox = [=]() -> TextBox* { auto t = GetActiveTerminalTab(); return t ? t->terminal : nullptr; };
-  W->shell = make_unique<Shell>();
+  W->shell = make_unique<Shell>(W);
   if (my_app->image_browser) W->shell->AddBrowserCommands(my_app->image_browser.get());
 
 #ifndef LFL_MOBILE                                                                                 
@@ -716,13 +742,13 @@ extern "C" void MyAppCreate(int argc, const char* const* argv) {
   FLAGS_enable_video = FLAGS_enable_input = 1;
   app = new Application(argc, argv);
   my_app = new MyAppState();
-  screen = new Window();
+  app->focused = new Window();
   app->name = "LTerminal";
   app->exit_cb = []() { delete my_app; };
   app->window_closed_cb = MyWindowClosed;
   app->window_start_cb = MyWindowStart;
   app->window_init_cb = MyWindowInit;
-  app->window_init_cb(screen);
+  app->window_init_cb(app->focused);
 #ifdef LFL_MOBILE
   my_app->downscale_effects = app->SetExtraScale(true);
   app->SetTitleBar(false);
@@ -810,6 +836,7 @@ extern "C" int MyAppMain() {
   MakeValueTuple(&my_app->shader_map, "darkly");
 
 #ifdef LFL_CRYPTO
+  Crypto::PublicKeyInit();
   if (FLAGS_keygen.size()) {
     string pw = my_app->passphrase_alert->RunModal(""), fn="identity", pubkey, privkey;
     if (!Crypto::GenerateKey(FLAGS_keygen, FLAGS_bits, pw, "", &pubkey, &privkey))
@@ -831,7 +858,7 @@ extern "C" int MyAppMain() {
     CHECK(app->CreateNetworkThread(false, true));
   }
 
-  app->StartNewWindow(screen);
+  app->StartNewWindow(app->focused);
 #ifdef LFL_MOBILE
   my_app->menus = make_unique<MyTerminalMenus>();
   my_app->menus->hosts_nav->Show(true);
@@ -841,8 +868,8 @@ extern "C" int MyAppMain() {
     my_app->new_win_width  = t->terminal->style.font->FixedWidth() * t->terminal->term_width;
     my_app->new_win_height = t->terminal->style.font->Height()     * t->terminal->term_height;
     if (FLAGS_record.size()) t->record = make_unique<FlatFile>(FLAGS_record);
-    t->terminal->Draw(screen->Box());
-    INFO("Starting ", app->name, " ", screen->default_font.desc.name, " (w=", t->terminal->style.font->FixedWidth(),
+    t->terminal->Draw(app->focused->Box());
+    INFO("Starting ", app->name, " ", app->focused->default_font.desc.name, " (w=", t->terminal->style.font->FixedWidth(),
          ", h=", t->terminal->style.font->Height(), ", scale=", my_app->downscale_effects, ")");
   }
 #endif

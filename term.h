@@ -101,7 +101,7 @@ struct InteractiveTerminalController : public TerminalControllerInterface {
   };
 
   InteractiveTerminalController(TerminalTabInterface *p) :
-    TerminalControllerInterface(p), cmd(FontDesc::Default()) {
+    TerminalControllerInterface(p), shell(nullptr), cmd(FontDesc::Default()) {
     cmd.runcb = bind(&Shell::Run, &shell, _1);
     cmd.ReadHistory(app->savedir, "shell");
     frame_on_keyboard_input = true;

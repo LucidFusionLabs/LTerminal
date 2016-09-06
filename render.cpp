@@ -30,7 +30,7 @@ using namespace LFL;
 
 extern "C" void MyAppCreate(int argc, const char* const* argv) {
   app = new Application(argc, argv);
-  screen = new Window();
+  app->focused = new Window();
   app->name = "LTerminalRenderSandbox";
   app->log_pid = true;
 }
@@ -40,7 +40,7 @@ extern "C" int MyAppMain() {
   int optind = Singleton<FlagMap>::Get()->optind;
   if (optind >= app->argc) { fprintf(stderr, "Usage: %s [-flags] <socket-name>\n", app->argv[0]); return -1; }
   // if (app->Init()) return -1;
-  screen->gd = CreateGraphicsDevice(2).release();
+  app->focused->gd = CreateGraphicsDevice(app->focused, 2).release();
   app->net = make_unique<Network>();
   (app->asset_loader = make_unique<AssetLoader>())->Init();
 
