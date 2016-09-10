@@ -68,11 +68,23 @@ DEFINE_bool  (resize_grid,     true,   "Resize window in glyph bound increments"
 DEFINE_FLAG(dim, point, point(80,25),  "Initial terminal dimensions");
 extern FlagOfType<bool> FLAGS_enable_network_;
 
+#ifdef LFL_CRYPTO
+static bool ParsePortForward(const string &text, vector<SSHClient::Params::Forward> *out) {
+  vector<string> v;
+  Split(text, isint<':'>, &v);
+  if (v.size() != 3) return false;
+  int port1 = atoi(v[0]), port2 = atoi(v[2]);
+  if (port1 <= 0 || port2 <= 0) return false;
+  out->push_back(SSHClient::Params::Forward{ port1, v[1], port2 });
+  return true;
+}
+#endif
+
 template <class X> struct TerminalWindowInterface : public GUI {
   TabbedDialog<X> tabs;
   TerminalWindowInterface(Window *W) : GUI(W), tabs(this) {}
   virtual void UpdateTargetFPS() = 0;
-  virtual X *AddRFBTab(RFBClient::Params p) = 0;
+  virtual X *AddRFBTab(RFBClient::Params p, string) = 0;
 };
 
 struct MyTerminalMenus;
@@ -176,8 +188,19 @@ struct SSHTerminalController : public NetworkTerminalController {
   shared_ptr<SSHClient::Identity> identity;
   string fingerprint, password;
   int fingerprint_type=0;
+  unordered_set<Socket> forward_fd;
+
   SSHTerminalController(TerminalTabInterface *p, Service *s, SSHClient::Params a, const Callback &ccb) :
-    NetworkTerminalController(p, s, a.hostport, ccb), params(move(a)) {}
+    NetworkTerminalController(p, s, a.hostport, ccb), params(move(a)) {
+    for (auto &f : params.forward_local) ForwardLocalPort(f.local, f.host, f.port);
+  }
+
+  virtual ~SSHTerminalController() {
+    for (auto &fd : forward_fd) {
+      app->scheduler.DelMainWaitSocket(parent->root, fd);
+      SystemNetwork::CloseSocket(fd);
+    }
+  }
 
   int Open(TextArea *t) {
     Terminal *term = dynamic_cast<Terminal*>(t);
@@ -253,6 +276,56 @@ struct SSHTerminalController : public NetworkTerminalController {
     swap(read_buf, ret_buf);
     read_buf.clear();
     return ret_buf;
+  }
+
+  bool ForwardLocalPort(int port, const string &remote_h, int remote_p) {
+    Socket fd = SystemNetwork::Listen(Protocol::TCP, IPV4::Parse("127.0.0.1"), port, 1, false);
+    if (fd == InvalidSocket) return ERRORv(false, "listen ", port);
+    app->scheduler.AddMainWaitSocket
+      (parent->root, fd, SocketSet::READABLE, bind(&SSHTerminalController ::LocalForwardAcceptCB, this, fd, remote_h, remote_p));
+    forward_fd.insert(fd);
+    return true;
+  }
+
+  bool LocalForwardAcceptCB(Socket listen_fd, const string &remote_h, int remote_p) {
+    IPV4::Addr accept_addr = 0;
+    int accept_port = 0;
+    Socket fd = SystemNetwork::Accept(listen_fd, &accept_addr, &accept_port);
+    if (!conn || conn->state != Connection::Connected) { SystemNetwork::CloseSocket(fd); return ERRORv(false, "no conn"); }
+    SSHClient::Channel *chan = SSHClient::OpenTCPChannel
+      (conn, IPV4::Text(accept_addr), accept_port, remote_h, remote_p,
+       bind(&SSHTerminalController::LocalForwardRemoteReadCB, this, fd, _1, _2, _3));
+    if (!chan) { SystemNetwork::CloseSocket(fd); return ERRORv(false, "open chan"); } 
+    app->scheduler.AddMainWaitSocket
+      (parent->root, fd, SocketSet::READABLE, bind(&SSHTerminalController::LocalForwardLocalReadCB, this, fd, chan));
+    forward_fd.insert(fd);
+    return false;
+  }
+
+  bool LocalForwardLocalReadCB(Socket fd, SSHClient::Channel *chan) {
+    string buf(4096, 0);
+    int l = ::recv(fd, &buf[0], buf.size(), 0);
+    if (l <= 0) return ERRORv(false, "recv");
+    buf.resize(l);
+    if (!chan->opened) chan->buf.append(buf);
+    else if (!SSHClient::WriteToChannel(conn, chan, buf)) ERROR("write");
+    return false;
+  }
+
+  int LocalForwardRemoteReadCB(Socket fd, Connection*, SSHClient::Channel *chan, const StringPiece &b) {
+    if (!chan->opened) {
+      app->scheduler.DelMainWaitSocket(parent->root, fd);
+      SystemNetwork::CloseSocket(fd);
+      forward_fd.erase(fd);
+    } else if (!b.len) {
+      if (chan->buf.size()) {
+        if (!SSHClient::WriteToChannel(conn, chan, chan->buf)) return ERRORv(-1, "write");
+        chan->buf.clear();
+      }
+    } else {
+      if (::send(fd, b.data(), b.size(), 0) != b.size()) return ERRORv(-1, "write");
+    }
+    return 0;
   }
 };
 #endif
@@ -386,7 +459,7 @@ struct MyTerminalTab : public TerminalTab {
 #ifdef LFL_CRYPTO
     c->ssh_cb = [=](SSHClient::Params p){ UseSSHTerminalController(move(p)); };
 #endif
-    c->vnc_cb = [=](RFBClient::Params p){ parent->AddRFBTab(move(p)); };
+    c->vnc_cb = [=](RFBClient::Params p){ parent->AddRFBTab(move(p), ""); };
     ChangeController(move(c));
   }
 
@@ -428,12 +501,16 @@ struct MyTerminalTab : public TerminalTab {
     if      (FLAGS_playback.size()) return UsePlaybackTerminalController(make_unique<FlatFile>(FLAGS_playback));
     else if (FLAGS_interpreter)     return UseShellTerminalController("");
 #ifdef LFL_CRYPTO
-    else if (FLAGS_ssh.size())      return UseSSHTerminalController
-      (SSHClient::Params{FLAGS_ssh, FLAGS_login, FLAGS_term, FLAGS_command, FLAGS_compress,
-       FLAGS_forward_agent, 0});
+    else if (FLAGS_ssh.size()) {
+      SSHClient::Params params{FLAGS_ssh, FLAGS_login, FLAGS_term, FLAGS_command, FLAGS_compress,
+        FLAGS_forward_agent, 0};
+      if (FLAGS_forward_local .size()) ParsePortForward(FLAGS_forward_local,  &params.forward_local);
+      if (FLAGS_forward_remote.size()) ParsePortForward(FLAGS_forward_remote, &params.forward_remote);
+      return UseSSHTerminalController(params);
+    }
 #endif
-    else if (FLAGS_telnet.size())   return UseTelnetTerminalController(FLAGS_telnet);
-    else                            return UseDefaultTerminalController();
+    else if (FLAGS_telnet.size()) return UseTelnetTerminalController(FLAGS_telnet);
+    else                          return UseDefaultTerminalController();
   }
 
   void OpenedController() {
@@ -517,8 +594,9 @@ struct MyTerminalTab : public TerminalTab {
 
 struct RFBTerminalController : public NetworkTerminalController, public KeyboardController, public MouseController {
   RFBClient::Params params;
-  Texture *fb;
-  RFBTerminalController(TerminalTabInterface *p, Service *s, RFBClient::Params a, const Callback &ccb, Texture *f) :
+  FrameBuffer *fb;
+  string password;
+  RFBTerminalController(TerminalTabInterface *p, Service *s, RFBClient::Params a, const Callback &ccb, FrameBuffer *f) :
     NetworkTerminalController(p, s, a.hostport, ccb), params(move(a)), fb(f) {}
 
   int Open(TextArea*) {
@@ -527,6 +605,7 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
       success_cb = bind(&RFBTerminalController::RFBLoginCB, this);
       conn = RFBClient::Open(params, bind(&RFBTerminalController::LoadPasswordCB, this, _1), 
                              bind(&RFBTerminalController::RFBUpdateCB, this, _1, _2, _3, _4),
+                             bind(&RFBTerminalController::RFBCopyCB, this, _1, _2, _3),
                              &detach_cb, &success_cb);
       if (!conn) { app->RunInMainThread(bind(&NetworkTerminalController::Dispose, this)); return; }
     });
@@ -555,27 +634,47 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
     return 1;
   }
 
-  bool LoadPasswordCB(string *out) { *out = my_app->passphrase_alert->RunModal(""); return true; }
+  bool LoadPasswordCB(string *out) {
+#ifdef LFL_MOBILE
+    *out = move(password);
+    return true;
+#else
+    *out = my_app->passphrase_alert->RunModal("");
+    return true;
+#endif
+  }
+
   void RFBLoginCB() {}
 
   void RFBUpdateCB(Connection *c, const Box &b, int pf, const StringPiece &data) {
-    CHECK(pf);
-    if (!data.buf) { CHECK_EQ(0, b.x); CHECK_EQ(0, b.y); fb->Create(b.w, b.h, pf); }
-    else fb->UpdateGL(MakeUnsigned(data.buf), b, Texture::Flag::FlipY); 
+    if (!data.buf) {
+      CHECK_EQ(0, b.x);
+      CHECK_EQ(0, b.y);
+      fb->Create(b.w, b.h, FrameBuffer::Flag::CreateTexture | FrameBuffer::Flag::ReleaseFB);
+    } else fb->tex.UpdateGL(MakeUnsigned(data.buf), b, pf, Texture::Flag::FlipY); 
+  }
+
+  void RFBCopyCB(Connection *c, const Box &b, point copy_from) {
+    fb->Attach();
+    fb->tex.Bind();
+    fb->gd->CopyTexSubImage2D(fb->tex.GLTexType(), 0, b.x, fb->tex.height - b.y - b.h,
+                              copy_from.x, copy_from.y, b.w, b.h);
+    fb->Release();
   }
 };
 
 struct MyRFBTab : public TerminalTabInterface {
   TerminalWindowInterface<TerminalTabInterface> *parent;
-  Texture fb;
+  FrameBuffer fb;
   RFBTerminalController *rfb;
 
-  MyRFBTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P, RFBClient::Params a) :
-    TerminalTabInterface(W, 1.0, 1.0), parent(P) {
+  MyRFBTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P, RFBClient::Params a, string pw) :
+    TerminalTabInterface(W, 1.0, 1.0), parent(P), fb(root->gd) {
     title = StrCat("VNC: ", a.hostport);
     auto c = make_unique<RFBTerminalController>(this, app->net->tcp_client.get(), move(a),
                                                 [=](){ closed_cb(); }, &fb);
     rfb = c.get();
+    rfb->password = move(pw);
     (controller = move(c))->Open(nullptr);
   }
 
@@ -590,7 +689,7 @@ struct MyRFBTab : public TerminalTabInterface {
     GraphicsContext gc(root->gd);
     Box draw_box = root->Box();
     root->gd->DisableBlend();
-    fb.DrawCrimped(root->gd, draw_box, 1, 0, 0);
+    fb.tex.DrawCrimped(root->gd, draw_box, 1, 0, 0);
   }
 
   int ReadAndUpdateTerminalFramebuffer() {
@@ -604,7 +703,7 @@ struct MyTerminalWindow : public TerminalWindowInterface<TerminalTabInterface> {
   virtual ~MyTerminalWindow() { for (auto t : tabs.tabs) delete t; }
 
   MyTerminalTab *AddTerminalTab();
-  TerminalTabInterface *AddRFBTab(RFBClient::Params p);
+  TerminalTabInterface *AddRFBTab(RFBClient::Params p, string);
   void InitTab(TerminalTabInterface*);
 
   void CloseActiveTab() {
@@ -668,8 +767,8 @@ MyTerminalTab *MyTerminalWindow::AddTerminalTab() {
   return t;
 }
 
-TerminalTabInterface *MyTerminalWindow::AddRFBTab(RFBClient::Params p) {
-  auto t = new MyRFBTab(root, this, move(p));
+TerminalTabInterface *MyTerminalWindow::AddRFBTab(RFBClient::Params p, string pw) {
+  auto t = new MyRFBTab(root, this, move(p), move(pw));
   InitTab(t);
   return t;
 }
@@ -711,7 +810,7 @@ void MyWindowStart(Window *W) {
 #ifndef LFL_MOBILE                                                                                 
   app->scheduler.AddMainWaitMouse(W);
   TerminalTabInterface *t = nullptr;
-  ONCE_ELSE({ if (FLAGS_vnc.size()) t = tw->AddRFBTab(RFBClient::Params{FLAGS_vnc, FLAGS_login});
+  ONCE_ELSE({ if (FLAGS_vnc.size()) t = tw->AddRFBTab(RFBClient::Params{FLAGS_vnc, FLAGS_login}, "");
               else { auto tt = tw->AddTerminalTab(); tt->UseInitialTerminalController(); t=tt; }
               },   { auto tt = tw->AddTerminalTab(); tt->UseDefaultTerminalController(); t=tt; });
   if (FLAGS_resize_grid)

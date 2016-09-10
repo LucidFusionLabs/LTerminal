@@ -231,7 +231,7 @@ MyQuickConnectViewController::MyQuickConnectViewController(MyTerminalMenus *m) :
 
 vector<TableItem> MyQuickConnectViewController::GetSchema(MyTerminalMenus *m) {
   return vector<TableItem>{
-    TableItem("Protocol,SSH,Telnet", "dropdown,textinput,textinput", ",\x01Hostname,\x01Hostname"),
+    TableItem("Protocol,SSH,Telnet,VNC", "dropdown,textinput,textinput,textinput", ",\x01Hostname,\x01Hostname,\x01Hostname"),
     TableItem("Port", "numinput", "\x02""22"),
     TableItem("Username", "textinput", "\x01Username"),
     TableItem("Credential,Password,Key", "dropdown,pwinput,label", StrCat("nocontrol,", m->pw_default, ","),

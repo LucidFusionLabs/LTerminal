@@ -190,6 +190,7 @@ struct MyHostModel {
   void SetProtocol(const string &p) {
     if      (p == "SSH")    protocol = LTerminal::Protocol_SSH;
     else if (p == "Telnet") protocol = LTerminal::Protocol_Telnet;
+    else if (p == "VNC")    protocol = LTerminal::Protocol_RFB;
     else { FATAL("unknown protocol"); }
   }
 
@@ -197,6 +198,7 @@ struct MyHostModel {
     if (p) port = p;
     else if (protocol == LTerminal::Protocol_SSH)    port = 22;
     else if (protocol == LTerminal::Protocol_Telnet) port = 23;
+    else if (protocol == LTerminal::Protocol_RFB)    port = 5900;
     else { FATAL("unknown protocol"); }
   }
 
@@ -675,7 +677,8 @@ struct MyTerminalMenus {
     } else if (host.protocol == LTerminal::Protocol_Telnet) {
       GetActiveWindow()->AddTerminalTab()->UseTelnetTerminalController(host.Hostport());
     } else if (host.protocol == LTerminal::Protocol_RFB) {
-      GetActiveWindow()->AddRFBTab(RFBClient::Params{host.Hostport(), host.username});
+      GetActiveWindow()->AddRFBTab(RFBClient::Params{host.Hostport(), host.username},
+                                   host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "");
     }
     MenuStartSession();
   }
