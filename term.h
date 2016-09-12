@@ -48,6 +48,7 @@ struct NetworkTerminalController : public TerminalControllerInterface {
   Connection *conn=0;
   Callback detach_cb, close_cb, success_cb;
   string remote, read_buf, ret_buf;
+  bool success_on_connect=false;
   NetworkTerminalController(TerminalTabInterface *p, Service *s, const string &r, const Callback &ccb) :
     TerminalControllerInterface(p), svc(s), detach_cb(bind(&NetworkTerminalController::ConnectedCB, this)),
     close_cb(ccb), remote(r) {}
@@ -73,6 +74,7 @@ struct NetworkTerminalController : public TerminalControllerInterface {
   virtual void ConnectedCB() {
     if (app->network_thread) app->scheduler.AddMainWaitSocket
       (parent->root, conn->socket, SocketSet::READABLE, bind(&TerminalTabInterface::ControllerReadableCB, parent));
+    if (success_on_connect && success_cb) success_cb();
   }
 
   virtual StringPiece Read() {

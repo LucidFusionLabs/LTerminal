@@ -84,7 +84,7 @@ template <class X> struct TerminalWindowInterface : public GUI {
   TabbedDialog<X> tabs;
   TerminalWindowInterface(Window *W) : GUI(W), tabs(this) {}
   virtual void UpdateTargetFPS() = 0;
-  virtual X *AddRFBTab(RFBClient::Params p, string) = 0;
+  virtual X *AddRFBTab(RFBClient::Params p, string, Callback savehost_cb=Callback()) = 0;
 };
 
 struct MyTerminalMenus;
@@ -282,14 +282,14 @@ struct SSHTerminalController : public NetworkTerminalController {
     Socket fd = SystemNetwork::Listen(Protocol::TCP, IPV4::Parse("127.0.0.1"), port, 1, false);
     if (fd == InvalidSocket) return ERRORv(false, "listen ", port);
     app->scheduler.AddMainWaitSocket
-      (parent->root, fd, SocketSet::READABLE, bind(&SSHTerminalController ::LocalForwardAcceptCB, this, fd, remote_h, remote_p));
+      (parent->root, fd, SocketSet::READABLE, bind(&SSHTerminalController::LocalForwardAcceptCB, this, fd, remote_h, remote_p));
     forward_fd.insert(fd);
     return true;
   }
 
   bool LocalForwardAcceptCB(Socket listen_fd, const string &remote_h, int remote_p) {
-    IPV4::Addr accept_addr = 0;
     int accept_port = 0;
+    IPV4::Addr accept_addr = 0;
     Socket fd = SystemNetwork::Accept(listen_fd, &accept_addr, &accept_port);
     if (!conn || conn->state != Connection::Connected) { SystemNetwork::CloseSocket(fd); return ERRORv(false, "no conn"); }
     SSHClient::Channel *chan = SSHClient::OpenTCPChannel
@@ -305,27 +305,39 @@ struct SSHTerminalController : public NetworkTerminalController {
   bool LocalForwardLocalReadCB(Socket fd, SSHClient::Channel *chan) {
     string buf(4096, 0);
     int l = ::recv(fd, &buf[0], buf.size(), 0);
-    if (l <= 0) return ERRORv(false, "recv");
+    if (l <= 0) { LocalForwardLocalCloseCB(fd, chan); return false; }
     buf.resize(l);
     if (!chan->opened) chan->buf.append(buf);
-    else if (!SSHClient::WriteToChannel(conn, chan, buf)) ERROR("write");
+    else if (!SSHClient::WriteToChannel(conn, chan, buf)) ERROR(conn->Name(), ": write");
     return false;
   }
 
+  void LocalForwardLocalCloseCB(Socket fd, SSHClient::Channel *chan) {
+    if (!SSHClient::CloseChannel(conn, chan)) ERROR(conn->Name(), ": write");
+    app->scheduler.DelMainWaitSocket(parent->root, fd);
+    SystemNetwork::CloseSocket(fd);
+    forward_fd.erase(fd);
+  }
+
   int LocalForwardRemoteReadCB(Socket fd, Connection*, SSHClient::Channel *chan, const StringPiece &b) {
-    if (!chan->opened) {
-      app->scheduler.DelMainWaitSocket(parent->root, fd);
-      SystemNetwork::CloseSocket(fd);
-      forward_fd.erase(fd);
-    } else if (!b.len) {
+    if (!chan->opened) LocalForwardRemoteCloseCB(fd, chan);
+    else if (!b.len) {
       if (chan->buf.size()) {
-        if (!SSHClient::WriteToChannel(conn, chan, chan->buf)) return ERRORv(-1, "write");
+        if (!SSHClient::WriteToChannel(conn, chan, chan->buf)) return ERRORv(0, conn->Name(), ": write");
         chan->buf.clear();
       }
     } else {
-      if (::send(fd, b.data(), b.size(), 0) != b.size()) return ERRORv(-1, "write");
+      if (::send(fd, b.data(), b.size(), 0) != b.size()) LocalForwardLocalCloseCB(fd, chan);
     }
     return 0;
+  }
+
+  void LocalForwardRemoteCloseCB(Socket fd, SSHClient::Channel *chan) {
+    auto it = forward_fd.find(fd);
+    if (it == forward_fd.end()) return;
+    app->scheduler.DelMainWaitSocket(parent->root, fd);
+    SystemNetwork::CloseSocket(fd);
+    forward_fd.erase(it);
   }
 };
 #endif
@@ -483,10 +495,13 @@ struct MyTerminalTab : public TerminalTab {
   }
 #endif
 
-  void UseTelnetTerminalController(const string &hostport) {
+  void UseTelnetTerminalController(const string &hostport, Callback savehost_cb=Callback()) {
     title = StrCat("Telnet ", hostport);
-    ChangeController(make_unique<NetworkTerminalController>(this, app->net->tcp_client.get(), hostport,
-                                                            [=](){ UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n"); }));
+    auto telnet = make_unique<NetworkTerminalController>(this, app->net->tcp_client.get(), hostport,
+                                                         [=](){ UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n"); });
+    telnet->success_cb = move(savehost_cb);
+    telnet->success_on_connect = true;
+    ChangeController(move(telnet));
   }
 
   void UseDefaultTerminalController() {
@@ -596,6 +611,7 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
   RFBClient::Params params;
   FrameBuffer *fb;
   string password;
+  Callback savehost_cb;
   RFBTerminalController(TerminalTabInterface *p, Service *s, RFBClient::Params a, const Callback &ccb, FrameBuffer *f) :
     NetworkTerminalController(p, s, a.hostport, ccb), params(move(a)), fb(f) {}
 
@@ -644,7 +660,7 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
 #endif
   }
 
-  void RFBLoginCB() {}
+  void RFBLoginCB() { if (savehost_cb) savehost_cb(); }
 
   void RFBUpdateCB(Connection *c, const Box &b, int pf, const StringPiece &data) {
     if (!data.buf) {
@@ -668,11 +684,12 @@ struct MyRFBTab : public TerminalTabInterface {
   FrameBuffer fb;
   RFBTerminalController *rfb;
 
-  MyRFBTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P, RFBClient::Params a, string pw) :
+  MyRFBTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P, RFBClient::Params a, string pw, Callback scb) :
     TerminalTabInterface(W, 1.0, 1.0), parent(P), fb(root->gd) {
     title = StrCat("VNC: ", a.hostport);
     auto c = make_unique<RFBTerminalController>(this, app->net->tcp_client.get(), move(a),
                                                 [=](){ closed_cb(); }, &fb);
+    c->savehost_cb = move(scb);
     rfb = c.get();
     rfb->password = move(pw);
     (controller = move(c))->Open(nullptr);
@@ -703,7 +720,7 @@ struct MyTerminalWindow : public TerminalWindowInterface<TerminalTabInterface> {
   virtual ~MyTerminalWindow() { for (auto t : tabs.tabs) delete t; }
 
   MyTerminalTab *AddTerminalTab();
-  TerminalTabInterface *AddRFBTab(RFBClient::Params p, string);
+  TerminalTabInterface *AddRFBTab(RFBClient::Params p, string, Callback savehost_cb=Callback());
   void InitTab(TerminalTabInterface*);
 
   void CloseActiveTab() {
@@ -767,8 +784,8 @@ MyTerminalTab *MyTerminalWindow::AddTerminalTab() {
   return t;
 }
 
-TerminalTabInterface *MyTerminalWindow::AddRFBTab(RFBClient::Params p, string pw) {
-  auto t = new MyRFBTab(root, this, move(p), move(pw));
+TerminalTabInterface *MyTerminalWindow::AddRFBTab(RFBClient::Params p, string pw, Callback savehost_cb) {
+  auto t = new MyRFBTab(root, this, move(p), move(pw), move(savehost_cb));
   InitTab(t);
   return t;
 }

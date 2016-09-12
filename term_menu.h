@@ -344,15 +344,15 @@ struct MyAppSettingsViewController {
   void UpdateModelFromView(      MyAppSettingsModel *model);
 };
 
-struct MyHostFingerprintViewController {
+struct MySSHFingerprintViewController {
   unique_ptr<SystemTableView> view;
-  MyHostFingerprintViewController(MyTerminalMenus*);
+  MySSHFingerprintViewController(MyTerminalMenus*);
   void UpdateViewFromModel(const MyHostModel &model);
 };
 
-struct MyHostSettingsViewController {
+struct MySSHSettingsViewController {
   unique_ptr<SystemTableView> view;
-  MyHostSettingsViewController(MyTerminalMenus *m) :
+  MySSHSettingsViewController(MyTerminalMenus *m) :
     view(make_unique<SystemTableView>("Host Settings", "", GetSchema(m))) { view->SelectRow(-1, -1); }
   static vector<TableItem> GetSchema(MyTerminalMenus*);
   void UpdateViewFromModel(const MyHostModel &model);
@@ -416,8 +416,8 @@ struct MyTerminalMenus {
   MyKeysViewController             keys, editkeys;
   MyRunSettingsViewController      runsettings;
   MyAppSettingsViewController      settings;
-  MyHostFingerprintViewController  hostfingerprint;
-  MyHostSettingsViewController     hostsettings;
+  MySSHFingerprintViewController   sshfingerprint;
+  MySSHSettingsViewController      sshsettings;
   MyQuickConnectViewController     quickconnect;
   MyNewHostViewController          newhost;
   MyUpdateHostViewController       updatehost;
@@ -457,7 +457,7 @@ struct MyTerminalMenus {
     hosts_nav(make_unique<SystemNavigationView>()), runsettings_nav(make_unique<SystemNavigationView>()),
     encryption(this), appearance(this), keyboard(this), newkey(this), genkey(this),
     keys(this, &credential_db, true), editkeys(this, &credential_db, false), runsettings(this),
-    settings(this), hostfingerprint(this), hostsettings(this), quickconnect(this), newhost(this),
+    settings(this), sshfingerprint(this), sshsettings(this), quickconnect(this), newhost(this),
     updatehost(this), hosts(this, true), hostsfolder(this, false) {
 
     keyboard_toolbar = make_unique<SystemToolbarView>(MenuItemVec{
@@ -497,10 +497,18 @@ struct MyTerminalMenus {
 
   void PressKey (const string &key) { FindAndDispatch(mobile_key_cmd,       key); }
   void ToggleKey(const string &key) { FindAndDispatch(mobile_togglekey_cmd, key); }
+  
+  void DisableLocalEncryption() {
+    SQLite::ChangePassphrase(db, pw_empty);
+    db_protected = false;
+    encryption.view->show_cb();
+  }
 
-  void UnlockLocalEncryption(const string &pw, const string &confirm_pw) {
+  void EnableLocalEncryption(const string &pw, const string &confirm_pw) {
     if (pw != confirm_pw) return my_app->passphrasefailed_alert->Show("");
     SQLite::ChangePassphrase(db, pw);
+    db_protected = true;
+    encryption.view->show_cb();
   }
 
   void GenerateKey() {
@@ -575,21 +583,21 @@ struct MyTerminalMenus {
     // if (!app->OpenSystemAppPreferences()) {}
   }
 
-  void ShowHostSettings() {
-    hosts_nav->PushTable(hostsettings.view.get());
+  void ShowProtocolSettings() {
+    hosts_nav->PushTable(sshsettings.view.get());
   }
 
   void ShowNewHost() {
     MyHostModel host;
-    hostsettings.UpdateViewFromModel(host); 
-    hostfingerprint.UpdateViewFromModel(host);
+    sshsettings.UpdateViewFromModel(host); 
+    sshfingerprint.UpdateViewFromModel(host);
     hosts_nav->PushTable(newhost.view.get());
   }
 
   void ShowQuickConnect() {
     MyHostModel host;
-    hostsettings.UpdateViewFromModel(host); 
-    hostfingerprint.UpdateViewFromModel(host); 
+    sshsettings.UpdateViewFromModel(host); 
+    sshfingerprint.UpdateViewFromModel(host); 
     hosts_nav->PushTable(quickconnect.view.get());
   }
 
@@ -605,7 +613,7 @@ struct MyTerminalMenus {
     connected_host_id = 0;
     MyHostModel host;
     quickconnect.UpdateModelFromView(&host, &credential_db);
-    hostsettings.UpdateModelFromView(&host.settings, &host.folder);
+    sshsettings.UpdateModelFromView(&host.settings, &host.folder);
     MenuConnect(host, [=](int fingerprint_type, const string &fingerprint){ /* ask to save */ });
   }
 
@@ -627,8 +635,8 @@ struct MyTerminalMenus {
   void HostInfo(int host_id) {
     MyHostModel host(&host_db, &credential_db, &settings_db, host_id);
     updatehost.UpdateViewFromModel(host);
-    hostsettings.UpdateViewFromModel(host);
-    hostfingerprint.UpdateViewFromModel(host);
+    sshsettings.UpdateViewFromModel(host);
+    sshfingerprint.UpdateViewFromModel(host);
     hosts_nav->PushTable(updatehost.view.get());
   }
 
@@ -637,8 +645,9 @@ struct MyTerminalMenus {
     connected_host_id = 0;
     MyHostModel host;
     newhost.UpdateModelFromView(&host, &credential_db);
-    hostsettings.UpdateModelFromView(&host.settings, &host.folder);
-    if (host.displayname.empty()) host.displayname = StrCat(host.username, "@", host.hostname);
+    sshsettings.UpdateModelFromView(&host.settings, &host.folder);
+    if (host.displayname.empty()) host.displayname =
+      StrCat(host.username, host.username.size() ? "@" : "", host.hostname);
     MenuConnect(host, [=](int fingerprint_type, const string &fingerprint) mutable {
       host.SetFingerprint(fingerprint_type, fingerprint);           
       connected_host_id = host.SaveNew(&host_db, &credential_db, &settings_db);
@@ -650,7 +659,7 @@ struct MyTerminalMenus {
     connected_host_id = 0;
     MyHostModel host;
     updatehost.UpdateModelFromView(&host, &credential_db);
-    hostsettings.UpdateModelFromView(&host.settings, &host.folder);
+    sshsettings.UpdateModelFromView(&host.settings, &host.folder);
     if (host.cred.credtype == CredentialType_PEM)
       if (!(host.cred.cred_id = updatehost.view->GetTag(0, 4))) host.cred.credtype = CredentialType_Ask;
     MenuConnect(host, [=](int, const string&){ connected_host_id = host.Update
@@ -675,10 +684,11 @@ struct MyTerminalMenus {
          host.cred.credtype == LTerminal::CredentialType_PEM      ? host.cred.creddata : "",
          bind(&SystemToolbarView::ToggleButton, keyboard_toolbar.get(), _1), move(cb));
     } else if (host.protocol == LTerminal::Protocol_Telnet) {
-      GetActiveWindow()->AddTerminalTab()->UseTelnetTerminalController(host.Hostport());
+      GetActiveWindow()->AddTerminalTab()->UseTelnetTerminalController(host.Hostport(), [=](){ cb(0, ""); });
     } else if (host.protocol == LTerminal::Protocol_RFB) {
       GetActiveWindow()->AddRFBTab(RFBClient::Params{host.Hostport(), host.username},
-                                   host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "");
+                                   host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "",
+                                   [=](){ cb(0, ""); });
     }
     MenuStartSession();
   }
