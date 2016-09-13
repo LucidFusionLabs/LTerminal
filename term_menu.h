@@ -188,19 +188,19 @@ struct MyHostModel {
   }
 
   void SetProtocol(const string &p) {
-    if      (p == "SSH")    protocol = LTerminal::Protocol_SSH;
-    else if (p == "Telnet") protocol = LTerminal::Protocol_Telnet;
-    else if (p == "VNC")    protocol = LTerminal::Protocol_RFB;
+    if      (p == "SSH")    { protocol = LTerminal::Protocol_SSH; }
+    else if (p == "Telnet") { protocol = LTerminal::Protocol_Telnet; username.clear(); cred.Load(); }
+    else if (p == "VNC")    { protocol = LTerminal::Protocol_RFB;    username.clear(); }
     else { FATAL("unknown protocol"); }
   }
 
-  void SetPort(int p) {
-    if (p) port = p;
-    else if (protocol == LTerminal::Protocol_SSH)    port = 22;
-    else if (protocol == LTerminal::Protocol_Telnet) port = 23;
-    else if (protocol == LTerminal::Protocol_RFB)    port = 5900;
+  void SetPort(int p) { port = p ? p : DefaultPort(); }
+  int DefaultPort() const {
+    if      (protocol == LTerminal::Protocol_SSH)    return 22;
+    else if (protocol == LTerminal::Protocol_Telnet) return 23;
+    else if (protocol == LTerminal::Protocol_RFB)    return 5900;
     else { FATAL("unknown protocol"); }
-  }
+  };
 
   void SetFingerprint(int t, const string &fp) {
     fingerprint_type = t;
@@ -402,8 +402,8 @@ struct MyTerminalMenus {
   MyHostDB host_db;
   MyCredentialDB credential_db;
   MySettingsDB settings_db;
-  int key_icon, host_icon, bolt_icon, terminal_icon, settings_icon, audio_icon, eye_icon, recycle_icon, 
-      fingerprint_icon, info_icon, keyboard_icon, folder_icon, plus_icon;
+  int key_icon, host_icon, host_locked_icon, bolt_icon, terminal_icon, settings_icon, audio_icon, eye_icon,
+      recycle_icon,  fingerprint_icon, info_icon, keyboard_icon, folder_icon, plus_icon, vnc_icon;
   string pw_default = "\x01""Ask each time", pw_empty = "lfl_default";
 
   int                              second_col=120, connected_host_id=0;
@@ -443,6 +443,7 @@ struct MyTerminalMenus {
   MyTerminalMenus() : db(SQLite::Open(StrCat(app->savedir, "lterm.db"))),
     key_icon        (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/key.png"))),
     host_icon       (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/host.png"))),
+    host_locked_icon(CheckNotNull(app->LoadSystemImage("drawable-xhdpi/host_locked.png"))),
     bolt_icon       (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/bolt.png"))),
     terminal_icon   (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/terminal.png"))),
     settings_icon   (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/settings.png"))),
@@ -454,6 +455,7 @@ struct MyTerminalMenus {
     keyboard_icon   (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/keyboard.png"))),
     folder_icon     (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/folder.png"))),
     plus_icon       (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/plus.png"))),
+    vnc_icon        (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/vnc.png"))),
     hosts_nav(make_unique<SystemNavigationView>()), runsettings_nav(make_unique<SystemNavigationView>()),
     encryption(this), appearance(this), keyboard(this), newkey(this), genkey(this),
     keys(this, &credential_db, true), editkeys(this, &credential_db, false), runsettings(this),
@@ -647,7 +649,8 @@ struct MyTerminalMenus {
     newhost.UpdateModelFromView(&host, &credential_db);
     sshsettings.UpdateModelFromView(&host.settings, &host.folder);
     if (host.displayname.empty()) host.displayname =
-      StrCat(host.username, host.username.size() ? "@" : "", host.hostname);
+      StrCat(host.username.size() ? StrCat(host.username, "@") : "", host.hostname,
+             host.port != host.DefaultPort() ? StrCat(":", host.port) : " ");
     MenuConnect(host, [=](int fingerprint_type, const string &fingerprint) mutable {
       host.SetFingerprint(fingerprint_type, fingerprint);           
       connected_host_id = host.SaveNew(&host_db, &credential_db, &settings_db);
@@ -668,7 +671,7 @@ struct MyTerminalMenus {
 
   void MenuStartSession() {
     hosts_nav->Show(false);
-    hosts.view->AddNavigationButton(HAlign::Left, TableItem("Back", "", "", "", 0, 0, 0, [=](){ hosts_nav->Show(false); }));
+    hosts.view->AddNavigationButton(HAlign::Left, TableItem("Back", TableItem::Button, "", "", 0, 0, 0, [=](){ hosts_nav->Show(false); }));
     keyboard_toolbar->Show(true);
     app->CloseTouchKeyboardAfterReturn(false);
     app->OpenTouchKeyboard();
@@ -684,11 +687,12 @@ struct MyTerminalMenus {
          host.cred.credtype == LTerminal::CredentialType_PEM      ? host.cred.creddata : "",
          bind(&SystemToolbarView::ToggleButton, keyboard_toolbar.get(), _1), move(cb));
     } else if (host.protocol == LTerminal::Protocol_Telnet) {
-      GetActiveWindow()->AddTerminalTab()->UseTelnetTerminalController(host.Hostport(), [=](){ cb(0, ""); });
+      GetActiveWindow()->AddTerminalTab()->UseTelnetTerminalController
+        (host.Hostport(), (bool(cb) ? Callback([=](){ cb(0, ""); }) : Callback()));
     } else if (host.protocol == LTerminal::Protocol_RFB) {
       GetActiveWindow()->AddRFBTab(RFBClient::Params{host.Hostport(), host.username},
                                    host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "",
-                                   [=](){ cb(0, ""); });
+                                   (bool(cb) ? Callback([=](){ cb(0, ""); }) : Callback()));
     }
     MenuStartSession();
   }
