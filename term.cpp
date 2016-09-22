@@ -98,7 +98,7 @@ inline MyTerminalWindow *GetActiveWindow() {
 struct MyAppState {
   unordered_map<string, Shader> shader_map;
   unique_ptr<Browser> image_browser;
-  unique_ptr<SystemAlertView> passphrase_alert, passphraseconfirm_alert, passphrasefailed_alert, keypastefailed_alert;
+  unique_ptr<SystemAlertView> passphrase_alert, passphraseconfirm_alert, passphrasefailed_alert, keypastefailed_alert, hostkey_alert;
   unique_ptr<SystemMenuView> edit_menu, view_menu, toys_menu;
   unique_ptr<MyTerminalMenus> menus;
   int new_win_width = FLAGS_dim.x*Fonts::InitFontWidth(), new_win_height = FLAGS_dim.y*Fonts::InitFontHeight();
@@ -185,6 +185,7 @@ struct SSHTerminalController : public NetworkTerminalController {
   SSHClient::Params params;
   StringCB metakey_cb;
   SavehostCB savehost_cb;
+  SSHClient::FingerprintCB fingerprint_cb;
   shared_ptr<SSHClient::Identity> identity;
   string fingerprint, password;
   int fingerprint_type=0;
@@ -192,7 +193,7 @@ struct SSHTerminalController : public NetworkTerminalController {
 
   SSHTerminalController(TerminalTabInterface *p, Service *s, SSHClient::Params a, const Callback &ccb) :
     NetworkTerminalController(p, s, a.hostport, ccb), params(move(a)) {
-    for (auto &f : params.forward_local) ForwardLocalPort(f.local, f.host, f.port);
+    for (auto &f : params.forward_local) ForwardLocalPort(f.port, f.target_host, f.target_port);
   }
 
   virtual ~SSHTerminalController() {
@@ -222,12 +223,16 @@ struct SSHTerminalController : public NetworkTerminalController {
     string type = SSH::Key::Name((fingerprint_type = hostkey_type));
     fingerprint = in.str();
     INFO(params.hostport, ": fingerprint: ", type, " ", "MD5", HexEscape(Crypto::MD5(fingerprint), ":"));
-    return true;
+    return fingerprint_cb ? fingerprint_cb(fingerprint_type, fingerprint) : true;
   }
 
   bool LoadPasswordCB(string *out) {
     if (password.size()) { out->clear(); swap(*out, password); return true; }
-    return false;
+    else {
+      my_app->passphrase_alert->ShowCB("Password", "Password", "",
+                                       [=](const string &pw){ SSHClient::WritePassword(conn, pw); });
+      return false;
+    } 
   }
 
   bool LoadIdentityCB(shared_ptr<SSHClient::Identity> *out) {
@@ -476,8 +481,11 @@ struct MyTerminalTab : public TerminalTab {
   }
 
 #ifdef LFL_CRYPTO
-  void UseSSHTerminalController(SSHClient::Params params, const string &pw="", const string &pem="", StringCB metakey_cb=StringCB(),
-                                SSHTerminalController::SavehostCB savehost_cb=SSHTerminalController::SavehostCB()) {
+  void UseSSHTerminalController(SSHClient::Params params, const string &pw="",
+                                shared_ptr<SSHClient::Identity> identity=shared_ptr<SSHClient::Identity>(),
+                                StringCB metakey_cb=StringCB(),
+                                SSHTerminalController::SavehostCB savehost_cb=SSHTerminalController::SavehostCB(),
+                                SSHClient::FingerprintCB fingerprint_cb=SSHClient::FingerprintCB()) {
     title = StrCat("SSH ", params.user, "@", params.hostport);
     bool close_on_disconn = params.close_on_disconnect;
     auto ssh =
@@ -486,11 +494,9 @@ struct MyTerminalTab : public TerminalTab {
        close_on_disconn ? closed_cb : [=](){ UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n"); });
     ssh->metakey_cb = move(metakey_cb);
     ssh->savehost_cb = move(savehost_cb);
+    ssh->fingerprint_cb = move(fingerprint_cb);
     if (pw.size()) ssh->password = pw;
-    if (pem.size()) {
-      ssh->identity = make_shared<SSHClient::Identity>();
-      Crypto::ParsePEM(pem.data(), &ssh->identity->rsa, &ssh->identity->dsa, &ssh->identity->ec, &ssh->identity->ed25519);
-    }
+    if (identity) ssh->identity = identity;
     ChangeController(move(ssh));
   }
 #endif
@@ -638,26 +644,27 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
 
   int SendKeyEvent(InputEvent::Id event, bool down) {
     if (conn && conn->state == Connection::Connected)
-      RFBClient::WriteKeyEvent(conn, InputEvent::GetKey(event), down);
+      RFBClient::SendKeyEvent(conn, InputEvent::GetKey(event), down);
     return 1;
   }
 
   int SendMouseEvent(InputEvent::Id id, const point &p, int down, int flag) {
     uint8_t buttons = app->input->MouseButton1Down() | app->input->MouseButton2Down()<<2;
     if (conn && conn->state == Connection::Connected)
-      RFBClient::WritePointerEvent(conn, float(p.x) / parent->root->width * fb->width,
-                                   (1.0 - float(p.y) / parent->root->height) * fb->height, buttons);
+      RFBClient::SendPointerEvent(conn, float(p.x) / parent->root->width * fb->width,
+                                  (1.0 - float(p.y) / parent->root->height) * fb->height, buttons);
     return 1;
   }
 
   bool LoadPasswordCB(string *out) {
-#ifdef LFL_MOBILE
-    *out = move(password);
-    return true;
-#else
-    *out = my_app->passphrase_alert->RunModal("");
-    return true;
-#endif
+    if (password.size()) {
+      *out = move(password);
+      return true;
+    } else {
+      my_app->passphrase_alert->ShowCB("Password", "Password", "",
+                                       [=](const string &pw){ RFBClient::SendChallengeResponse(conn, pw); });
+      return false;
+    }
   }
 
   void RFBLoginCB() { if (savehost_cb) savehost_cb(); }
@@ -919,6 +926,8 @@ extern "C" int MyAppMain() {
     { "style", "" }, { "Invalid passphrase", "Passphrase failed" }, { "", "" }, { "Continue", "" } });
   my_app->keypastefailed_alert = make_unique<SystemAlertView>(AlertItemVec{
     { "style", "" }, { "Paste key failed", "Load key failed" }, { "", "" }, { "Continue", "" } });
+  my_app->hostkey_alert = make_unique<SystemAlertView>(AlertItemVec{
+    { "style", "" }, { "", "" }, { "Cancel", "" }, { "Continue", "" } });
 #ifndef LFL_MOBILE
   my_app->edit_menu = SystemMenuView::CreateEditMenu(vector<MenuItem>());
   my_app->view_menu = make_unique<SystemMenuView>("View", MenuItemVec{

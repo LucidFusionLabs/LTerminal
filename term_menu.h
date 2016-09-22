@@ -42,6 +42,7 @@ struct MyHostSettingsModel {
   LTerminal::BeepType beep_type;
   LTerminal::TextEncoding text_encoding;
   LTerminal::DeleteMode delete_mode;
+  vector<SSHClient::Params::Forward> local_forward, remote_forward;
 
   MyHostSettingsModel() { Load(); }
   MyHostSettingsModel(MySettingsDB *settings_db, int id) { Load(settings_db, id); }
@@ -80,13 +81,19 @@ struct MyHostSettingsModel {
     delete_mode = r.delete_mode();
     autocomplete_id = r.autocomplete_id();
     prompt = GetFlatBufferString(r.prompt_string());
+    if (auto lf = r.local_forward())  for (auto f : *lf) local_forward.push_back({ f->port(), GetFlatBufferString(f->target()), f->target_port() });
+    if (auto rf = r.remote_forward()) for (auto f : *rf) local_forward.push_back({ f->port(), GetFlatBufferString(f->target()), f->target_port() });
   }
 
   flatbuffers::Offset<LTerminal::HostSettings> SaveProto(FlatBufferBuilder &fb) const {
+    vector<flatbuffers::Offset<LTerminal::PortForward>> lf, rf;
+    for (auto &f : local_forward)  lf.push_back(LTerminal::CreatePortForward(fb, f.port, fb.CreateString(f.target_host), f.target_port));
+    for (auto &f : remote_forward) rf.push_back(LTerminal::CreatePortForward(fb, f.port, fb.CreateString(f.target_host), f.target_port));
     return LTerminal::CreateHostSettings
       (fb, agent_forwarding, compression, close_on_disconnect, fb.CreateString(terminal_type),
        fb.CreateString(startup_command), fb.CreateString(font_name), font_size, color_scheme, beep_type,
-       text_encoding, delete_mode, autocomplete_id, fb.CreateString(prompt));
+       text_encoding, delete_mode, lf.size() ? fb.CreateVector(lf) : 0,
+       rf.size() ? fb.CreateVector(rf) : 0, autocomplete_id, fb.CreateString(prompt));
   }
 
   FlatBufferPiece SaveBlob() const {
@@ -188,20 +195,23 @@ struct MyHostModel {
   }
 
   void SetProtocol(const string &p) {
-    if      (p == "SSH")    { protocol = LTerminal::Protocol_SSH; }
-    else if (p == "Telnet") { protocol = LTerminal::Protocol_Telnet; username.clear(); cred.Load(); }
-    else if (p == "VNC")    { protocol = LTerminal::Protocol_RFB;    username.clear(); }
+    if      (p == "SSH")         { protocol = LTerminal::Protocol_SSH; }
+    else if (p == "VNC")         { protocol = LTerminal::Protocol_RFB;        username.clear(); }
+    else if (p == "Telnet")      { protocol = LTerminal::Protocol_Telnet;     username.clear(); cred.Load(); }
+    else if (p == "Local Shell") { protocol = LTerminal::Protocol_LocalShell; username.clear(); cred.Load(); }
     else { FATAL("unknown protocol"); }
   }
 
   void SetPort(int p) { port = p ? p : DefaultPort(); }
   int DefaultPort() const {
-    if      (protocol == LTerminal::Protocol_SSH)    return 22;
-    else if (protocol == LTerminal::Protocol_Telnet) return 23;
-    else if (protocol == LTerminal::Protocol_RFB)    return 5900;
+    if      (protocol == LTerminal::Protocol_SSH)        return 22;
+    else if (protocol == LTerminal::Protocol_Telnet)     return 23;
+    else if (protocol == LTerminal::Protocol_RFB)        return 5900;
+    else if (protocol == LTerminal::Protocol_LocalShell) return 0;
     else { FATAL("unknown protocol"); }
   };
 
+  bool FingerprintMatch(int t, const string &fp) const { return fingerprint_type == t && fingerprint == fp; }
   void SetFingerprint(int t, const string &fp) {
     fingerprint_type = t;
     fingerprint = fp;
@@ -350,26 +360,35 @@ struct MySSHFingerprintViewController {
   void UpdateViewFromModel(const MyHostModel &model);
 };
 
-struct MySSHSettingsViewController {
+struct MySSHPortForwardViewController {
   unique_ptr<SystemTableView> view;
-  MySSHSettingsViewController(MyTerminalMenus *m) :
-    view(make_unique<SystemTableView>("Host Settings", "", GetSchema(m))) { view->SelectRow(-1, -1); }
+  MySSHPortForwardViewController(MyTerminalMenus*);
+};
+
+struct MySSHSettingsViewController {
+  MyTerminalMenus *menus;
+  unique_ptr<SystemTableView> view;
+  MySSHSettingsViewController(MyTerminalMenus *m);
   static vector<TableItem> GetSchema(MyTerminalMenus*);
   void UpdateViewFromModel(const MyHostModel &model);
   bool UpdateModelFromView(MyHostSettingsModel *model, string *folder) const;
 };
 
 struct MyQuickConnectViewController {
+  MyTerminalMenus *menus;
   unique_ptr<SystemTableView> view;
   MyQuickConnectViewController(MyTerminalMenus*);
   static vector<TableItem> GetSchema(MyTerminalMenus*);
+  void UpdateViewFromModel();
   bool UpdateModelFromView(MyHostModel *model, MyCredentialDB *cred_db) const;
 };
 
 struct MyNewHostViewController {
+  MyTerminalMenus *menus;
   unique_ptr<SystemTableView> view;
   MyNewHostViewController(MyTerminalMenus*);
   static vector<TableItem> GetSchema(MyTerminalMenus*);
+  void UpdateViewFromModel();
   bool UpdateModelFromView(MyHostModel *model, MyCredentialDB *cred_db) const;
 };
 
@@ -402,8 +421,11 @@ struct MyTerminalMenus {
   MyHostDB host_db;
   MyCredentialDB credential_db;
   MySettingsDB settings_db;
-  int key_icon, host_icon, host_locked_icon, bolt_icon, terminal_icon, settings_icon, audio_icon, eye_icon,
-      recycle_icon,  fingerprint_icon, info_icon, keyboard_icon, folder_icon, plus_icon, vnc_icon;
+  unordered_map<int, shared_ptr<SSHClient::Identity>> identity_loaded;
+  int key_icon, host_icon, host_locked_icon, bolt_icon, terminal_icon, settings_blue_icon, settings_gray_icon,
+      audio_icon, eye_icon, recycle_icon, fingerprint_icon, info_icon, keyboard_icon, folder_icon,
+      plus_red_icon, plus_green_icon, vnc_icon, locked_icon, unlocked_icon, font_icon, toys_icon,
+      arrowleft_icon, arrowright_icon;
   string pw_default = "\x01""Ask each time", pw_empty = "lfl_default";
 
   int                              second_col=120, connected_host_id=0;
@@ -417,6 +439,7 @@ struct MyTerminalMenus {
   MyRunSettingsViewController      runsettings;
   MyAppSettingsViewController      settings;
   MySSHFingerprintViewController   sshfingerprint;
+  MySSHPortForwardViewController   sshportforward;
   MySSHSettingsViewController      sshsettings;
   MyQuickConnectViewController     quickconnect;
   MyNewHostViewController          newhost;
@@ -441,26 +464,34 @@ struct MyTerminalMenus {
 
   ~MyTerminalMenus() { SQLite::Close(db); }
   MyTerminalMenus() : db(SQLite::Open(StrCat(app->savedir, "lterm.db"))),
-    key_icon        (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/key.png"))),
-    host_icon       (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/host.png"))),
-    host_locked_icon(CheckNotNull(app->LoadSystemImage("drawable-xhdpi/host_locked.png"))),
-    bolt_icon       (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/bolt.png"))),
-    terminal_icon   (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/terminal.png"))),
-    settings_icon   (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/settings.png"))),
-    audio_icon      (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/audio.png"))),
-    eye_icon        (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/eye.png"))),
-    recycle_icon    (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/recycle.png"))),
-    fingerprint_icon(CheckNotNull(app->LoadSystemImage("drawable-xhdpi/fingerprint.png"))),
-    info_icon       (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/info.png"))),
-    keyboard_icon   (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/keyboard.png"))),
-    folder_icon     (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/folder.png"))),
-    plus_icon       (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/plus.png"))),
-    vnc_icon        (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/vnc.png"))),
+    key_icon           (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/key.png"))),
+    host_icon          (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/host.png"))),
+    host_locked_icon   (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/host_locked.png"))),
+    bolt_icon          (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/bolt.png"))),
+    terminal_icon      (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/terminal.png"))),
+    settings_blue_icon (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/settings_blue.png"))),
+    settings_gray_icon (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/settings_gray.png"))),
+    audio_icon         (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/audio.png"))),
+    eye_icon           (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/eye.png"))),
+    recycle_icon       (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/recycle.png"))),
+    fingerprint_icon   (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/fingerprint.png"))),
+    info_icon          (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/info.png"))),
+    keyboard_icon      (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/keyboard.png"))),
+    folder_icon        (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/folder.png"))),
+    plus_red_icon      (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/plus_red.png"))),
+    plus_green_icon    (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/plus_green.png"))),
+    vnc_icon           (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/vnc.png"))),
+    locked_icon        (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/locked.png"))),
+    unlocked_icon      (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/unlocked.png"))),
+    font_icon          (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/font.png"))),
+    toys_icon          (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/toys.png"))),
+    arrowleft_icon     (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/arrowleft.png"))),
+    arrowright_icon    (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/arrowright.png"))),
     hosts_nav(make_unique<SystemNavigationView>()), runsettings_nav(make_unique<SystemNavigationView>()),
     encryption(this), appearance(this), keyboard(this), newkey(this), genkey(this),
     keys(this, &credential_db, true), editkeys(this, &credential_db, false), runsettings(this),
-    settings(this), sshfingerprint(this), sshsettings(this), quickconnect(this), newhost(this),
-    updatehost(this), hosts(this, true), hostsfolder(this, false) {
+    settings(this), sshfingerprint(this), sshsettings(this), sshportforward(this), quickconnect(this),
+    newhost(this), updatehost(this), hosts(this, true), hostsfolder(this, false) {
 
     keyboard_toolbar = make_unique<SystemToolbarView>(MenuItemVec{
       { "\U00002699", "",       bind(&MyTerminalMenus::ShowRunSettings,  this) },
@@ -541,12 +572,12 @@ struct MyTerminalMenus {
   void ChooseKey(int cred_row_id) {
     hosts_nav->PopTable(1);
     SystemTableView *host_menu = hosts_nav->Back();
-    int key_row = 3 + (host_menu->GetKey(0, 0) == "Name");
+    int key_row = 3 + (host_menu->GetKey(0, 0) == "");
     host_menu->BeginUpdates();
     if (cred_row_id) {
       MyCredentialModel cred(&credential_db, cred_row_id);
       host_menu->SetTag(0, key_row, cred.cred_id);
-      host_menu->SetValue(0, key_row, StrCat("nocontrol,", pw_default, ",", cred.name));
+      host_menu->SetValue(0, key_row, StrCat(",", pw_default, ",", cred.name));
       host_menu->SetDropdown(0, key_row, 1);
     } else host_menu->SetDropdown(0, key_row, 0);
     host_menu->EndUpdates();
@@ -559,7 +590,7 @@ struct MyTerminalMenus {
     auto tw = GetActiveWindow();
     for (auto t : tw->tabs.tabs) v.push_back
       (MenuItem{"", t->title, [=](){ tw->tabs.SelectTab(t); app->scheduler.Wakeup(tw->root); } });
-    v.push_back(MenuItem{"", "New", [=](){ hosts_nav->Show(true); } }); 
+    v.push_back(MenuItem{"", "New", [=](){ hosts.view->SetTitle("New Session"); hosts_nav->Show(true); } }); 
     sessions_menu = make_unique<SystemMenuView>("Sessions", v);
     sessions_menu->Show();
   }
@@ -589,6 +620,10 @@ struct MyTerminalMenus {
     hosts_nav->PushTable(sshsettings.view.get());
   }
 
+  void ShowNewSSHPortForward() {
+    hosts_nav->PushTable(sshportforward.view.get());
+  }
+
   void ShowNewHost() {
     MyHostModel host;
     sshsettings.UpdateViewFromModel(host); 
@@ -616,12 +651,20 @@ struct MyTerminalMenus {
     MyHostModel host;
     quickconnect.UpdateModelFromView(&host, &credential_db);
     sshsettings.UpdateModelFromView(&host.settings, &host.folder);
-    MenuConnect(host, [=](int fingerprint_type, const string &fingerprint){ /* ask to save */ });
+    quickconnect.UpdateViewFromModel();
+    MenuConnect(host, SSHClient::FingerprintCB(),
+                [=](int fingerprint_type, const string &fingerprint){ /* ask to save */ });
   }
 
   void ConnectHost(int host_id) {
     MyHostModel host(&host_db, &credential_db, &settings_db, (connected_host_id = host_id));
-    MenuConnect(host);
+    MenuConnect(host, [=](int fpt, const StringPiece &fp) -> bool {
+      return host.FingerprintMatch(fpt, fp.str()) ? true : ShowAcceptFingerprintAlert();
+    }, [=](int fpt, const string &fp) mutable {
+      if (host.FingerprintMatch(fpt, fp)) return;
+      host.SetFingerprint(fpt, fp);
+      host.Update(host, &host_db, &credential_db, &settings_db);
+    });
   }
 
   void DeleteKey(int index, int key_id) {
@@ -633,7 +676,7 @@ struct MyTerminalMenus {
     if (host.cred.credtype == LTerminal::CredentialType_Password) credential_db.Erase(host.cred.cred_id);
     host_db.Erase(host.host_id);
   }
-  
+
   void HostInfo(int host_id) {
     MyHostModel host(&host_db, &credential_db, &settings_db, host_id);
     updatehost.UpdateViewFromModel(host);
@@ -648,11 +691,14 @@ struct MyTerminalMenus {
     MyHostModel host;
     newhost.UpdateModelFromView(&host, &credential_db);
     sshsettings.UpdateModelFromView(&host.settings, &host.folder);
-    if (host.displayname.empty()) host.displayname =
-      StrCat(host.username.size() ? StrCat(host.username, "@") : "", host.hostname,
-             host.port != host.DefaultPort() ? StrCat(":", host.port) : " ");
-    MenuConnect(host, [=](int fingerprint_type, const string &fingerprint) mutable {
-      host.SetFingerprint(fingerprint_type, fingerprint);           
+    newhost.UpdateViewFromModel();
+    if (host.displayname.empty()) {
+      if (host.protocol == LTerminal::Protocol_LocalShell) host.displayname = "Local Shell";
+      else host.displayname = StrCat(host.username.size() ? StrCat(host.username, "@") : "", host.hostname,
+                                     host.port != host.DefaultPort() ? StrCat(":", host.port) : " ");
+    }
+    MenuConnect(host, SSHClient::FingerprintCB(), [=](int fpt, const string &fp) mutable {
+      host.SetFingerprint(fpt, fp);           
       connected_host_id = host.SaveNew(&host_db, &credential_db, &settings_db);
     });
   }
@@ -665,8 +711,13 @@ struct MyTerminalMenus {
     sshsettings.UpdateModelFromView(&host.settings, &host.folder);
     if (host.cred.credtype == CredentialType_PEM)
       if (!(host.cred.cred_id = updatehost.view->GetTag(0, 4))) host.cred.credtype = CredentialType_Ask;
-    MenuConnect(host, [=](int, const string&){ connected_host_id = host.Update
-                (updatehost.prev_model, &host_db, &credential_db, &settings_db); });
+    MenuConnect(host, [=](int fpt, const StringPiece &fp) -> bool {
+        return updatehost.prev_model.FingerprintMatch(fpt, fp.str()) ? true : ShowAcceptFingerprintAlert();
+      }, [=](int fpt, const string &fp) mutable {
+        host.SetFingerprint(fpt, fp);
+        connected_host_id = host.Update(updatehost.prev_model, &host_db, &credential_db,
+                                        &settings_db);
+      });
   }
 
   void MenuStartSession() {
@@ -677,15 +728,38 @@ struct MyTerminalMenus {
     app->OpenTouchKeyboard();
   }
 
-  void MenuConnect(const MyHostModel &host, SSHTerminalController::SavehostCB cb=SSHTerminalController::SavehostCB()) {
+  void MenuConnect(const MyHostModel &host,
+                   SSHClient::FingerprintCB fingerprint_cb=SSHClient::FingerprintCB(),
+                   SSHTerminalController::SavehostCB cb=SSHTerminalController::SavehostCB()) {
     if (host.protocol == LTerminal::Protocol_SSH) {
+      shared_ptr<SSHClient::Identity> identity;
+      if (host.cred.credtype == LTerminal::CredentialType_PEM) {
+        CHECK(host.cred.cred_id);
+        auto it = identity_loaded.find(host.cred.cred_id);
+        if (it != identity_loaded.end()) identity = it->second;
+        else {
+          bool password_needed = false;
+          identity = make_shared<SSHClient::Identity>();
+          Crypto::ParsePEM(host.cred.creddata.c_str(), &identity->rsa, &identity->dsa, &identity->ec,
+                           &identity->ed25519, [&](string v) { password_needed = true; return ""; });
+          if (!password_needed) identity_loaded[host.cred.cred_id] = identity;
+          else return my_app->passphrase_alert->ShowCB
+            ("Identity passphrase", "Passphrase", "", [=](const string &v) {
+               shared_ptr<SSHClient::Identity> new_identity = make_shared<SSHClient::Identity>();
+               if (!Crypto::ParsePEM(host.cred.creddata.c_str(), &new_identity->rsa, &new_identity->dsa,
+                                     &new_identity->ec, &new_identity->ed25519, [=](string) { return v; })) return;
+               identity_loaded[host.cred.cred_id] = new_identity;
+               MenuConnect(host, fingerprint_cb, cb);
+             });
+        }
+      }
       GetActiveWindow()->AddTerminalTab()->UseSSHTerminalController
-        (SSHClient::Params{host.Hostport(), host.username, host.settings.terminal_type,
+        (SSHClient::Params{ host.Hostport(), host.username, host.settings.terminal_type,
          host.settings.startup_command.size() ? StrCat(host.settings.startup_command, "\r") : "",
-         host.settings.compression, host.settings.agent_forwarding, host.settings.close_on_disconnect},
-         host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "",
-         host.cred.credtype == LTerminal::CredentialType_PEM      ? host.cred.creddata : "",
-         bind(&SystemToolbarView::ToggleButton, keyboard_toolbar.get(), _1), move(cb));
+         host.settings.compression, host.settings.agent_forwarding, host.settings.close_on_disconnect, 
+         host.settings.local_forward, host.settings.remote_forward },
+         host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "", identity, 
+         bind(&SystemToolbarView::ToggleButton, keyboard_toolbar.get(), _1), move(cb), move(fingerprint_cb));
     } else if (host.protocol == LTerminal::Protocol_Telnet) {
       GetActiveWindow()->AddTerminalTab()->UseTelnetTerminalController
         (host.Hostport(), (bool(cb) ? Callback([=](){ cb(0, ""); }) : Callback()));
@@ -693,8 +767,22 @@ struct MyTerminalMenus {
       GetActiveWindow()->AddRFBTab(RFBClient::Params{host.Hostport(), host.username},
                                    host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "",
                                    (bool(cb) ? Callback([=](){ cb(0, ""); }) : Callback()));
+    } else if (host.protocol == LTerminal::Protocol_LocalShell) {
+      StartShell();
+      if (cb) cb(0, "");
     }
     MenuStartSession();
+  }
+
+  bool ShowAcceptFingerprintAlert() {
+    my_app->hostkey_alert->ShowCB("Accept fingerprint", "", "", bind(&MyTerminalMenus::AcceptFingerprintCB, this, _1));
+    return false;
+  }
+
+  void AcceptFingerprintCB(const string&) {
+    if (auto t = GetActiveTerminalTab())
+      if (auto ssh = dynamic_cast<SSHTerminalController*>(t->controller.get()))
+        SSHClient::AcceptHostKeyAndBeginAuthRequest(ssh->conn);
   }
 };
 

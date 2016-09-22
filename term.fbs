@@ -1,6 +1,6 @@
 namespace LFL.LTerminal;
 
-enum Protocol : int { SSH=1, Telnet, RFB }
+enum Protocol : int { SSH=1, Telnet, RFB, LocalShell }
 enum TextEncoding : int { UTF8=1, ASCII=2 }
 enum DeleteMode : int { Normal=1, ControlH=2 }
 enum BeepType : int { None=0, Audio=1, Visual=2 }
@@ -9,6 +9,7 @@ enum ColorScheme : int { VGA=1, SolarizedDark=2, SolarizedLight=3 }
 enum CredentialDBType : int { Null = 0, Table, Keychain }
 enum CredentialType : int { Ask = 0, Password, PEM }
 struct CredentialRef { db: int; id: int; }
+table PortForward { port: int; target: string; target_port: int; }
 
 table Credential {
   type:        CredentialType;
@@ -46,6 +47,8 @@ table HostSettings {
   beep_type:           BeepType     = None;
   text_encoding:       TextEncoding = UTF8;
   delete_mode:         DeleteMode   = Normal;
+  local_forward:       [PortForward];
+  remote_forward:      [PortForward];
   autocomplete_id:     int;
   prompt_string:       string;
 }
