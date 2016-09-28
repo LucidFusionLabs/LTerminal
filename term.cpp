@@ -104,6 +104,13 @@ struct MyAppState {
   int new_win_width = FLAGS_dim.x*Fonts::InitFontWidth(), new_win_height = FLAGS_dim.y*Fonts::InitFontHeight();
   int downscale_effects = 1;
   virtual ~MyAppState();
+
+  Shader *GetShader(const string &shader_name) { 
+    auto shader = shader_map.find(shader_name);
+    if (shader == shader_map.end()) return nullptr;
+    if (!shader->second.ID) Shader::CreateShaderToy(shader_name, Asset::FileContents(StrCat(shader_name, ".frag")), &shader->second);
+    return &shader->second;
+  }
 } *my_app = nullptr;
 
 struct PlaybackTerminalController : public TerminalControllerInterface {
@@ -420,7 +427,6 @@ struct ShellTerminalController : public InteractiveTerminalController {
 
 struct MyTerminalTab : public TerminalTab {
   TerminalWindowInterface<TerminalTabInterface> *parent;
-  Shader *activeshader = &app->shaders->shader_default;
   Time join_read_interval = Time(100), refresh_interval = Time(33);
   int join_read_pending = 0;
 
@@ -431,22 +437,13 @@ struct MyTerminalTab : public TerminalTab {
     terminal->hover_control_cb = bind(&MyTerminalTab::HoverLinkCB, this, _1);
     if (terminal->bg_color) W->gd->clear_color = *terminal->bg_color;
   }
-  
-  bool Animating() const { return activeshader != &app->shaders->shader_default; }
 
   void Draw() {
-    Box draw_box = root->Box();
-    bool effects = root->animating, downscale = effects && my_app->downscale_effects > 1;
-    if (downscale) root->gd->RestoreViewport(DrawMode::_2D);
-    terminal->CheckResized(draw_box);
-    if (downscale) {
-      float scale = activeshader->scale = 1.0 / my_app->downscale_effects;
-      draw_box.y *= scale;
-      draw_box.h -= terminal->extra_height * scale;
-    } else root->gd->DrawMode(DrawMode::_2D);
-
+    Box draw_box = root->Box(), orig_draw_box = draw_box;
+    int effects = PrepareEffects(&draw_box, my_app->downscale_effects, terminal->extra_height);
+    terminal->CheckResized(orig_draw_box);
     root->gd->DisableBlend();
-    terminal->Draw(draw_box, downscale ? Terminal::DrawFlag::DrawCursor : Terminal::DrawFlag::Default,
+    terminal->Draw(draw_box, effects > 1 ? Terminal::DrawFlag::DrawCursor : Terminal::DrawFlag::Default,
                    effects ? activeshader : NULL);
     if (effects) root->gd->UseShader(0);
   }
@@ -600,16 +597,9 @@ struct MyTerminalTab : public TerminalTab {
   }
 
   void ChangeShader(const string &shader_name) {
-    auto shader = my_app->shader_map.find(shader_name);
-    bool found = shader != my_app->shader_map.end();
-    if (found && !shader->second.ID) Shader::CreateShaderToy(shader_name, Asset::FileContents(StrCat(shader_name, ".frag")), &shader->second);
-    activeshader = found ? &shader->second : &app->shaders->shader_default;
+    auto shader = my_app->GetShader(shader_name);
+    activeshader = shader ? shader : &app->shaders->shader_default;
     parent->UpdateTargetFPS();
-  }
-
-  void ShowEffectsControls() { 
-    root->shell->Run("slider shadertoy_blend 1.0 0.01");
-    app->scheduler.Wakeup(root);
   }
 };
 
@@ -671,9 +661,11 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
 
   void RFBUpdateCB(Connection *c, const Box &b, int pf, const StringPiece &data) {
     if (!data.buf) {
-      CHECK_EQ(0, b.x);
-      CHECK_EQ(0, b.y);
-      fb->Create(b.w, b.h, FrameBuffer::Flag::CreateTexture | FrameBuffer::Flag::ReleaseFB);
+      if (b.w && b.h) {
+        CHECK_EQ(0, b.x);
+        CHECK_EQ(0, b.y);
+        fb->Create(b.w, b.h, FrameBuffer::Flag::CreateTexture | FrameBuffer::Flag::ReleaseFB);
+      }
     } else fb->tex.UpdateGL(MakeUnsigned(data.buf), b, pf, Texture::Flag::FlipY); 
   }
 
@@ -702,7 +694,6 @@ struct MyRFBTab : public TerminalTabInterface {
     (controller = move(c))->Open(nullptr);
   }
 
-  bool                Animating() const   { return false; }
   MouseController    *GetMouseTarget()    { return rfb; }
   KeyboardController *GetKeyboardTarget() { return rfb; }
   void SetFontSize(int) {}
@@ -712,13 +703,33 @@ struct MyRFBTab : public TerminalTabInterface {
   void Draw() {
     GraphicsContext gc(root->gd);
     Box draw_box = root->Box();
+    int effects = PrepareEffects(&draw_box, my_app->downscale_effects, 0);
     root->gd->DisableBlend();
+    if (effects) {
+      float scale = activeshader->scale;
+      glShadertoyShader(gc.gd, activeshader);
+      activeshader->SetUniform1i("iChannelFlip", 1);
+      activeshader->SetUniform2f("iChannelScroll", 0, 0);
+      activeshader->SetUniform3f("iChannelResolution", XY_or_Y(activeshader->scale, root->gd->TextureDim(fb.tex.width)),
+                                 XY_or_Y(activeshader->scale, root->gd->TextureDim(fb.tex.height)), 1);
+      activeshader->SetUniform2f("iChannelModulus", fb.tex.coord[Texture::maxx_coord_ind],
+                                 fb.tex.coord[Texture::maxy_coord_ind]);
+      activeshader->SetUniform4f("iTargetBox", draw_box.x, draw_box.y,
+                                 XY_or_Y(scale, draw_box.w), XY_or_Y(scale, draw_box.h));
+    }
     fb.tex.DrawCrimped(root->gd, draw_box, 1, 0, 0);
+    if (effects) root->gd->UseShader(0);
   }
 
   int ReadAndUpdateTerminalFramebuffer() {
     if (!controller) return 0;
     return controller->Read().len;
+  }
+
+  void ChangeShader(const string &shader_name) {
+    auto shader = my_app->GetShader(shader_name);
+    activeshader = shader ? shader : &app->shaders->shader_default;
+    parent->UpdateTargetFPS();
   }
 };
 
@@ -867,6 +878,9 @@ void MyWindowClosed(Window *W) {
 using namespace LFL;
 
 extern "C" void MyAppCreate(int argc, const char* const* argv) {
+#if 0 && defined(LFL_IOS) && !defined(LFL_IOS_SIM)
+  InitCrashReporting("5537f9374df847498b8661525445feaa00555300");
+#endif
   FLAGS_enable_video = FLAGS_enable_input = 1;
   app = new Application(argc, argv);
   my_app = new MyAppState();
@@ -945,19 +959,19 @@ extern "C" int MyAppMain() {
 #endif
 
   my_app->toys_menu = make_unique<SystemMenuView>("Toys", vector<MenuItem>{
-    MenuItem{ "", "None",         [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeShader("none");     } },
-    MenuItem{ "", "Warper",       [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeShader("warper");   } },
-    MenuItem{ "", "Water",        [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeShader("water");    } },
-    MenuItem{ "", "Twistery",     [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeShader("twistery"); } },
-    MenuItem{ "", "Fire",         [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeShader("fire");     } },
-    MenuItem{ "", "Waves",        [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeShader("waves");    } },
-    MenuItem{ "", "Emboss",       [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeShader("emboss");   } },
-    MenuItem{ "", "Stormy",       [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeShader("stormy");   } },
-    MenuItem{ "", "Alien",        [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeShader("alien");    } },
-    MenuItem{ "", "Fractal",      [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeShader("fractal");  } },
-    MenuItem{ "", "Darkly",       [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeShader("darkly");   } },
+    MenuItem{ "", "None",         [=](){ if (auto t = GetActiveTab()) t->ChangeShader("none");     } },
+    MenuItem{ "", "Warper",       [=](){ if (auto t = GetActiveTab()) t->ChangeShader("warper");   } },
+    MenuItem{ "", "Water",        [=](){ if (auto t = GetActiveTab()) t->ChangeShader("water");    } },
+    MenuItem{ "", "Twistery",     [=](){ if (auto t = GetActiveTab()) t->ChangeShader("twistery"); } },
+    MenuItem{ "", "Fire",         [=](){ if (auto t = GetActiveTab()) t->ChangeShader("fire");     } },
+    MenuItem{ "", "Waves",        [=](){ if (auto t = GetActiveTab()) t->ChangeShader("waves");    } },
+    MenuItem{ "", "Emboss",       [=](){ if (auto t = GetActiveTab()) t->ChangeShader("emboss");   } },
+    MenuItem{ "", "Stormy",       [=](){ if (auto t = GetActiveTab()) t->ChangeShader("stormy");   } },
+    MenuItem{ "", "Alien",        [=](){ if (auto t = GetActiveTab()) t->ChangeShader("alien");    } },
+    MenuItem{ "", "Fractal",      [=](){ if (auto t = GetActiveTab()) t->ChangeShader("fractal");  } },
+    MenuItem{ "", "Darkly",       [=](){ if (auto t = GetActiveTab()) t->ChangeShader("darkly");   } },
     MenuItem{ "", "<separator>" },
-    MenuItem{ "", "Controls",     [=](){ if (auto t = GetActiveTerminalTab()) t->ShowEffectsControls(); } } });
+    MenuItem{ "", "Controls",     [=](){ if (auto t = GetActiveTab()) t->ShowEffectsControls(); } } });
 
   MakeValueTuple(&my_app->shader_map, "warper", "water", "twistery");
   MakeValueTuple(&my_app->shader_map, "warper", "water", "twistery");

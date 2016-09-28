@@ -24,9 +24,9 @@ struct TerminalTabInterface : public Dialog {
   string title;
   Callback closed_cb;
   unique_ptr<Terminal::Controller> controller, last_controller;
+  Shader *activeshader = &app->shaders->shader_default;
   using Dialog::Dialog;
 
-  virtual bool Animating() const = 0;
   virtual int ReadAndUpdateTerminalFramebuffer() = 0;
   virtual bool ControllerReadableCB() { ReadAndUpdateTerminalFramebuffer(); return true; }
   virtual void SetFontSize(int) = 0;
@@ -36,6 +36,25 @@ struct TerminalTabInterface : public Dialog {
   virtual KeyboardController *GetKeyboardTarget() = 0;
   virtual void TakeFocus() { root->active_textbox = GetKeyboardTarget();     root->active_controller = GetMouseTarget(); }
   virtual void LoseFocus() { root->active_textbox = root->default_textbox(); root->active_controller = root->default_controller(); }
+
+  virtual bool Animating() const { return activeshader != &app->shaders->shader_default; }
+  virtual void ChangeShader(const string &shader_name) {}
+
+  virtual void ShowEffectsControls() { 
+    root->shell->Run("slider shadertoy_blend 1.0 0.01");
+    app->scheduler.Wakeup(root);
+  }
+
+  virtual int PrepareEffects(Box *draw_box, int downscale_effects, int extra_height=0) {
+    if (!root->animating) { root->gd->DrawMode(DrawMode::_2D); return 0; }
+    if (downscale_effects > 1) {
+      root->gd->RestoreViewport(DrawMode::_2D);
+      float scale = activeshader->scale = 1.0 / downscale_effects;
+      draw_box->y *= scale;
+      draw_box->h -= extra_height * scale;
+    }
+    return downscale_effects;
+  }
 };
 
 struct TerminalControllerInterface : public Terminal::Controller {

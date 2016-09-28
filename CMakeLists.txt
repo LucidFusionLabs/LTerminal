@@ -2,8 +2,10 @@
 
 if(LFL_MOBILE)
   set(DB_LIB app_sqlcipher_sqlite)
+  set(CRASHREPORTING_LIB app_crittercism_crashreporting)
 else()
   set(DB_LIB app_null_sqlite)
+  set(CRASHREPORTING_LIB app_null_crashreporting)
 endif()
 
 if(LFL_MOBILE OR LFL_WINDOWS OR LFL_DEBUG)
@@ -39,7 +41,7 @@ lfl_add_package(lterm SOURCES term.cpp term.rc ${FLATBUFFERS_SRC_OUTPUTS}
                 app_simple_resampler app_simple_loader ${LFL_APP_CONVERT} app_libpng_png
                 app_null_jpeg app_null_gif app_null_ogg app_null_css ${LFL_APP_FONT}
                 ${LFL_APP_SSL} app_null_js app_null_tu
-                ${DB_LIB} ${CRYPTO_LIB} ${LFL_APP_OS})
+                ${DB_LIB} ${CRYPTO_LIB} ${CRASHREPORTING_LIB} ${LFL_APP_OS})
 set(LFL_APP_ASSET_FILES ${LFL_APP_ASSET_FILES} ${LFL_SOURCE_DIR}/core/app/shaders/shadertoy/*.frag
     ${LFL_SOURCE_DIR}/core/app/assets/VeraMoBd.*)
 lfl_post_build_start(lterm lterm LTerminal)

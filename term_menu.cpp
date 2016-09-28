@@ -108,44 +108,6 @@ void MyKeysViewController::UpdateViewFromModel() {
   view->changed = false;
 }
 
-MyRunSettingsViewController::MyRunSettingsViewController(MyTerminalMenus *m) :
-  view(make_unique<SystemTableView>("Interface Settings", "", GetSchema(m, m->runsettings_nav.get()))) {
-  view->AddNavigationButton(HAlign::Left,
-                            TableItem("Back", TableItem::Button, "", "", 0, 0, 0,
-                                      bind(&SystemNavigationView::Show, m->runsettings_nav.get(), false)));
-}
-
-vector<TableItem> MyRunSettingsViewController::GetBaseSchema(MyTerminalMenus *m, SystemNavigationView *nav) {
-  return vector<TableItem>{
-    TableItem("Appearance",      TableItem::Command, "", ">", 0, m->eye_icon,      0, bind(&SystemNavigationView::PushTable, nav, m->appearance.view.get())),
-    TableItem("Keyboard",        TableItem::Command, "", ">", 0, m->keyboard_icon, 0, [=](){}),
-    TableItem("Beep",            TableItem::Command, "", ">", 0, m->audio_icon,    0, [=](){}),
-    TableItem("Toys",            TableItem::Command, "", ">", 0, m->toys_icon,     0, bind(&MyTerminalMenus::ShowToysMenu, m))
-  };
-}
-
-vector<TableItem> MyRunSettingsViewController::GetSchema(MyTerminalMenus *m, SystemNavigationView *nav) {
-  return VectorCat<TableItem>(GetBaseSchema(m, nav), vector<TableItem>{
-    TableItem("Autocomplete",           TableItem::Separator, ""), 
-    TableItem("Autocomplete",           TableItem::Toggle,    ""),
-    TableItem("Prompt String",          TableItem::TextInput, ""),
-    TableItem("Reset Autcomplete Data", TableItem::Command,   "") });
-}
-
-void MyRunSettingsViewController::UpdateViewFromModel(const MyAppSettingsModel &app_model, const MyHostSettingsModel &host_model) {
-  view->BeginUpdates();
-  view->SetSectionValues(0, vector<string>{ "", "", "", "" });
-  view->SetSectionValues(1, vector<string>{ host_model.autocomplete_id ? "1" : "", host_model.prompt, "" });
-  view->EndUpdates();
-}
-
-void MyRunSettingsViewController::UpdateModelFromView(MyAppSettingsModel *app_model, MyHostSettingsModel *host_model) const {
-  host_model->prompt = "Prompt String";
-  string appearance="Appearance", keyboard="Keyboard", beep="Beep", autocomplete="Autocomplete", reset;
-  if (!view->GetSectionText(0, {&appearance, &keyboard, &beep})) return ERROR("parse runsettings1");
-  if (!view->GetSectionText(1, {&autocomplete, &host_model->prompt, &reset})) return ERROR("parse runsettings2");
-}
-
 MyAppSettingsViewController::MyAppSettingsViewController(MyTerminalMenus *m) :
   view(make_unique<SystemTableView>("Global Settings", "", GetSchema(m))) {
   view->hide_cb = [=](){
@@ -178,6 +140,66 @@ void MyAppSettingsViewController::UpdateModelFromView(MyAppSettingsModel *model)
   string a="", b="", keepdisplayon="Keep Display On";
   if (!view->GetSectionText(0, {&a, &b, &keepdisplayon})) return ERROR("parse appsettings0");
   model->keep_display_on = keepdisplayon == "1";
+}
+
+MyTerminalInterfaceSettingsViewController::MyTerminalInterfaceSettingsViewController(MyTerminalMenus *m) :
+  view(make_unique<SystemTableView>("Interface Settings", "", GetSchema(m, m->interfacesettings_nav.get()))) {
+  view->AddNavigationButton(HAlign::Left,
+                            TableItem("Back", TableItem::Button, "", "", 0, 0, 0,
+                                      bind(&SystemNavigationView::Show, m->interfacesettings_nav.get(), false)));
+}
+
+vector<TableItem> MyTerminalInterfaceSettingsViewController::GetBaseSchema(MyTerminalMenus *m, SystemNavigationView *nav) {
+  return vector<TableItem>{
+    TableItem("Appearance",      TableItem::Command, "", ">", 0, m->eye_icon,      0, bind(&SystemNavigationView::PushTable, nav, m->appearance.view.get())),
+    TableItem("Keyboard",        TableItem::Command, "", ">", 0, m->keyboard_icon, 0, [=](){}),
+    TableItem("Beep",            TableItem::Command, "", ">", 0, m->audio_icon,    0, [=](){}),
+    TableItem("Toys",            TableItem::Command, "", ">", 0, m->toys_icon,     0, bind(&MyTerminalMenus::ShowToysMenu, m))
+  };
+}
+
+vector<TableItem> MyTerminalInterfaceSettingsViewController::GetSchema(MyTerminalMenus *m, SystemNavigationView *nav) {
+  return VectorCat<TableItem>(GetBaseSchema(m, nav), vector<TableItem>{
+    TableItem("Autocomplete",           TableItem::Separator, ""), 
+    TableItem("Autocomplete",           TableItem::Toggle,    ""),
+    TableItem("Prompt String",          TableItem::TextInput, ""),
+    TableItem("Reset Autcomplete Data", TableItem::Command,   "") });
+}
+
+void MyTerminalInterfaceSettingsViewController::UpdateViewFromModel(const MyAppSettingsModel &app_model, const MyHostSettingsModel &host_model) {
+  view->BeginUpdates();
+  view->SetSectionValues(0, vector<string>{ "", "", "", "" });
+  view->SetSectionValues(1, vector<string>{ host_model.autocomplete_id ? "1" : "", host_model.prompt, "" });
+  view->EndUpdates();
+}
+
+void MyTerminalInterfaceSettingsViewController::UpdateModelFromView(MyAppSettingsModel *app_model, MyHostSettingsModel *host_model) const {
+  host_model->prompt = "Prompt String";
+  string appearance="Appearance", keyboard="Keyboard", beep="Beep", autocomplete="Autocomplete", reset;
+  if (!view->GetSectionText(0, {&appearance, &keyboard, &beep})) return ERROR("parse runsettings1");
+  if (!view->GetSectionText(1, {&autocomplete, &host_model->prompt, &reset})) return ERROR("parse runsettings2");
+}
+
+MyRFBInterfaceSettingsViewController::MyRFBInterfaceSettingsViewController(MyTerminalMenus *m) :
+  view(make_unique<SystemTableView>("Interface Settings", "", GetSchema(m, m->interfacesettings_nav.get()))) {
+  view->AddNavigationButton(HAlign::Left,
+                            TableItem("Back", TableItem::Button, "", "", 0, 0, 0,
+                                      bind(&SystemNavigationView::Show, m->interfacesettings_nav.get(), false)));
+}
+
+vector<TableItem> MyRFBInterfaceSettingsViewController::GetSchema(MyTerminalMenus *m, SystemNavigationView *nav) { return GetBaseSchema(m, nav); }
+vector<TableItem> MyRFBInterfaceSettingsViewController::GetBaseSchema(MyTerminalMenus *m, SystemNavigationView *nav) {
+  return vector<TableItem>{
+    TableItem("Toys", TableItem::Command, "", ">", 0, m->toys_icon, 0, bind(&MyTerminalMenus::ShowToysMenu, m))
+  };
+}
+
+void MyRFBInterfaceSettingsViewController::UpdateViewFromModel(const MyAppSettingsModel &app_model, const MyHostSettingsModel &host_model) {
+  view->BeginUpdates();
+  view->EndUpdates();
+}
+
+void MyRFBInterfaceSettingsViewController::UpdateModelFromView(MyAppSettingsModel *app_model, MyHostSettingsModel *host_model) const {
 }
 
 MySSHFingerprintViewController::MySSHFingerprintViewController(MyTerminalMenus *m) :
@@ -292,16 +314,96 @@ bool MySSHSettingsViewController::UpdateModelFromView(MyHostSettingsModel *model
   return true;
 }
 
+MyTelnetSettingsViewController::MyTelnetSettingsViewController(MyTerminalMenus *m) : menus(m),
+  view(make_unique<SystemTableView>("Telnet Settings", "", GetSchema(m))) {
+  view->SelectRow(-1, -1);
+}
+
+vector<TableItem> MyTelnetSettingsViewController::GetSchema(MyTerminalMenus *m) {
+  return vector<TableItem>{
+    TableItem("Folder",               TableItem::TextInput, "", "",  0, m->folder_icon),
+    TableItem("Terminal Type",        TableItem::TextInput, "", "",  0, m->terminal_icon),
+    TableItem("Text Encoding",        TableItem::Label,     "", "",  0, m->font_icon),
+    TableItem("Close on Disconnect",  TableItem::Toggle,    "") };
+}
+
+void MyTelnetSettingsViewController::UpdateViewFromModel(const MyHostModel &model) {
+  view->BeginUpdates();
+  view->SetSectionValues(0, vector<string>{
+    model.folder.size() ? model.folder : "\x01none", model.settings.terminal_type,
+    LTerminal::EnumNameTextEncoding(model.settings.text_encoding),
+    model.settings.close_on_disconnect ? "1" : "" });
+  view->EndUpdates();
+}
+
+bool MyTelnetSettingsViewController::UpdateModelFromView(MyHostSettingsModel *model, string *folder) const {
+  *folder = "Folder";
+  model->terminal_type = "Terminal Type";
+  model->startup_command = "Startup Command";
+  string textencoding="Text Encoding", disconclose = "Close on Disconnect";
+  if (!view->GetSectionText(0, {folder, &model->terminal_type, &textencoding, &disconclose})) return ERRORv(false, "parse newhostconnect settings0");
+  model->close_on_disconnect = disconclose == "1";
+  return true;
+}
+
+MyVNCSettingsViewController::MyVNCSettingsViewController(MyTerminalMenus *m) : menus(m),
+  view(make_unique<SystemTableView>("VNC Settings", "", GetSchema(m))) {
+  view->SelectRow(-1, -1);
+}
+
+vector<TableItem> MyVNCSettingsViewController::GetSchema(MyTerminalMenus *m) {
+  return vector<TableItem>{
+    TableItem("Folder",               TableItem::TextInput, "", "",  0, m->folder_icon),
+    TableItem("Close on Disconnect",  TableItem::Toggle,    "") };
+}
+
+void MyVNCSettingsViewController::UpdateViewFromModel(const MyHostModel &model) {
+  view->BeginUpdates();
+  view->SetSectionValues(0, vector<string>{
+    model.folder.size() ? model.folder : "\x01none", model.settings.close_on_disconnect ? "1" : "" });
+  view->EndUpdates();
+}
+
+bool MyVNCSettingsViewController::UpdateModelFromView(MyHostSettingsModel *model, string *folder) const {
+  *folder = "Folder";
+  string disconclose = "Close on Disconnect";
+  if (!view->GetSectionText(0, {folder, &disconclose})) return ERRORv(false, "parse vncsettings");
+  model->close_on_disconnect = disconclose == "1";
+  return true;
+}
+
+MyLocalShellSettingsViewController::MyLocalShellSettingsViewController(MyTerminalMenus *m) : menus(m),
+  view(make_unique<SystemTableView>("Local Shell Settings", "", GetSchema(m))) {
+  view->SelectRow(-1, -1);
+}
+
+vector<TableItem> MyLocalShellSettingsViewController::GetSchema(MyTerminalMenus *m) {
+  return vector<TableItem>{
+    TableItem("Folder",               TableItem::TextInput, "", "",  0, m->folder_icon) };
+}
+
+void MyLocalShellSettingsViewController::UpdateViewFromModel(const MyHostModel &model) {
+  view->BeginUpdates();
+  view->SetSectionValues(0, vector<string>{ model.folder.size() ? model.folder : "\x01none" });
+  view->EndUpdates();
+}
+
+bool MyLocalShellSettingsViewController::UpdateModelFromView(MyHostSettingsModel *model, string *folder) const {
+  *folder = "Folder";
+  if (!view->GetSectionText(0, {folder})) return ERRORv(false, "parse local shell settings");
+  return true;
+}
+
 MyQuickConnectViewController::MyQuickConnectViewController(MyTerminalMenus *m) : menus(m),
   view(make_unique<SystemTableView>("Quick Connect", "", GetSchema(m), m->second_col)) {}
 
 vector<TableItem> MyQuickConnectViewController::GetSchema(MyTerminalMenus *m) {
   return vector<TableItem>{
     TableItem("Protocol", TableItem::Dropdown, "", "", 0, 0, 0, Callback(), Callback(), {
-              {"SSH",         {{0,1,"\x01""22"},   {0,2,"\x01Username"}, {0,3,m->pw_default,false,0,m->key_icon}, {2,0,"",false,0,0,"SSH Settings"} }},
-              {"Telnet",      {{0,1,"\x01""23"},   {0,2,"",true},        {0,3,"",true,0,-1},                      {2,0,"",false,0,0,"Telnet Settings"} }},
-              {"VNC",         {{0,1,"\x01""5900"}, {0,2,"",true},        {0,3,m->pw_default,false,0,-1},          {2,0,"",false,0,0,"VNC Settings"} }},
-              {"Local Shell", {{0,1,"",true},      {0,2,"",true},        {0,3,"",true,0,-1},                      {2,0,"",false,0,0,"Local Shell Settings"}}} }, {
+              {"SSH",         {{0,1,"\x01""22"},   {0,2,"\x01Username"}, {0,3,m->pw_default,false,0,m->key_icon}, {2,0,"",false,0,0,"SSH Settings",        bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_SSH) } }},
+              {"Telnet",      {{0,1,"\x01""23"},   {0,2,"",true},        {0,3,"",true,0,-1},                      {2,0,"",false,0,0,"Telnet Settings",     bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_Telnet) } }},
+              {"VNC",         {{0,1,"\x01""5900"}, {0,2,"",true},        {0,3,m->pw_default,false,0,-1},          {2,0,"",false,0,0,"VNC Settings",        bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_RFB) } }},
+              {"Local Shell", {{0,1,"",true},      {0,2,"",true},        {0,3,"",true,0,-1},                      {2,0,"",false,0,0,"Local Shell Settings",bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_LocalShell) }}} }, {
               TableItemChild("SSH",         TableItem::TextInput, "\x01Hostname", ">", 0, m->host_locked_icon),
               TableItemChild("Telnet",      TableItem::TextInput, "\x01Hostname", ">", 0, m->host_icon), 
               TableItemChild("VNC",         TableItem::TextInput, "\x01Hostname", ">", 0, m->vnc_icon),
@@ -314,7 +416,7 @@ vector<TableItem> MyQuickConnectViewController::GetSchema(MyTerminalMenus *m) {
     TableItem("", TableItem::Separator, ""),
     TableItem("Connect", TableItem::Button, "", "", 0, 0, 0, bind(&MyTerminalMenus::QuickConnect, m)),
     TableItem("", TableItem::Separator, ""),
-    TableItem("SSH Settings", TableItem::Button, "", "", 0, 0, 0, bind(&MyTerminalMenus::ShowProtocolSettings, m)) };
+    TableItem("SSH Settings", TableItem::Button, "", "", 0, 0, 0, bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_SSH)) };
 }
 
 void MyQuickConnectViewController::UpdateViewFromModel() {

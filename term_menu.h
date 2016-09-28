@@ -337,21 +337,30 @@ struct MyKeysViewController {
   void UpdateViewFromModel();
 };
 
-struct MyRunSettingsViewController {
-  unique_ptr<SystemTableView> view;
-  MyRunSettingsViewController(MyTerminalMenus*);
-  static vector<TableItem> GetBaseSchema(MyTerminalMenus*, SystemNavigationView*);
-  static vector<TableItem> GetSchema(MyTerminalMenus*, SystemNavigationView*);
-  void UpdateViewFromModel(const MyAppSettingsModel &app_model, const MyHostSettingsModel &host_model);
-  void UpdateModelFromView(MyAppSettingsModel *app_model, MyHostSettingsModel *host_model) const;
-};
-
 struct MyAppSettingsViewController {
   unique_ptr<SystemTableView> view;
   MyAppSettingsViewController(MyTerminalMenus*);
   static vector<TableItem> GetSchema(MyTerminalMenus*);
   void UpdateViewFromModel(const MyAppSettingsModel &model);
   void UpdateModelFromView(      MyAppSettingsModel *model);
+};
+
+struct MyTerminalInterfaceSettingsViewController {
+  unique_ptr<SystemTableView> view;
+  MyTerminalInterfaceSettingsViewController(MyTerminalMenus*);
+  static vector<TableItem> GetBaseSchema(MyTerminalMenus*, SystemNavigationView*);
+  static vector<TableItem> GetSchema(MyTerminalMenus*, SystemNavigationView*);
+  void UpdateViewFromModel(const MyAppSettingsModel &app_model, const MyHostSettingsModel &host_model);
+  void UpdateModelFromView(MyAppSettingsModel *app_model, MyHostSettingsModel *host_model) const;
+};
+
+struct MyRFBInterfaceSettingsViewController {
+  unique_ptr<SystemTableView> view;
+  MyRFBInterfaceSettingsViewController(MyTerminalMenus*);
+  static vector<TableItem> GetBaseSchema(MyTerminalMenus*, SystemNavigationView*);
+  static vector<TableItem> GetSchema(MyTerminalMenus*, SystemNavigationView*);
+  void UpdateViewFromModel(const MyAppSettingsModel &app_model, const MyHostSettingsModel &host_model);
+  void UpdateModelFromView(MyAppSettingsModel *app_model, MyHostSettingsModel *host_model) const;
 };
 
 struct MySSHFingerprintViewController {
@@ -369,6 +378,33 @@ struct MySSHSettingsViewController {
   MyTerminalMenus *menus;
   unique_ptr<SystemTableView> view;
   MySSHSettingsViewController(MyTerminalMenus *m);
+  static vector<TableItem> GetSchema(MyTerminalMenus*);
+  void UpdateViewFromModel(const MyHostModel &model);
+  bool UpdateModelFromView(MyHostSettingsModel *model, string *folder) const;
+};
+
+struct MyTelnetSettingsViewController {
+  MyTerminalMenus *menus;
+  unique_ptr<SystemTableView> view;
+  MyTelnetSettingsViewController(MyTerminalMenus *m);
+  static vector<TableItem> GetSchema(MyTerminalMenus*);
+  void UpdateViewFromModel(const MyHostModel &model);
+  bool UpdateModelFromView(MyHostSettingsModel *model, string *folder) const;
+};
+
+struct MyVNCSettingsViewController {
+  MyTerminalMenus *menus;
+  unique_ptr<SystemTableView> view;
+  MyVNCSettingsViewController(MyTerminalMenus *m);
+  static vector<TableItem> GetSchema(MyTerminalMenus*);
+  void UpdateViewFromModel(const MyHostModel &model);
+  bool UpdateModelFromView(MyHostSettingsModel *model, string *folder) const;
+};
+
+struct MyLocalShellSettingsViewController {
+  MyTerminalMenus *menus;
+  unique_ptr<SystemTableView> view;
+  MyLocalShellSettingsViewController(MyTerminalMenus *m);
   static vector<TableItem> GetSchema(MyTerminalMenus*);
   void UpdateViewFromModel(const MyHostModel &model);
   bool UpdateModelFromView(MyHostSettingsModel *model, string *folder) const;
@@ -429,18 +465,22 @@ struct MyTerminalMenus {
   string pw_default = "\x01""Ask each time", pw_empty = "lfl_default";
 
   int                              second_col=120, connected_host_id=0;
-  unique_ptr<SystemNavigationView> hosts_nav, runsettings_nav;
+  unique_ptr<SystemNavigationView> hosts_nav, interfacesettings_nav;
   MyLocalEncryptionViewController  encryption;
   MyAppearanceViewController       appearance;
   MyKeyboardSettingsViewController keyboard;
   MyNewKeyViewController           newkey;
   MyGenKeyViewController           genkey;
   MyKeysViewController             keys, editkeys;
-  MyRunSettingsViewController      runsettings;
   MyAppSettingsViewController      settings;
+  MyTerminalInterfaceSettingsViewController terminalinterfacesettings;
+  MyRFBInterfaceSettingsViewController rfbinterfacesettings;
   MySSHFingerprintViewController   sshfingerprint;
   MySSHPortForwardViewController   sshportforward;
   MySSHSettingsViewController      sshsettings;
+  MyTelnetSettingsViewController   telnetsettings;
+  MyVNCSettingsViewController      vncsettings;
+  MyLocalShellSettingsViewController localshellsettings;
   MyQuickConnectViewController     quickconnect;
   MyNewHostViewController          newhost;
   MyUpdateHostViewController       updatehost;
@@ -487,14 +527,15 @@ struct MyTerminalMenus {
     toys_icon          (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/toys.png"))),
     arrowleft_icon     (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/arrowleft.png"))),
     arrowright_icon    (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/arrowright.png"))),
-    hosts_nav(make_unique<SystemNavigationView>()), runsettings_nav(make_unique<SystemNavigationView>()),
+    hosts_nav(make_unique<SystemNavigationView>()), interfacesettings_nav(make_unique<SystemNavigationView>()),
     encryption(this), appearance(this), keyboard(this), newkey(this), genkey(this),
-    keys(this, &credential_db, true), editkeys(this, &credential_db, false), runsettings(this),
-    settings(this), sshfingerprint(this), sshsettings(this), sshportforward(this), quickconnect(this),
+    keys(this, &credential_db, true), editkeys(this, &credential_db, false), settings(this),
+    terminalinterfacesettings(this), rfbinterfacesettings(this), sshfingerprint(this), sshportforward(this),
+    sshsettings(this), telnetsettings(this), vncsettings(this), localshellsettings(this), quickconnect(this),
     newhost(this), updatehost(this), hosts(this, true), hostsfolder(this, false) {
 
     keyboard_toolbar = make_unique<SystemToolbarView>(MenuItemVec{
-      { "\U00002699", "",       bind(&MyTerminalMenus::ShowRunSettings,  this) },
+      { "\U00002699", "",       bind(&MyTerminalMenus::ShowInterfaceSettings, this) },
       { "esc",        "toggle", bind(&MyTerminalMenus::ToggleKey,        this, "esc") },
       { "\U000025C0", "",       bind(&MyTerminalMenus::PressKey,         this, "left") },
       { "\U000025B6", "",       bind(&MyTerminalMenus::PressKey,         this, "right") },
@@ -509,12 +550,14 @@ struct MyTerminalMenus {
       { "\U000025F0", "",       bind(&MyTerminalMenus::ShowSessionsMenu, this) },
     });
 
-    runsettings_nav->PushTable(runsettings.view.get());
     if (UnlockEncryptedDatabase(pw_empty)) hosts.LoadUnlockedUI(&host_db);
     else if ((db_protected = true))        hosts.LoadLockedUI  (&host_db);
     hostsfolder.LoadFolderUI(&host_db);
     hosts_nav->PushTable(hosts.view.get());
   }
+
+  void PressKey (const string &key) { FindAndDispatch(mobile_key_cmd,       key); }
+  void ToggleKey(const string &key) { FindAndDispatch(mobile_togglekey_cmd, key); }
 
   bool UnlockEncryptedDatabase(const string &pw) {
     if (!(db_opened = SQLite::UsePassphrase(db, pw))) return false;
@@ -527,9 +570,6 @@ struct MyTerminalMenus {
     }
     return true;
   }
-
-  void PressKey (const string &key) { FindAndDispatch(mobile_key_cmd,       key); }
-  void ToggleKey(const string &key) { FindAndDispatch(mobile_togglekey_cmd, key); }
   
   void DisableLocalEncryption() {
     SQLite::ChangePassphrase(db, pw_empty);
@@ -542,6 +582,35 @@ struct MyTerminalMenus {
     SQLite::ChangePassphrase(db, pw);
     db_protected = true;
     encryption.view->show_cb();
+  }
+
+  void ResetSettingsView() {
+    MyHostModel host;
+    localshellsettings.UpdateViewFromModel(host); 
+    telnetsettings.UpdateViewFromModel(host); 
+    vncsettings.UpdateViewFromModel(host); 
+    sshsettings.UpdateViewFromModel(host); 
+    sshfingerprint.UpdateViewFromModel(host);
+  }
+  
+  void UpdateSettingsViewFromModel(LTerminal::Protocol proto, const MyHostModel &model) {
+    switch(proto) {
+       case LTerminal::Protocol_LocalShell: localshellsettings.UpdateViewFromModel(model); break;
+       case LTerminal::Protocol_Telnet:     telnetsettings    .UpdateViewFromModel(model); break;
+       case LTerminal::Protocol_RFB:        vncsettings       .UpdateViewFromModel(model); break;
+       case LTerminal::Protocol_SSH: sshsettings.UpdateViewFromModel(model); sshfingerprint.UpdateViewFromModel(model); break;
+       default: ERROR("unknown protocol ", proto); break;
+    }
+  }
+
+  void UpdateModelFromSettingsView(LTerminal::Protocol proto, MyHostSettingsModel *model, string *folder) {
+    switch(proto) {
+       case LTerminal::Protocol_SSH:        sshsettings       .UpdateModelFromView(model, folder); break;
+       case LTerminal::Protocol_Telnet:     telnetsettings    .UpdateModelFromView(model, folder); break;
+       case LTerminal::Protocol_RFB:        vncsettings       .UpdateModelFromView(model, folder); break;
+       case LTerminal::Protocol_LocalShell: localshellsettings.UpdateModelFromView(model, folder); break;
+       default: ERROR("unknown protocol ", proto); break;
+    }
   }
 
   void GenerateKey() {
@@ -584,8 +653,8 @@ struct MyTerminalMenus {
   }
 
   void ShowSessionsMenu() {
-    runsettings_nav->PopAll();
-    runsettings_nav->Show(false);
+    interfacesettings_nav->PopAll();
+    interfacesettings_nav->Show(false);
     MenuItemVec v;
     auto tw = GetActiveWindow();
     for (auto t : tw->tabs.tabs) v.push_back
@@ -596,18 +665,25 @@ struct MyTerminalMenus {
   }
 
   void ShowToysMenu() {
-    runsettings_nav->PopAll();
-    runsettings_nav->Show(false);
+    interfacesettings_nav->PopAll();
+    interfacesettings_nav->Show(false);
     my_app->toys_menu->Show();
   }
 
-  void ShowRunSettings() {
+  void ShowInterfaceSettings() {
     if (auto t = GetActiveTerminalTab()) t->ChangeShader("none");
-    if (!connected_host_id || runsettings_nav->shown) return;
+    if (!connected_host_id || interfacesettings_nav->shown) return;
     MyAppSettingsModel app_model(&settings_db);
     MyHostModel host_model(&host_db, &credential_db, &settings_db, connected_host_id);
-    runsettings.UpdateViewFromModel(app_model, host_model.settings);
-    runsettings_nav->Show(true);
+    interfacesettings_nav->PopAll();
+    if (host_model.protocol == LTerminal::Protocol_RFB) {
+      rfbinterfacesettings.UpdateViewFromModel(app_model, host_model.settings);
+      interfacesettings_nav->PushTable(rfbinterfacesettings.view.get());
+    } else {
+      terminalinterfacesettings.UpdateViewFromModel(app_model, host_model.settings);
+      interfacesettings_nav->PushTable(terminalinterfacesettings.view.get());
+    }
+    interfacesettings_nav->Show(true);
   }
 
   void ShowAppSettings() {
@@ -616,8 +692,14 @@ struct MyTerminalMenus {
     // if (!app->OpenSystemAppPreferences()) {}
   }
 
-  void ShowProtocolSettings() {
-    hosts_nav->PushTable(sshsettings.view.get());
+  void ShowProtocolSettings(LTerminal::Protocol proto) {
+    switch(proto) {
+       case LTerminal::Protocol_LocalShell: hosts_nav->PushTable(localshellsettings.view.get()); break;
+       case LTerminal::Protocol_Telnet:     hosts_nav->PushTable(telnetsettings    .view.get()); break;
+       case LTerminal::Protocol_RFB:        hosts_nav->PushTable(vncsettings       .view.get()); break;
+       case LTerminal::Protocol_SSH:        hosts_nav->PushTable(sshsettings       .view.get()); break;
+       default: ERROR("unknown protocol ", proto); break;
+    }
   }
 
   void ShowNewSSHPortForward() {
@@ -625,16 +707,12 @@ struct MyTerminalMenus {
   }
 
   void ShowNewHost() {
-    MyHostModel host;
-    sshsettings.UpdateViewFromModel(host); 
-    sshfingerprint.UpdateViewFromModel(host);
+    ResetSettingsView();
     hosts_nav->PushTable(newhost.view.get());
   }
 
   void ShowQuickConnect() {
-    MyHostModel host;
-    sshsettings.UpdateViewFromModel(host); 
-    sshfingerprint.UpdateViewFromModel(host); 
+    ResetSettingsView();
     hosts_nav->PushTable(quickconnect.view.get());
   }
 
@@ -650,7 +728,7 @@ struct MyTerminalMenus {
     connected_host_id = 0;
     MyHostModel host;
     quickconnect.UpdateModelFromView(&host, &credential_db);
-    sshsettings.UpdateModelFromView(&host.settings, &host.folder);
+    UpdateModelFromSettingsView(host.protocol, &host.settings, &host.folder);
     quickconnect.UpdateViewFromModel();
     MenuConnect(host, SSHClient::FingerprintCB(),
                 [=](int fingerprint_type, const string &fingerprint){ /* ask to save */ });
@@ -680,8 +758,7 @@ struct MyTerminalMenus {
   void HostInfo(int host_id) {
     MyHostModel host(&host_db, &credential_db, &settings_db, host_id);
     updatehost.UpdateViewFromModel(host);
-    sshsettings.UpdateViewFromModel(host);
-    sshfingerprint.UpdateViewFromModel(host);
+    UpdateSettingsViewFromModel(host.protocol, host); 
     hosts_nav->PushTable(updatehost.view.get());
   }
 
@@ -690,7 +767,7 @@ struct MyTerminalMenus {
     connected_host_id = 0;
     MyHostModel host;
     newhost.UpdateModelFromView(&host, &credential_db);
-    sshsettings.UpdateModelFromView(&host.settings, &host.folder);
+    UpdateModelFromSettingsView(host.protocol, &host.settings, &host.folder);
     newhost.UpdateViewFromModel();
     if (host.displayname.empty()) {
       if (host.protocol == LTerminal::Protocol_LocalShell) host.displayname = "Local Shell";
@@ -704,11 +781,11 @@ struct MyTerminalMenus {
   }
 
   void UpdateHostConnect() {
-    hosts_nav->PopAll();
+    hosts_nav->PopToRoot();
     connected_host_id = 0;
     MyHostModel host;
     updatehost.UpdateModelFromView(&host, &credential_db);
-    sshsettings.UpdateModelFromView(&host.settings, &host.folder);
+    UpdateModelFromSettingsView(host.protocol, &host.settings, &host.folder);
     if (host.cred.credtype == CredentialType_PEM)
       if (!(host.cred.cred_id = updatehost.view->GetTag(0, 4))) host.cred.credtype = CredentialType_Ask;
     MenuConnect(host, [=](int fpt, const StringPiece &fp) -> bool {
