@@ -878,8 +878,9 @@ void MyWindowClosed(Window *W) {
 using namespace LFL;
 
 extern "C" void MyAppCreate(int argc, const char* const* argv) {
-#if 0 && defined(LFL_IOS) && !defined(LFL_IOS_SIM)
-  InitCrashReporting("5537f9374df847498b8661525445feaa00555300");
+#if defined(LFL_IOS) && !defined(LFL_IOS_SIM)
+  InitCrashReporting("a594782b23094f22947179fb05892d64"); // hockeyapp
+  // InitCrashReporting("5537f9374df847498b8661525445feaa00555300"); // crittercism
 #endif
   FLAGS_enable_video = FLAGS_enable_input = 1;
   app = new Application(argc, argv);

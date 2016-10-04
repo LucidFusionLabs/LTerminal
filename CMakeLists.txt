@@ -2,7 +2,7 @@
 
 if(LFL_MOBILE)
   set(DB_LIB app_sqlcipher_sqlite)
-  set(CRASHREPORTING_LIB app_crittercism_crashreporting)
+  set(CRASHREPORTING_LIB app_hockeyapp_crashreporting)
 else()
   set(DB_LIB app_null_sqlite)
   set(CRASHREPORTING_LIB app_null_crashreporting)

@@ -301,16 +301,6 @@ struct MyGenKeyModel {
   int bits=0;
 };
 
-struct MyLocalEncryptionViewController {
-  unique_ptr<SystemTableView> view;
-  MyLocalEncryptionViewController(MyTerminalMenus*);
-};
-
-struct MyAppearanceViewController {
-  unique_ptr<SystemTableView> view;
-  MyAppearanceViewController(MyTerminalMenus*);
-};
-
 struct MyKeyboardSettingsViewController {
   unique_ptr<SystemTableView> view;
   MyKeyboardSettingsViewController(MyTerminalMenus*);
@@ -331,9 +321,8 @@ struct MyGenKeyViewController {
 struct MyKeysViewController {
   MyTerminalMenus *menus;
   MyCredentialDB *model;
-  bool add_or_edit;
   unique_ptr<SystemTableView> view;
-  MyKeysViewController(MyTerminalMenus*, MyCredentialDB*, bool add_or_edit);
+  MyKeysViewController(MyTerminalMenus*, MyCredentialDB*);
   void UpdateViewFromModel();
 };
 
@@ -350,8 +339,8 @@ struct MyTerminalInterfaceSettingsViewController {
   MyTerminalInterfaceSettingsViewController(MyTerminalMenus*);
   static vector<TableItem> GetBaseSchema(MyTerminalMenus*, SystemNavigationView*);
   static vector<TableItem> GetSchema(MyTerminalMenus*, SystemNavigationView*);
-  void UpdateViewFromModel(const MyAppSettingsModel &app_model, const MyHostSettingsModel &host_model);
-  void UpdateModelFromView(MyAppSettingsModel *app_model, MyHostSettingsModel *host_model) const;
+  void UpdateViewFromModel(const MyHostSettingsModel &host_model);
+  void UpdateModelFromView(MyHostSettingsModel *host_model) const;
 };
 
 struct MyRFBInterfaceSettingsViewController {
@@ -359,8 +348,8 @@ struct MyRFBInterfaceSettingsViewController {
   MyRFBInterfaceSettingsViewController(MyTerminalMenus*);
   static vector<TableItem> GetBaseSchema(MyTerminalMenus*, SystemNavigationView*);
   static vector<TableItem> GetSchema(MyTerminalMenus*, SystemNavigationView*);
-  void UpdateViewFromModel(const MyAppSettingsModel &app_model, const MyHostSettingsModel &host_model);
-  void UpdateModelFromView(MyAppSettingsModel *app_model, MyHostSettingsModel *host_model) const;
+  void UpdateViewFromModel(const MyHostSettingsModel &host_model);
+  void UpdateModelFromView(MyHostSettingsModel *host_model) const;
 };
 
 struct MySSHFingerprintViewController {
@@ -411,12 +400,7 @@ struct MyLocalShellSettingsViewController {
 };
 
 struct MyQuickConnectViewController {
-  MyTerminalMenus *menus;
-  unique_ptr<SystemTableView> view;
-  MyQuickConnectViewController(MyTerminalMenus*);
   static vector<TableItem> GetSchema(MyTerminalMenus*);
-  void UpdateViewFromModel();
-  bool UpdateModelFromView(MyHostModel *model, MyCredentialDB *cred_db) const;
 };
 
 struct MyNewHostViewController {
@@ -461,17 +445,15 @@ struct MyTerminalMenus {
   int key_icon, host_icon, host_locked_icon, bolt_icon, terminal_icon, settings_blue_icon, settings_gray_icon,
       audio_icon, eye_icon, recycle_icon, fingerprint_icon, info_icon, keyboard_icon, folder_icon,
       plus_red_icon, plus_green_icon, vnc_icon, locked_icon, unlocked_icon, font_icon, toys_icon,
-      arrowleft_icon, arrowright_icon;
+      arrowleft_icon, arrowright_icon, clipboard_upload_icon, clipboard_download_icon, keygen_icon, none_icon;
   string pw_default = "\x01""Ask each time", pw_empty = "lfl_default";
 
   int                              second_col=120, connected_host_id=0;
   unique_ptr<SystemNavigationView> hosts_nav, interfacesettings_nav;
-  MyLocalEncryptionViewController  encryption;
-  MyAppearanceViewController       appearance;
   MyKeyboardSettingsViewController keyboard;
   MyNewKeyViewController           newkey;
   MyGenKeyViewController           genkey;
-  MyKeysViewController             keys, editkeys;
+  MyKeysViewController             keys;
   MyAppSettingsViewController      settings;
   MyTerminalInterfaceSettingsViewController terminalinterfacesettings;
   MyRFBInterfaceSettingsViewController rfbinterfacesettings;
@@ -481,12 +463,13 @@ struct MyTerminalMenus {
   MyTelnetSettingsViewController   telnetsettings;
   MyVNCSettingsViewController      vncsettings;
   MyLocalShellSettingsViewController localshellsettings;
-  MyQuickConnectViewController     quickconnect;
   MyNewHostViewController          newhost;
   MyUpdateHostViewController       updatehost;
   MyHostsViewController            hosts, hostsfolder;
   unique_ptr<SystemMenuView>       sessions_menu;
   unique_ptr<SystemToolbarView>    keyboard_toolbar;
+
+  PickerItem color_picker = PickerItem{ {{"VGA", "Solarized Dark", "Solarized Light"}}, {0} };
 
   unordered_map<string, Callback> mobile_key_cmd = {
     { "left",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->CursorLeft();  if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
@@ -504,34 +487,37 @@ struct MyTerminalMenus {
 
   ~MyTerminalMenus() { SQLite::Close(db); }
   MyTerminalMenus() : db(SQLite::Open(StrCat(app->savedir, "lterm.db"))),
-    key_icon           (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/key.png"))),
-    host_icon          (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/host.png"))),
-    host_locked_icon   (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/host_locked.png"))),
-    bolt_icon          (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/bolt.png"))),
-    terminal_icon      (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/terminal.png"))),
-    settings_blue_icon (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/settings_blue.png"))),
-    settings_gray_icon (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/settings_gray.png"))),
-    audio_icon         (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/audio.png"))),
-    eye_icon           (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/eye.png"))),
-    recycle_icon       (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/recycle.png"))),
-    fingerprint_icon   (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/fingerprint.png"))),
-    info_icon          (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/info.png"))),
-    keyboard_icon      (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/keyboard.png"))),
-    folder_icon        (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/folder.png"))),
-    plus_red_icon      (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/plus_red.png"))),
-    plus_green_icon    (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/plus_green.png"))),
-    vnc_icon           (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/vnc.png"))),
-    locked_icon        (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/locked.png"))),
-    unlocked_icon      (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/unlocked.png"))),
-    font_icon          (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/font.png"))),
-    toys_icon          (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/toys.png"))),
-    arrowleft_icon     (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/arrowleft.png"))),
-    arrowright_icon    (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/arrowright.png"))),
+    key_icon               (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/key.png"))),
+    host_icon              (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/host.png"))),
+    host_locked_icon       (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/host_locked.png"))),
+    bolt_icon              (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/bolt.png"))),
+    terminal_icon          (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/terminal.png"))),
+    settings_blue_icon     (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/settings_blue.png"))),
+    settings_gray_icon     (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/settings_gray.png"))),
+    audio_icon             (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/audio.png"))),
+    eye_icon               (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/eye.png"))),
+    recycle_icon           (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/recycle.png"))),
+    fingerprint_icon       (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/fingerprint.png"))),
+    info_icon              (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/info.png"))),
+    keyboard_icon          (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/keyboard.png"))),
+    folder_icon            (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/folder.png"))),
+    plus_red_icon          (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/plus_red.png"))),
+    plus_green_icon        (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/plus_green.png"))),
+    vnc_icon               (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/vnc.png"))),
+    locked_icon            (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/locked.png"))),
+    unlocked_icon          (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/unlocked.png"))),
+    font_icon              (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/font.png"))),
+    toys_icon              (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/toys.png"))),
+    arrowleft_icon         (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/arrowleft.png"))),
+    arrowright_icon        (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/arrowright.png"))),
+    clipboard_upload_icon  (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/clipboard_upload.png"))),
+    clipboard_download_icon(CheckNotNull(app->LoadSystemImage("drawable-xhdpi/clipboard_download.png"))),
+    keygen_icon            (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/keygen.png"))),
+    none_icon              (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/none.png"))),
     hosts_nav(make_unique<SystemNavigationView>()), interfacesettings_nav(make_unique<SystemNavigationView>()),
-    encryption(this), appearance(this), keyboard(this), newkey(this), genkey(this),
-    keys(this, &credential_db, true), editkeys(this, &credential_db, false), settings(this),
+    keyboard(this), newkey(this), genkey(this), keys(this, &credential_db), settings(this),
     terminalinterfacesettings(this), rfbinterfacesettings(this), sshfingerprint(this), sshportforward(this),
-    sshsettings(this), telnetsettings(this), vncsettings(this), localshellsettings(this), quickconnect(this),
+    sshsettings(this), telnetsettings(this), vncsettings(this), localshellsettings(this),
     newhost(this), updatehost(this), hosts(this, true), hostsfolder(this, false) {
 
     keyboard_toolbar = make_unique<SystemToolbarView>(MenuItemVec{
@@ -574,14 +560,14 @@ struct MyTerminalMenus {
   void DisableLocalEncryption() {
     SQLite::ChangePassphrase(db, pw_empty);
     db_protected = false;
-    encryption.view->show_cb();
+    settings.view->show_cb();
   }
 
   void EnableLocalEncryption(const string &pw, const string &confirm_pw) {
     if (pw != confirm_pw) return my_app->passphrasefailed_alert->Show("");
     SQLite::ChangePassphrase(db, pw);
     db_protected = true;
-    encryption.view->show_cb();
+    settings.view->show_cb();
   }
 
   void ResetSettingsView() {
@@ -591,6 +577,16 @@ struct MyTerminalMenus {
     vncsettings.UpdateViewFromModel(host); 
     sshsettings.UpdateViewFromModel(host); 
     sshfingerprint.UpdateViewFromModel(host);
+  }
+
+  void UpdateModelFromSettingsView(LTerminal::Protocol proto, MyHostSettingsModel *model, string *folder) {
+    switch(proto) {
+       case LTerminal::Protocol_SSH:        sshsettings       .UpdateModelFromView(model, folder); break;
+       case LTerminal::Protocol_Telnet:     telnetsettings    .UpdateModelFromView(model, folder); break;
+       case LTerminal::Protocol_RFB:        vncsettings       .UpdateModelFromView(model, folder); break;
+       case LTerminal::Protocol_LocalShell: localshellsettings.UpdateModelFromView(model, folder); break;
+       default: ERROR("unknown protocol ", proto); break;
+    }
   }
   
   void UpdateSettingsViewFromModel(LTerminal::Protocol proto, const MyHostModel &model) {
@@ -603,20 +599,10 @@ struct MyTerminalMenus {
     }
   }
 
-  void UpdateModelFromSettingsView(LTerminal::Protocol proto, MyHostSettingsModel *model, string *folder) {
-    switch(proto) {
-       case LTerminal::Protocol_SSH:        sshsettings       .UpdateModelFromView(model, folder); break;
-       case LTerminal::Protocol_Telnet:     telnetsettings    .UpdateModelFromView(model, folder); break;
-       case LTerminal::Protocol_RFB:        vncsettings       .UpdateModelFromView(model, folder); break;
-       case LTerminal::Protocol_LocalShell: localshellsettings.UpdateModelFromView(model, folder); break;
-       default: ERROR("unknown protocol ", proto); break;
-    }
-  }
-
   void GenerateKey() {
     MyGenKeyModel gk;
     genkey.UpdateModelFromView(&gk);
-    hosts_nav->PopTable(2);
+    hosts_nav->PopTable(1);
 
     string pubkey, privkey;
     if (!Crypto::GenerateKey(gk.algo, gk.bits, "", "", &pubkey, &privkey)) return ERROR("generate ", gk.algo, " key");
@@ -635,13 +621,12 @@ struct MyTerminalMenus {
     } else {
       my_app->keypastefailed_alert->Show("");
     }
-    hosts_nav->PopTable();
   }
   
   void ChooseKey(int cred_row_id) {
     hosts_nav->PopTable(1);
     SystemTableView *host_menu = hosts_nav->Back();
-    int key_row = 3 + (host_menu->GetKey(0, 0) == "");
+    int key_row = 2 + (host_menu->GetKey(0, 0) == "");
     host_menu->BeginUpdates();
     if (cred_row_id) {
       MyCredentialModel cred(&credential_db, cred_row_id);
@@ -673,14 +658,13 @@ struct MyTerminalMenus {
   void ShowInterfaceSettings() {
     if (auto t = GetActiveTerminalTab()) t->ChangeShader("none");
     if (!connected_host_id || interfacesettings_nav->shown) return;
-    MyAppSettingsModel app_model(&settings_db);
     MyHostModel host_model(&host_db, &credential_db, &settings_db, connected_host_id);
     interfacesettings_nav->PopAll();
     if (host_model.protocol == LTerminal::Protocol_RFB) {
-      rfbinterfacesettings.UpdateViewFromModel(app_model, host_model.settings);
+      rfbinterfacesettings.UpdateViewFromModel(host_model.settings);
       interfacesettings_nav->PushTable(rfbinterfacesettings.view.get());
     } else {
-      terminalinterfacesettings.UpdateViewFromModel(app_model, host_model.settings);
+      terminalinterfacesettings.UpdateViewFromModel(host_model.settings);
       interfacesettings_nav->PushTable(terminalinterfacesettings.view.get());
     }
     interfacesettings_nav->Show(true);
@@ -711,27 +695,11 @@ struct MyTerminalMenus {
     hosts_nav->PushTable(newhost.view.get());
   }
 
-  void ShowQuickConnect() {
-    ResetSettingsView();
-    hosts_nav->PushTable(quickconnect.view.get());
-  }
-
   void StartShell() {
     connected_host_id = 1;
     GetActiveWindow()->AddTerminalTab()->UseShellTerminalController("");
     MenuStartSession();
     app->scheduler.Wakeup(app->focused);
-  }
-
-  void QuickConnect() {
-    hosts_nav->PopTable(1);
-    connected_host_id = 0;
-    MyHostModel host;
-    quickconnect.UpdateModelFromView(&host, &credential_db);
-    UpdateModelFromSettingsView(host.protocol, &host.settings, &host.folder);
-    quickconnect.UpdateViewFromModel();
-    MenuConnect(host, SSHClient::FingerprintCB(),
-                [=](int fingerprint_type, const string &fingerprint){ /* ask to save */ });
   }
 
   void ConnectHost(int host_id) {
@@ -787,7 +755,7 @@ struct MyTerminalMenus {
     updatehost.UpdateModelFromView(&host, &credential_db);
     UpdateModelFromSettingsView(host.protocol, &host.settings, &host.folder);
     if (host.cred.credtype == CredentialType_PEM)
-      if (!(host.cred.cred_id = updatehost.view->GetTag(0, 4))) host.cred.credtype = CredentialType_Ask;
+      if (!(host.cred.cred_id = updatehost.view->GetTag(0, 3))) host.cred.credtype = CredentialType_Ask;
     MenuConnect(host, [=](int fpt, const StringPiece &fp) -> bool {
         return updatehost.prev_model.FingerprintMatch(fpt, fp.str()) ? true : ShowAcceptFingerprintAlert();
       }, [=](int fpt, const string &fp) mutable {

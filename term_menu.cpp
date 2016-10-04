@@ -17,26 +17,6 @@
  */
 
 namespace LFL {
-MyLocalEncryptionViewController::MyLocalEncryptionViewController(MyTerminalMenus *m) :
-  view(make_unique<SystemTableView>("SQLCipher", "", vector<TableItem>{
-       TableItem("Enable SQLCipher Encryption", TableItem::Command, "", ">", 0, m->locked_icon, 0,
-                 bind(&SystemAlertView::ShowCB, my_app->passphrase_alert.get(), "Enable encryption", "Passphrase", "", [=](const string &pw){
-                      my_app->passphraseconfirm_alert->ShowCB("Confirm enable encryption", "Passphrase", "", StringCB(bind(&MyTerminalMenus::EnableLocalEncryption, m, pw, _1))); })),
-       TableItem("Disable SQLCipher Encryption", TableItem::Command, "", ">", 0, m->unlocked_icon, 0, bind(&MyTerminalMenus::DisableLocalEncryption, m))
-       })) {
-  view->show_cb = [=](){
-    view->BeginUpdates();
-    view->SetHidden(0, 0, !m->db_opened ||  m->db_protected); 
-    view->SetHidden(0, 1, !m->db_opened || !m->db_protected); 
-    view->EndUpdates();
-  };
-}
-
-MyAppearanceViewController::MyAppearanceViewController(MyTerminalMenus *m) :
-  view(make_unique<SystemTableView>("Appearance", "", vector<TableItem>{
-    TableItem("Font", TableItem::Command, "", ">", 0, 0, 0, [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeFont(StringVec()); }),
-  })) {}
-
 MyKeyboardSettingsViewController::MyKeyboardSettingsViewController(MyTerminalMenus *m) :
   view(make_unique<SystemTableView>("Keyboard", "", vector<TableItem>{
     TableItem("Delete Sends ^H", TableItem::Toggle, "")
@@ -81,35 +61,41 @@ bool MyGenKeyViewController::UpdateModelFromView(MyGenKeyModel *model) const {
   return true;
 }
 
-MyKeysViewController::MyKeysViewController(MyTerminalMenus *m, MyCredentialDB *mo, bool add) :
-  menus(m), model(mo), add_or_edit(add), view(make_unique<SystemTableView>("Keys", "", vector<TableItem>{})) {
-  if (add_or_edit) view->AddNavigationButton(HAlign::Right, TableItem("+", TableItem::Button, "", "", 0, 0, 0, [=](){ m->hosts_nav->PushTable(m->newkey.view.get()); }));
-  else {
-    view->AddNavigationButton(HAlign::Right, TableItem("Edit", TableItem::Button, ""));
-    view->SetEditableSection(0, 0, bind(&MyTerminalMenus::DeleteKey, m, _1, _2));
-  }
+MyKeysViewController::MyKeysViewController(MyTerminalMenus *m, MyCredentialDB *mo) :
+  menus(m), model(mo), view(make_unique<SystemTableView>("Choose Key", "", vector<TableItem>{
+    TableItem("None",                     TableItem::Command, "", ">", 0, m->none_icon,               0, bind(&MyTerminalMenus::ChooseKey, menus, 0)),
+    TableItem("Paste Key From Clipboard", TableItem::Command, "", ">", 0, m->clipboard_download_icon, 0, bind(&MyTerminalMenus::PasteKey, m)),
+    TableItem("Generate New Key",         TableItem::Command, "", ">", 0, m->keygen_icon,             0, [=](){ m->hosts_nav->PushTable(m->genkey.view.get()); }),
+  })) {
+  view->SetEditableSection(1, 0, bind(&MyTerminalMenus::DeleteKey, m, _1, _2));
   view->show_cb = bind(&MyKeysViewController::UpdateViewFromModel, this);
 }
 
 void MyKeysViewController::UpdateViewFromModel() {
   vector<TableItem> section;
-  if (add_or_edit)
-    section.push_back({"None", TableItem::Command, "", "", 0, 0, 0, bind(&MyTerminalMenus::ChooseKey, menus, 0)});
   for (auto credential : model->data) {
     auto c = flatbuffers::GetRoot<LTerminal::Credential>(credential.second.data());
     if (c->type() != CredentialType_PEM) continue;
     string name = c->displayname() ? c->displayname()->data() : "";
-    section.push_back({name, add_or_edit ? TableItem::Command : TableItem::None, "", "", credential.first,
-                      0, 0, Callback(bind(&MyTerminalMenus::ChooseKey, menus, credential.first))});
+    section.push_back({name, TableItem::Command, "", "", credential.first, menus->key_icon, menus->settings_gray_icon,
+                      Callback(bind(&MyTerminalMenus::ChooseKey, menus, credential.first))});
   }
   view->BeginUpdates();
-  view->ReplaceSection(0, "", 0, section);
+  view->ReplaceSection(1, section.size() ? "Keys" : "",
+                       section.size() ? (SystemTableView::EditButton | SystemTableView::EditableIfHasTag) : 0,
+                       section);
   view->EndUpdates();
   view->changed = false;
 }
 
 MyAppSettingsViewController::MyAppSettingsViewController(MyTerminalMenus *m) :
   view(make_unique<SystemTableView>("Global Settings", "", GetSchema(m))) {
+  view->show_cb = [=](){
+    view->BeginUpdates();
+    view->SetHidden(0, 0, !m->db_opened ||  m->db_protected); 
+    view->SetHidden(0, 1, !m->db_opened || !m->db_protected); 
+    view->EndUpdates();
+  };
   view->hide_cb = [=](){
     if (view->changed) {
       MyAppSettingsModel settings(&m->settings_db);
@@ -121,8 +107,10 @@ MyAppSettingsViewController::MyAppSettingsViewController(MyTerminalMenus *m) :
 
 vector<TableItem> MyAppSettingsViewController::GetSchema(MyTerminalMenus *m) {
   return vector<TableItem>{
-    TableItem("SQLCipher",           TableItem::Command, "", ">", 0, m->fingerprint_icon, 0, bind(&SystemNavigationView::PushTable, m->hosts_nav.get(), m->encryption.view.get())),
-    TableItem("Keys",                TableItem::Command, "", ">", 0, m->key_icon,         0, bind(&SystemNavigationView::PushTable, m->hosts_nav.get(), m->editkeys  .view.get())),
+    TableItem("SQLCipher", TableItem::Command, "", "Disabled >", 0, m->unlocked_icon, 0,
+              bind(&SystemAlertView::ShowCB, my_app->passphrase_alert.get(), "Enable encryption", "Passphrase", "", [=](const string &pw){
+                   my_app->passphraseconfirm_alert->ShowCB("Confirm enable encryption", "Passphrase", "", StringCB(bind(&MyTerminalMenus::EnableLocalEncryption, m, pw, _1))); })),
+    TableItem("SQLCipher", TableItem::Command, "", "Enabled >", 0, m->locked_icon, 0, bind(&MyTerminalMenus::DisableLocalEncryption, m)),
     TableItem("Keep Display On",     TableItem::Toggle,  ""),
     TableItem("",                    TableItem::Separator, ""),
     TableItem("About LTerminal",     TableItem::None, "", ">"),
@@ -132,7 +120,7 @@ vector<TableItem> MyAppSettingsViewController::GetSchema(MyTerminalMenus *m) {
 
 void MyAppSettingsViewController::UpdateViewFromModel(const MyAppSettingsModel &model) {
   view->BeginUpdates();
-  view->SetSectionValues(0, vector<string>{ "", "", model.keep_display_on ? "1" : "" });
+  view->SetValue(0, 2, model.keep_display_on ? "1" : "");
   view->EndUpdates();
 }
 
@@ -151,33 +139,31 @@ MyTerminalInterfaceSettingsViewController::MyTerminalInterfaceSettingsViewContro
 
 vector<TableItem> MyTerminalInterfaceSettingsViewController::GetBaseSchema(MyTerminalMenus *m, SystemNavigationView *nav) {
   return vector<TableItem>{
-    TableItem("Appearance",      TableItem::Command, "", ">", 0, m->eye_icon,      0, bind(&SystemNavigationView::PushTable, nav, m->appearance.view.get())),
-    TableItem("Keyboard",        TableItem::Command, "", ">", 0, m->keyboard_icon, 0, [=](){}),
-    TableItem("Beep",            TableItem::Command, "", ">", 0, m->audio_icon,    0, [=](){}),
-    TableItem("Toys",            TableItem::Command, "", ">", 0, m->toys_icon,     0, bind(&MyTerminalMenus::ShowToysMenu, m))
+    TableItem("Font",     TableItem::Label,      "", "",  0, m->font_icon,     0),
+    TableItem("",         TableItem::FontPicker, "", "",  0, 0,                0, Callback(), Callback(), TableItem::Depends(), true),
+    TableItem("Colors",   TableItem::Label,      "", "",  0, m->eye_icon,      0, [=](){}),
+    TableItem("",         TableItem::Picker,     "", "",  0, 0,                0, Callback(), Callback(), TableItem::Depends(), true, &m->color_picker),
+    TableItem("Beep",     TableItem::Label,      "", "",  0, m->audio_icon,    0, [=](){}),
+    TableItem("Keyboard", TableItem::Command,    "", ">", 0, m->keyboard_icon, 0, bind(&SystemNavigationView::PushTable, nav, m->keyboard.view.get())),
+    TableItem("Toys",     TableItem::Command,    "", ">", 0, m->toys_icon,     0, bind(&MyTerminalMenus::ShowToysMenu, m))
   };
 }
 
 vector<TableItem> MyTerminalInterfaceSettingsViewController::GetSchema(MyTerminalMenus *m, SystemNavigationView *nav) {
-  return VectorCat<TableItem>(GetBaseSchema(m, nav), vector<TableItem>{
-    TableItem("Autocomplete",           TableItem::Separator, ""), 
-    TableItem("Autocomplete",           TableItem::Toggle,    ""),
-    TableItem("Prompt String",          TableItem::TextInput, ""),
-    TableItem("Reset Autcomplete Data", TableItem::Command,   "") });
+  return VectorCat<TableItem>(GetBaseSchema(m, nav), vector<TableItem>{});
 }
 
-void MyTerminalInterfaceSettingsViewController::UpdateViewFromModel(const MyAppSettingsModel &app_model, const MyHostSettingsModel &host_model) {
+void MyTerminalInterfaceSettingsViewController::UpdateViewFromModel(const MyHostSettingsModel &host_model) {
   view->BeginUpdates();
-  view->SetSectionValues(0, vector<string>{ "", "", "", "" });
-  view->SetSectionValues(1, vector<string>{ host_model.autocomplete_id ? "1" : "", host_model.prompt, "" });
+  view->SetSectionValues(0, vector<string>{ 
+    StrCat(app->focused->default_font.desc.name, "", app->focused->default_font.desc.size), "",
+    "Solarized Dark", "", "None", "", "" });
   view->EndUpdates();
 }
 
-void MyTerminalInterfaceSettingsViewController::UpdateModelFromView(MyAppSettingsModel *app_model, MyHostSettingsModel *host_model) const {
-  host_model->prompt = "Prompt String";
-  string appearance="Appearance", keyboard="Keyboard", beep="Beep", autocomplete="Autocomplete", reset;
-  if (!view->GetSectionText(0, {&appearance, &keyboard, &beep})) return ERROR("parse runsettings1");
-  if (!view->GetSectionText(1, {&autocomplete, &host_model->prompt, &reset})) return ERROR("parse runsettings2");
+void MyTerminalInterfaceSettingsViewController::UpdateModelFromView(MyHostSettingsModel *host_model) const {
+  string font="Font", fontchooser, colors="Colors", colorschooser, beep="Beep", keyboard="Keyboard", toys;
+  if (!view->GetSectionText(0, {&font, &fontchooser, &colors, &colorschooser, &beep, &keyboard, &toys})) return ERROR("parse runsettings1");
 }
 
 MyRFBInterfaceSettingsViewController::MyRFBInterfaceSettingsViewController(MyTerminalMenus *m) :
@@ -194,12 +180,12 @@ vector<TableItem> MyRFBInterfaceSettingsViewController::GetBaseSchema(MyTerminal
   };
 }
 
-void MyRFBInterfaceSettingsViewController::UpdateViewFromModel(const MyAppSettingsModel &app_model, const MyHostSettingsModel &host_model) {
+void MyRFBInterfaceSettingsViewController::UpdateViewFromModel(const MyHostSettingsModel &host_model) {
   view->BeginUpdates();
   view->EndUpdates();
 }
 
-void MyRFBInterfaceSettingsViewController::UpdateModelFromView(MyAppSettingsModel *app_model, MyHostSettingsModel *host_model) const {
+void MyRFBInterfaceSettingsViewController::UpdateModelFromView(MyHostSettingsModel *host_model) const {
 }
 
 MySSHFingerprintViewController::MySSHFingerprintViewController(MyTerminalMenus *m) :
@@ -394,56 +380,25 @@ bool MyLocalShellSettingsViewController::UpdateModelFromView(MyHostSettingsModel
   return true;
 }
 
-MyQuickConnectViewController::MyQuickConnectViewController(MyTerminalMenus *m) : menus(m),
-  view(make_unique<SystemTableView>("Quick Connect", "", GetSchema(m), m->second_col)) {}
-
 vector<TableItem> MyQuickConnectViewController::GetSchema(MyTerminalMenus *m) {
   return vector<TableItem>{
     TableItem("Protocol", TableItem::Dropdown, "", "", 0, 0, 0, Callback(), Callback(), {
-              {"SSH",         {{0,1,"\x01""22"},   {0,2,"\x01Username"}, {0,3,m->pw_default,false,0,m->key_icon}, {2,0,"",false,0,0,"SSH Settings",        bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_SSH) } }},
-              {"Telnet",      {{0,1,"\x01""23"},   {0,2,"",true},        {0,3,"",true,0,-1},                      {2,0,"",false,0,0,"Telnet Settings",     bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_Telnet) } }},
-              {"VNC",         {{0,1,"\x01""5900"}, {0,2,"",true},        {0,3,m->pw_default,false,0,-1},          {2,0,"",false,0,0,"VNC Settings",        bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_RFB) } }},
-              {"Local Shell", {{0,1,"",true},      {0,2,"",true},        {0,3,"",true,0,-1},                      {2,0,"",false,0,0,"Local Shell Settings",bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_LocalShell) }}} }, {
-              TableItemChild("SSH",         TableItem::TextInput, "\x01Hostname", ">", 0, m->host_locked_icon),
-              TableItemChild("Telnet",      TableItem::TextInput, "\x01Hostname", ">", 0, m->host_icon), 
-              TableItemChild("VNC",         TableItem::TextInput, "\x01Hostname", ">", 0, m->vnc_icon),
-              TableItemChild("Local Shell", TableItem::None,      "",             ">", 0, m->terminal_icon) }),
-    TableItem("Port", TableItem::NumberInput, "\x02""22"),
+              {"SSH",         {{0,1,"\x01Username"}, {0,2,m->pw_default,false,0,m->key_icon}, {2,0,"",false,0,0,"SSH Settings",        bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_SSH) } }},
+              {"Telnet",      {{0,1,"",true},        {0,2,"",true,0,-1},                      {2,0,"",false,0,0,"Telnet Settings",     bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_Telnet) } }},
+              {"VNC",         {{0,1,"",true},        {0,2,m->pw_default,false,0,-1},          {2,0,"",false,0,0,"VNC Settings",        bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_RFB) } }},
+              {"Local Shell", {{0,1,"",true},        {0,2,"",true,0,-1},                      {2,0,"",false,0,0,"Local Shell Settings",bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_LocalShell) }}} }, false, 0, {
+              TableItemChild("SSH",         TableItem::TextInput, "\x01Host[:port]", ">", 0, m->host_locked_icon),
+              TableItemChild("Telnet",      TableItem::TextInput, "\x01Host[:port]", ">", 0, m->host_icon), 
+              TableItemChild("VNC",         TableItem::TextInput, "\x01Host[:port]", ">", 0, m->vnc_icon),
+              TableItemChild("Local Shell", TableItem::None,      "",                ">", 0, m->terminal_icon) }),
     TableItem("Username", TableItem::TextInput, "\x01Username"),
     TableItem("Credential", TableItem::FixedDropdown, "", "", 0, 0, m->key_icon, Callback(),
-              bind(&SystemNavigationView::PushTable, m->hosts_nav.get(), m->keys.view.get()), TableItem::Depends(),
+              bind(&SystemNavigationView::PushTable, m->hosts_nav.get(), m->keys.view.get()), TableItem::Depends(), false, 0,
               { TableItem("Password", TableItem::PasswordInput, m->pw_default), TableItem("Key", TableItem::Label) }),
     TableItem("", TableItem::Separator, ""),
-    TableItem("Connect", TableItem::Button, "", "", 0, 0, 0, bind(&MyTerminalMenus::QuickConnect, m)),
+    TableItem("Connect", TableItem::Button, "", "", 0, 0, 0, [=](){}),
     TableItem("", TableItem::Separator, ""),
     TableItem("SSH Settings", TableItem::Button, "", "", 0, 0, 0, bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_SSH)) };
-}
-
-void MyQuickConnectViewController::UpdateViewFromModel() {
-  view->BeginUpdates();
-  view->SetDropdown(0, 0, 0);
-  view->SetDropdown(0, 3, 0);
-  view->SetSectionValues(0, vector<string>{ ",\x01Hostname,,,", "\x02""22",
-                         "\x01Username", StrCat(",", menus->pw_default, ",") });
-  view->EndUpdates();
-}
-
-bool MyQuickConnectViewController::UpdateModelFromView(MyHostModel *model, MyCredentialDB *cred_db) const {
-  model->hostname = "";
-  model->username = "Username";
-  string prot = "Protocol", port = "Port", credtype = "Credential", cred = "";
-  if (!view->GetSectionText(0, {&prot, &model->hostname, &port, &model->username,
-                            &credtype, &cred})) return ERRORv(false, "parse quickconnect");
-
-  model->displayname = StrCat(model->username.size() ? StrCat(model->username, "@") : "", model->hostname,
-                              model->port != model->DefaultPort() ? StrCat(":", model->port) : "");
-  model->SetProtocol(prot);
-  model->SetPort(atoi(port));
-  auto ct = MyCredentialModel::GetCredentialType(credtype);
-  if      (ct == CredentialType_Password) model->cred.Load(CredentialType_Password, cred);
-  else if (ct == CredentialType_PEM)      model->cred.Load(cred_db, view->GetTag(0, 3));
-  else                                    model->cred.Load();
-  return true;
 }
 
 MyNewHostViewController::MyNewHostViewController(MyTerminalMenus *m) : menus(m),
@@ -456,7 +411,7 @@ vector<TableItem> MyNewHostViewController::GetSchema(MyTerminalMenus *m) {
   ret[0].depends["Telnet"]     .push_back({0, 0, "\x01Nickname", false, m->host_icon});
   ret[0].depends["VNC"]        .push_back({0, 0, "\x01Nickname", false, m->vnc_icon});
   ret[0].depends["Local Shell"].push_back({0, 0, "\x01Nickname", false, m->terminal_icon});
-  ret[5].CheckAssign("Connect", bind(&MyTerminalMenus::NewHostConnect, m));
+  ret[4].CheckAssign("Connect", bind(&MyTerminalMenus::NewHostConnect, m));
   ret.insert(ret.begin(), TableItem{"", TableItem::TextInput, "\x01Nickname", "", 0, m->host_locked_icon});
   return ret;
 }
@@ -464,8 +419,8 @@ vector<TableItem> MyNewHostViewController::GetSchema(MyTerminalMenus *m) {
 void MyNewHostViewController::UpdateViewFromModel() {
   view->BeginUpdates();
   view->SetDropdown(0, 1, 0);
-  view->SetDropdown(0, 4, 0);
-  view->SetSectionValues(0, vector<string>{ "\x01Nickname", ",\x01Hostname,,,", "\x02""22",
+  view->SetDropdown(0, 3, 0);
+  view->SetSectionValues(0, vector<string>{ "\x01Nickname", ",\x01Host[:port],\x01Host[:port],\x01Host[:port],",
                          "\x01Username", StrCat(",", menus->pw_default, ",") });
   view->EndUpdates();
 }
@@ -474,15 +429,15 @@ bool MyNewHostViewController::UpdateModelFromView(MyHostModel *model, MyCredenti
   model->displayname = "";
   model->hostname    = "";
   model->username    = "Username";
-  string prot = "Protocol", port = "Port", credtype = "Credential", cred = "";
-  if (!view->GetSectionText(0, {&model->displayname, &prot, &model->hostname, &port, &model->username,
+  string prot = "Protocol", credtype = "Credential", cred = "";
+  if (!view->GetSectionText(0, {&model->displayname, &prot, &model->hostname, &model->username,
                             &credtype, &cred})) return ERRORv(false, "parse newhostconnect");
 
   model->SetProtocol(prot);
-  model->SetPort(atoi(port));
+  model->SetPort(0);
   auto ct = MyCredentialModel::GetCredentialType(credtype);
   if      (ct == CredentialType_Password) model->cred.Load(CredentialType_Password, cred);
-  else if (ct == CredentialType_PEM)      model->cred.Load(cred_db, view->GetTag(0, 4));
+  else if (ct == CredentialType_PEM)      model->cred.Load(cred_db, view->GetTag(0, 3));
   else                                    model->cred.Load();
   return true;
 }
@@ -492,7 +447,7 @@ MyUpdateHostViewController::MyUpdateHostViewController(MyTerminalMenus *m) : men
 
 vector<TableItem> MyUpdateHostViewController::GetSchema(MyTerminalMenus *m) {
   vector<TableItem> ret = MyNewHostViewController::GetSchema(m);
-  ret[6].CheckAssign("Connect", bind(&MyTerminalMenus::UpdateHostConnect, m));
+  ret[5].CheckAssign("Connect", bind(&MyTerminalMenus::UpdateHostConnect, m));
   return ret;
 }
 
@@ -507,11 +462,11 @@ void MyUpdateHostViewController::UpdateViewFromModel(const MyHostModel &host) {
   else                                                      { hostv = StrCat(",", host.hostname, ",,,"); proto_dropdown = 0; }
   view->BeginUpdates();
   view->SetDropdown(0, 1, proto_dropdown);
-  view->SetDropdown(0, 4, pem);
+  view->SetDropdown(0, 3, pem);
   view->SetSectionValues(0, vector<string>{
-    host.displayname, hostv, StrCat(host.port), host.username,
+    host.displayname, host.port != host.DefaultPort() ? StrCat(hostv, ":", host.port) : hostv, host.username,
     StrCat(",", pw ? host.cred.creddata : menus->pw_default, ",", host.cred.name) });
-  view->SetTag(0, 4, pem ? host.cred.cred_id : 0);
+  view->SetTag(0, 3, pem ? host.cred.cred_id : 0);
   view->EndUpdates();
 }
 
@@ -519,15 +474,15 @@ bool MyUpdateHostViewController::UpdateModelFromView(MyHostModel *model, MyCrede
   model->displayname = "";
   model->hostname    = "";
   model->username    = "Username";
-  string prot = "Protocol", port = "Port", credtype = "Credential", cred = "";
-  if (!view->GetSectionText(0, {&model->displayname, &prot, &model->hostname, &port, &model->username,
+  string prot = "Protocol", credtype = "Credential", cred = "";
+  if (!view->GetSectionText(0, {&model->displayname, &prot, &model->hostname, &model->username,
                             &credtype, &cred})) return ERRORv(false, "parse updatehostconnect");
 
   model->SetProtocol(prot);
-  model->SetPort(atoi(port));
+  model->SetPort(0);
   auto ct = MyCredentialModel::GetCredentialType(credtype);
   if      (ct == CredentialType_Password) model->cred.Load(CredentialType_Password, cred);
-  else if (ct == CredentialType_PEM)      model->cred.Load(cred_db, view->GetTag(0, 4));
+  else if (ct == CredentialType_PEM)      model->cred.Load(cred_db, view->GetTag(0, 3));
   else                                    model->cred.Load();
   return true;
 }
