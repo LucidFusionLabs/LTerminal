@@ -4,11 +4,11 @@ enum Protocol : int { SSH=1, Telnet, RFB, LocalShell }
 enum TextEncoding : int { UTF8=1, ASCII=2 }
 enum DeleteMode : int { Normal=1, ControlH=2 }
 enum BeepType : int { None=0, Audio=1, Visual=2 }
-enum ColorScheme : int { VGA=1, SolarizedDark=2, SolarizedLight=3 }
 
 enum CredentialDBType : int { Null = 0, Table, Keychain }
 enum CredentialType : int { Ask = 0, Password, PEM }
 struct CredentialRef { db: int; id: int; }
+struct Color { r: ubyte; g: ubyte; b: ubyte; a: ubyte; }
 table PortForward { port: int; target: string; target_port: int; }
 
 table Credential {
@@ -43,7 +43,7 @@ table HostSettings {
   startup_command:     string;
   font_name:           string;
   font_size:           int = 15;
-  color_scheme:        ColorScheme  = VGA;
+  color_scheme:        string;
   beep_type:           BeepType     = None;
   text_encoding:       TextEncoding = UTF8;
   delete_mode:         DeleteMode   = Normal;
@@ -57,6 +57,11 @@ table AppSettings {
   version:               int;
   default_host_settings: HostSettings;
   keep_display_on:       bool;
+}
+
+table ColorScheme {
+  name: string;
+  data: [Color];
 }
 
 table RecordLog { stamp: ulong; data: [ubyte]; }

@@ -37,8 +37,7 @@ struct MyAutocompleteDB : public SQLiteIdValueStore { using SQLiteIdValueStore::
 struct MyHostSettingsModel {
   int settings_id, autocomplete_id, font_size;
   bool agent_forwarding, compression, close_on_disconnect;
-  string terminal_type, startup_command, font_name, prompt;
-  LTerminal::ColorScheme color_scheme;
+  string terminal_type, startup_command, font_name, color_scheme, prompt;
   LTerminal::BeepType beep_type;
   LTerminal::TextEncoding text_encoding;
   LTerminal::DeleteMode delete_mode;
@@ -55,7 +54,7 @@ struct MyHostSettingsModel {
     startup_command  = "";
     font_name        = FLAGS_font;
     font_size        = 15;
-    color_scheme     = LTerminal::ColorScheme_VGA;
+    color_scheme     = "Solarized Dark";
     beep_type        = LTerminal::BeepType_None;
     text_encoding    = LTerminal::TextEncoding_UTF8;
     delete_mode      = LTerminal::DeleteMode_Normal;
@@ -75,7 +74,7 @@ struct MyHostSettingsModel {
     startup_command = GetFlatBufferString(r.startup_command());
     font_name = r.font_name() ? r.font_name()->data() : FLAGS_font;
     font_size = r.font_size();
-    color_scheme = r.color_scheme();
+    color_scheme = GetFlatBufferString(r.color_scheme());
     beep_type = r.beep_type();
     text_encoding = r.text_encoding();
     delete_mode = r.delete_mode();
@@ -91,8 +90,8 @@ struct MyHostSettingsModel {
     for (auto &f : remote_forward) rf.push_back(LTerminal::CreatePortForward(fb, f.port, fb.CreateString(f.target_host), f.target_port));
     return LTerminal::CreateHostSettings
       (fb, agent_forwarding, compression, close_on_disconnect, fb.CreateString(terminal_type),
-       fb.CreateString(startup_command), fb.CreateString(font_name), font_size, color_scheme, beep_type,
-       text_encoding, delete_mode, lf.size() ? fb.CreateVector(lf) : 0,
+       fb.CreateString(startup_command), fb.CreateString(font_name), font_size, fb.CreateString(color_scheme),
+       beep_type, text_encoding, delete_mode, lf.size() ? fb.CreateVector(lf) : 0,
        rf.size() ? fb.CreateVector(rf) : 0, autocomplete_id, fb.CreateString(prompt));
   }
 
@@ -315,6 +314,7 @@ struct MyNewKeyViewController {
 struct MyGenKeyViewController {
   unique_ptr<SystemTableView> view;
   MyGenKeyViewController(MyTerminalMenus*);
+  void UpdateViewFromModel();
   bool UpdateModelFromView(MyGenKeyModel *model) const;
 };
 
@@ -448,7 +448,7 @@ struct MyTerminalMenus {
       arrowleft_icon, arrowright_icon, clipboard_upload_icon, clipboard_download_icon, keygen_icon, none_icon;
   string pw_default = "\x01""Ask each time", pw_empty = "lfl_default";
 
-  int                              second_col=120, connected_host_id=0;
+  int                              connected_host_id=0;
   unique_ptr<SystemNavigationView> hosts_nav, interfacesettings_nav;
   MyKeyboardSettingsViewController keyboard;
   MyNewKeyViewController           newkey;
@@ -644,22 +644,36 @@ struct MyTerminalMenus {
     auto tw = GetActiveWindow();
     for (auto t : tw->tabs.tabs) v.push_back
       (MenuItem{"", t->title, [=](){ tw->tabs.SelectTab(t); app->scheduler.Wakeup(tw->root); } });
+    v.push_back(MenuItem{"", "Close Session", bind(&MyTerminalMenus::CloseActiveSession, this)});
     v.push_back(MenuItem{"", "New", [=](){ hosts.view->SetTitle("New Session"); hosts_nav->Show(true); } }); 
     sessions_menu = make_unique<SystemMenuView>("Sessions", v);
     sessions_menu->Show();
   }
 
+  void CloseActiveSession() {
+    auto tw = GetActiveWindow();
+    tw->CloseActiveTab();
+    if (tw->tabs.top) return;
+    keyboard_toolbar->Show(false);
+    hosts.view->DelNavigationButton(HAlign::Left);
+    hosts.view->SetTitle("LTerminal");
+    hosts_nav->Show(true);
+  }
+
   void ShowToysMenu() {
+    HideInterfaceSettings();
+    my_app->toys_menu->Show();
+  }
+
+  void HideInterfaceSettings() {
     interfacesettings_nav->PopAll();
     interfacesettings_nav->Show(false);
-    my_app->toys_menu->Show();
   }
 
   void ShowInterfaceSettings() {
     if (auto t = GetActiveTerminalTab()) t->ChangeShader("none");
     if (!connected_host_id || interfacesettings_nav->shown) return;
     MyHostModel host_model(&host_db, &credential_db, &settings_db, connected_host_id);
-    interfacesettings_nav->PopAll();
     if (host_model.protocol == LTerminal::Protocol_RFB) {
       rfbinterfacesettings.UpdateViewFromModel(host_model.settings);
       interfacesettings_nav->PushTable(rfbinterfacesettings.view.get());
@@ -668,6 +682,14 @@ struct MyTerminalMenus {
       interfacesettings_nav->PushTable(terminalinterfacesettings.view.get());
     }
     interfacesettings_nav->Show(true);
+  }
+
+  void ApplyTerminalSettings(const MyHostSettingsModel &settings) {
+    if (auto t = GetActiveTerminalTab()) {
+      t->root->default_font.desc.name = settings.font_name;
+      t->ChangeColors(settings.color_scheme, false);
+      t->SetFontSize(settings.font_size);
+    }
   }
 
   void ShowAppSettings() {
@@ -805,9 +827,11 @@ struct MyTerminalMenus {
          host.settings.local_forward, host.settings.remote_forward },
          host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "", identity, 
          bind(&SystemToolbarView::ToggleButton, keyboard_toolbar.get(), _1), move(cb), move(fingerprint_cb));
+      ApplyTerminalSettings(host.settings);
     } else if (host.protocol == LTerminal::Protocol_Telnet) {
       GetActiveWindow()->AddTerminalTab()->UseTelnetTerminalController
         (host.Hostport(), (bool(cb) ? Callback([=](){ cb(0, ""); }) : Callback()));
+      ApplyTerminalSettings(host.settings);
     } else if (host.protocol == LTerminal::Protocol_RFB) {
       GetActiveWindow()->AddRFBTab(RFBClient::Params{host.Hostport(), host.username},
                                    host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "",
@@ -815,6 +839,7 @@ struct MyTerminalMenus {
     } else if (host.protocol == LTerminal::Protocol_LocalShell) {
       StartShell();
       if (cb) cb(0, "");
+      ApplyTerminalSettings(host.settings);
     }
     MenuStartSession();
   }

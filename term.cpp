@@ -588,10 +588,11 @@ struct MyTerminalTab : public TerminalTab {
     app->scheduler.Wakeup(root);
   }
 
-  void ChangeColors(const string &colors_name) {
-    if      (colors_name == "vga")             terminal->ChangeColors(Singleton<Terminal::StandardVGAColors>   ::Get());
-    else if (colors_name == "solarized_dark")  terminal->ChangeColors(Singleton<Terminal::SolarizedDarkColors> ::Get());
-    else if (colors_name == "solarized_light") terminal->ChangeColors(Singleton<Terminal::SolarizedLightColors>::Get());
+  void ChangeColors(const string &colors_name, bool redraw=true) {
+    if      (colors_name == "Solarized Dark")  terminal->SetColors(Singleton<Terminal::SolarizedDarkColors> ::Get());
+    else if (colors_name == "Solarized Light") terminal->SetColors(Singleton<Terminal::SolarizedLightColors>::Get());
+    else                                       terminal->SetColors(Singleton<Terminal::StandardVGAColors>   ::Get());
+    if (redraw) terminal->Redraw(true, true);
     if (terminal->bg_color) root->gd->clear_color = *terminal->bg_color;
     app->scheduler.Wakeup(root);
   }
@@ -952,9 +953,9 @@ extern "C" int MyAppMain() {
 #endif
     MenuItem{ "", "Fonts",        [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeFont(StringVec()); } },
     MenuItem{ "", "Transparency", [=](){ if (auto w = GetActiveWindow()) w->ShowTransparencyControls(); } },
-    MenuItem{ "", "VGA Colors",             [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeColors("vga");             } },
-    MenuItem{ "", "Solarized Dark Colors",  [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeColors("solarized_dark");  } },
-    MenuItem{ "", "Solarized Light Colors", [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeColors("solarized_light"); } }
+    MenuItem{ "", "VGA Colors",             [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeColors("VGA");             } },
+    MenuItem{ "", "Solarized Dark Colors",  [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeColors("Solarized Dark");  } },
+    MenuItem{ "", "Solarized Light Colors", [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeColors("Solarized Light"); } }
   });
   if (FLAGS_term.empty()) FLAGS_term = BlankNull(getenv("TERM"));
 #endif
