@@ -522,7 +522,8 @@ struct MyTerminalMenus {
 
     keyboard_toolbar = make_unique<SystemToolbarView>(MenuItemVec{
       { "\U00002699", "",       bind(&MyTerminalMenus::ShowInterfaceSettings, this) },
-      { "esc",        "toggle", bind(&MyTerminalMenus::ToggleKey,        this, "esc") },
+      { "esc",        "",       bind(&MyTerminalMenus::PressKey,         this, "esc") },
+      { "tab",        "",       bind(&MyTerminalMenus::PressKey,         this, "tab") },
       { "\U000025C0", "",       bind(&MyTerminalMenus::PressKey,         this, "left") },
       { "\U000025B6", "",       bind(&MyTerminalMenus::PressKey,         this, "right") },
       { "\U000025B2", "",       bind(&MyTerminalMenus::PressKey,         this, "up") }, 
@@ -532,7 +533,8 @@ struct MyTerminalMenus {
       { "\U000023EA", "",       bind(&MyTerminalMenus::PressKey,         this, "home") },
       { "\U000023E9", "",       bind(&MyTerminalMenus::PressKey,         this, "end") }, 
       { "ctrl",       "toggle", bind(&MyTerminalMenus::ToggleKey,        this, "ctrl") },
-      { "alt",        "toggle", bind(&MyTerminalMenus::ToggleKey,        this, "alt") },
+      // { "alt",        "toggle", bind(&MyTerminalMenus::ToggleKey,        this, "alt") },
+      { "\U00002328", "",       bind(&Application::ToggleTouchKeyboard, app) },
       { "\U000025F0", "",       bind(&MyTerminalMenus::ShowSessionsMenu, this) },
     });
 
@@ -645,7 +647,11 @@ struct MyTerminalMenus {
     for (auto t : tw->tabs.tabs) v.push_back
       (MenuItem{"", t->title, [=](){ tw->tabs.SelectTab(t); app->scheduler.Wakeup(tw->root); } });
     v.push_back(MenuItem{"", "Close Session", bind(&MyTerminalMenus::CloseActiveSession, this)});
-    v.push_back(MenuItem{"", "New", [=](){ hosts.view->SetTitle("New Session"); hosts_nav->Show(true); } }); 
+    v.push_back(MenuItem{"", "New", [=](){
+      hosts.view->SetTitle("New Session"); 
+      keyboard_toolbar->Show(false);
+      hosts_nav->Show(true);
+    }}); 
     sessions_menu = make_unique<SystemMenuView>("Sessions", v);
     sessions_menu->Show();
   }
@@ -666,8 +672,10 @@ struct MyTerminalMenus {
   }
 
   void HideInterfaceSettings() {
+    keyboard_toolbar->Show(true);
     interfacesettings_nav->PopAll();
     interfacesettings_nav->Show(false);
+    app->scheduler.Wakeup(app->focused);
   }
 
   void ShowInterfaceSettings() {
@@ -682,6 +690,7 @@ struct MyTerminalMenus {
       interfacesettings_nav->PushTable(terminalinterfacesettings.view.get());
     }
     interfacesettings_nav->Show(true);
+    keyboard_toolbar->Show(false);
   }
 
   void ApplyTerminalSettings(const MyHostSettingsModel &settings) {
@@ -789,7 +798,12 @@ struct MyTerminalMenus {
 
   void MenuStartSession() {
     hosts_nav->Show(false);
-    hosts.view->AddNavigationButton(HAlign::Left, TableItem("Back", TableItem::Button, "", "", 0, 0, 0, [=](){ hosts_nav->Show(false); }));
+    hosts.view->AddNavigationButton
+      (HAlign::Left, TableItem("Back", TableItem::Button, "", "", 0, 0, 0, [=](){
+         hosts_nav->Show(false);
+         keyboard_toolbar->Show(true);
+         app->scheduler.Wakeup(app->focused);
+       }));
     keyboard_toolbar->Show(true);
     app->CloseTouchKeyboardAfterReturn(false);
     app->OpenTouchKeyboard();

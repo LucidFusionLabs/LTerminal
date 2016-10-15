@@ -607,6 +607,7 @@ struct MyTerminalTab : public TerminalTab {
 struct RFBTerminalController : public NetworkTerminalController, public KeyboardController, public MouseController {
   RFBClient::Params params;
   FrameBuffer *fb;
+  Box viewport;
   string password;
   Callback savehost_cb;
   RFBTerminalController(TerminalTabInterface *p, Service *s, RFBClient::Params a, const Callback &ccb, FrameBuffer *f) :
@@ -642,8 +643,23 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
   int SendMouseEvent(InputEvent::Id id, const point &p, int down, int flag) {
     uint8_t buttons = app->input->MouseButton1Down() | app->input->MouseButton2Down()<<2;
     if (conn && conn->state == Connection::Connected)
-      RFBClient::SendPointerEvent(conn, float(p.x) / parent->root->width * fb->width,
-                                  (1.0 - float(p.y) / parent->root->height) * fb->height, buttons);
+      RFBClient::SendPointerEvent
+        (conn, viewport.x + float(p.x) / parent->root->width * viewport.w,
+         viewport.y + (1.0 - float(p.y - parent->root->y) / parent->root->height) * viewport.h, buttons);
+    return 1;
+  }
+
+  int SendWheelEvent(InputEvent::Id id, const v2 &p, const v2 &d) {
+    static const int inc_x = 128, inc_y = 128;
+    if (id == Mouse::Event::Wheel) {
+      if      (p.x >  1e-6) viewport.x = max(0,                           viewport.x - inc_x);
+      else if (p.x < -1e-6) viewport.x = min(fb->tex.width  - viewport.w, viewport.x + inc_x);
+      if      (p.y >  1e-6) viewport.y = min(fb->tex.height - viewport.h, viewport.y + inc_y);
+      else if (p.y < -1e-6) viewport.y = max(0,                           viewport.y - inc_y);
+    } else if (id == Mouse::Event::Zoom) {
+      viewport.w = Clamp<float>(viewport.w * d.x, inc_x*2, fb->tex.width);
+      viewport.h = Clamp<float>(viewport.h * d.y, inc_y*2, fb->tex.height);
+    }
     return 1;
   }
 
@@ -665,6 +681,7 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
       if (b.w && b.h) {
         CHECK_EQ(0, b.x);
         CHECK_EQ(0, b.y);
+        viewport = b;
         fb->Create(b.w, b.h, FrameBuffer::Flag::CreateTexture | FrameBuffer::Flag::ReleaseFB);
       }
     } else fb->tex.UpdateGL(MakeUnsigned(data.buf), b, pf, Texture::Flag::FlipY); 
@@ -702,24 +719,27 @@ struct MyRFBTab : public TerminalTabInterface {
   void ScrollUp() {}
 
   void Draw() {
-    GraphicsContext gc(root->gd);
+    float tex[4];
     Box draw_box = root->Box();
     int effects = PrepareEffects(&draw_box, my_app->downscale_effects, 0);
-    root->gd->DisableBlend();
+    Texture::Coordinates(tex, rfb ? rfb->viewport : Box(), fb.tex.width, fb.tex.height);
+    GraphicsContext gc(root->gd);
+    gc.gd->DisableBlend();
     if (effects) {
       float scale = activeshader->scale;
       glShadertoyShader(gc.gd, activeshader);
       activeshader->SetUniform1i("iChannelFlip", 1);
       activeshader->SetUniform2f("iChannelScroll", 0, 0);
-      activeshader->SetUniform3f("iChannelResolution", XY_or_Y(activeshader->scale, root->gd->TextureDim(fb.tex.width)),
-                                 XY_or_Y(activeshader->scale, root->gd->TextureDim(fb.tex.height)), 1);
+      activeshader->SetUniform3f("iChannelResolution", XY_or_Y(activeshader->scale, gc.gd->TextureDim(fb.tex.width)),
+                                 XY_or_Y(activeshader->scale, gc.gd->TextureDim(fb.tex.height)), 1);
       activeshader->SetUniform2f("iChannelModulus", fb.tex.coord[Texture::maxx_coord_ind],
                                  fb.tex.coord[Texture::maxy_coord_ind]);
       activeshader->SetUniform4f("iTargetBox", draw_box.x, draw_box.y,
                                  XY_or_Y(scale, draw_box.w), XY_or_Y(scale, draw_box.h));
     }
-    fb.tex.DrawCrimped(root->gd, draw_box, 1, 0, 0);
-    if (effects) root->gd->UseShader(0);
+    fb.tex.Bind();
+    gc.DrawTexturedBox(draw_box, tex, 1);
+    if (effects) gc.gd->UseShader(0);
   }
 
   int ReadAndUpdateTerminalFramebuffer() {
@@ -842,9 +862,9 @@ void MyWindowStart(Window *W) {
   W->default_textbox = [=]() -> KeyboardController* { if (auto t = GetActiveTab()) return t->GetKeyboardTarget(); return nullptr; };
   W->shell = make_unique<Shell>(W);
   if (my_app->image_browser) W->shell->AddBrowserCommands(my_app->image_browser.get());
+  app->scheduler.AddMainWaitMouse(W);
 
 #ifndef LFL_MOBILE                                                                                 
-  app->scheduler.AddMainWaitMouse(W);
   TerminalTabInterface *t = nullptr;
   ONCE_ELSE({ if (FLAGS_vnc.size()) t = tw->AddRFBTab(RFBClient::Params{FLAGS_vnc, FLAGS_login}, "");
               else { auto tt = tw->AddTerminalTab(); tt->UseInitialTerminalController(); t=tt; }
@@ -897,6 +917,7 @@ extern "C" void MyAppCreate(int argc, const char* const* argv) {
   my_app->downscale_effects = app->SetExtraScale(true);
   app->SetTitleBar(false);
   app->SetKeepScreenOn(false);
+  app->SetAutoRotateOrientation(true);
 #endif
 }
 
@@ -1006,6 +1027,9 @@ extern "C" int MyAppMain() {
 
   app->StartNewWindow(app->focused);
 #ifdef LFL_MOBILE
+  app->SetVerticalSwipeRecognizer(2);
+  app->SetHorizontalSwipeRecognizer(2);
+  app->SetPinchRecognizer(true);
   my_app->menus = make_unique<MyTerminalMenus>();
   my_app->menus->hosts_nav->Show(true);
 #else
