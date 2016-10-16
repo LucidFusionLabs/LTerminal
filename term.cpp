@@ -899,9 +899,20 @@ void MyWindowClosed(Window *W) {
 using namespace LFL;
 
 extern "C" void MyAppCreate(int argc, const char* const* argv) {
+#ifdef LFL_MOBILE
+  Application::LoadDefaultSettings(StringPairVec{
+    StringPair("send_crash_reports", "1"),
+    StringPair("write_log_file",     "0"),
+    StringPair("record_session",     "0"),
+  });
+#endif
 #if defined(LFL_IOS) && !defined(LFL_IOS_SIM)
-  InitCrashReporting("a594782b23094f22947179fb05892d64"); // hockeyapp
-  // InitCrashReporting("5537f9374df847498b8661525445feaa00555300"); // crittercism
+  if (atoi(Application::GetSetting("send_crash_reports"))) {
+    // InitCrashReporting("5537f9374df847498b8661525445feaa00555300", // crittercism
+    InitCrashReporting("a594782b23094f22947179fb05892d64", // hockeyapp
+                       Application::GetSetting("crash_report_name"),
+                       Application::GetSetting("crash_report_email"));
+  }
 #endif
   FLAGS_enable_video = FLAGS_enable_input = 1;
   app = new Application(argc, argv);
