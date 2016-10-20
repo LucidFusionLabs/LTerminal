@@ -32,12 +32,14 @@ struct TerminalTabInterface : public Dialog {
   virtual void SetFontSize(int) = 0;
   virtual void ScrollUp() = 0;
   virtual void ScrollDown() = 0;
+  virtual void UpdateTargetFPS() = 0;
   virtual MouseController *GetMouseTarget() = 0;
   virtual KeyboardController *GetKeyboardTarget() = 0;
   virtual void TakeFocus() { root->active_textbox = GetKeyboardTarget();     root->active_controller = GetMouseTarget(); }
   virtual void LoseFocus() { root->active_textbox = root->default_textbox(); root->active_controller = root->default_controller(); }
 
-  virtual bool Animating() const { return activeshader != &app->shaders->shader_default; }
+  virtual bool Animating() const { return Effects(); }
+  virtual bool Effects() const { return activeshader != &app->shaders->shader_default; }
   virtual void ChangeShader(const string &shader_name) {}
 
   virtual void ShowEffectsControls() { 
@@ -47,7 +49,7 @@ struct TerminalTabInterface : public Dialog {
 
   virtual int PrepareEffects(Box *draw_box, int downscale_effects, int extra_height=0) {
     if (!root->animating) { root->gd->DrawMode(DrawMode::_2D); return 0; }
-    if (downscale_effects > 1) {
+    if (Effects() && downscale_effects > 1) {
       root->gd->RestoreViewport(DrawMode::_2D);
       float scale = activeshader->scale = 1.0 / downscale_effects;
       draw_box->y *= scale;
@@ -63,41 +65,43 @@ struct TerminalControllerInterface : public Terminal::Controller {
 };
   
 struct NetworkTerminalController : public TerminalControllerInterface {
-  Service *svc=0;
+  SocketService *svc=0;
   Connection *conn=0;
   Callback detach_cb, close_cb, success_cb;
   string remote, read_buf, ret_buf;
   bool success_on_connect=false;
-  NetworkTerminalController(TerminalTabInterface *p, Service *s, const string &r, const Callback &ccb) :
+  NetworkTerminalController(TerminalTabInterface *p, SocketService *s, const string &r, const Callback &ccb) :
     TerminalControllerInterface(p), svc(s), detach_cb(bind(&NetworkTerminalController::ConnectedCB, this)),
     close_cb(ccb), remote(r) {}
-  virtual ~NetworkTerminalController() { if (conn) app->scheduler.DelMainWaitSocket(parent->root, conn->socket); }
+  virtual ~NetworkTerminalController() {
+    if (conn) app->scheduler.DelMainWaitSocket(parent->root, conn->GetSocket());
+  }
 
-  virtual int Open(TextArea *t) {
-    if (remote.empty()) return -1;
+  virtual Socket Open(TextArea *t) {
+    if (remote.empty()) return InvalidSocket;
     t->Write(StrCat("Connecting to ", remote, "\r\n"));
     app->RunInNetworkThread([=](){
       if (!(conn = svc->Connect(remote, 0, &detach_cb)))
         if (app->network_thread) app->RunInMainThread([=](){ Close(); }); });
-    return app->network_thread ? -1 : (conn ? conn->socket : -1);
+    return app->network_thread ? InvalidSocket : (conn ? conn->GetSocket() : InvalidSocket);
   }
 
   virtual void Close() {
     if (!conn || conn->state != Connection::Connected) return;
-    if (app->network_thread) app->scheduler.DelMainWaitSocket(parent->root, conn->socket);
-    app->net->ConnCloseDetached(svc, conn);
+    if (app->network_thread) app->scheduler.DelMainWaitSocket(parent->root, conn->GetSocket());
+    if (auto c = dynamic_cast<SocketConnection*>(conn)) app->net->ConnCloseDetached(svc, c);
     conn = 0;
     close_cb();
   }
 
   virtual void ConnectedCB() {
     if (app->network_thread) app->scheduler.AddMainWaitSocket
-      (parent->root, conn->socket, SocketSet::READABLE, bind(&TerminalTabInterface::ControllerReadableCB, parent));
+      (parent->root, conn->GetSocket(), SocketSet::READABLE, bind(&TerminalTabInterface::ControllerReadableCB, parent));
     if (success_on_connect && success_cb) success_cb();
   }
 
   virtual StringPiece Read() {
-    if (!conn || conn->state != Connection::Connected || !NBReadable(conn->socket)) return StringPiece();
+    if (!conn || conn->state != Connection::Connected) return StringPiece();
     if (conn->Read() < 0) { ERROR(conn->Name(), ": Read"); Close(); return StringPiece(); }
     read_buf.append(conn->rb.begin(), conn->rb.size());
     conn->rb.Flush(conn->rb.size());
@@ -134,7 +138,7 @@ struct InteractiveTerminalController : public TerminalControllerInterface {
   virtual ~InteractiveTerminalController() { cmd.WriteHistory(app->savedir, "shell", ""); }
 
   StringPiece Read() { return ""; }
-  int Open(TextArea *T) { (term=T)->Write(StrCat(header, prompt)); return -1; }
+  Socket Open(TextArea *T) { (term=T)->Write(StrCat(header, prompt)); return InvalidSocket; }
   void UnBlockWithResponse(const string &t) { blocking=0; WriteText(StrCat(t, "\r\n", prompt)); }
 
   void IOCtlWindowSize(int w, int h) {}
@@ -187,8 +191,8 @@ template <class TerminalType> struct TerminalTabT : public TerminalTabInterface 
     controller.swap(last_controller);
     controller = move(new_controller);
     terminal->sink = controller.get();
-    int fd = controller ? controller->Open(terminal) : -1;
-    if (fd != -1) app->scheduler.AddMainWaitSocket
+    Socket fd = controller ? controller->Open(terminal) : InvalidSocket;
+    app->scheduler.AddMainWaitSocket
       (root, fd, SocketSet::READABLE, bind(&TerminalTabInterface::ControllerReadableCB, this));
     if (controller && controller->frame_on_keyboard_input) app->scheduler.AddMainWaitKeyboard(root);
     else                                                   app->scheduler.DelMainWaitKeyboard(root);

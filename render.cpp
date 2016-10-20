@@ -41,7 +41,7 @@ extern "C" int MyAppMain() {
   if (optind >= app->argc) { fprintf(stderr, "Usage: %s [-flags] <socket-name>\n", app->argv[0]); return -1; }
   // if (app->Init()) return -1;
   app->focused->gd = CreateGraphicsDevice(app->focused, 2).release();
-  app->net = make_unique<Network>();
+  app->net = make_unique<SocketServices>();
   (app->asset_loader = make_unique<AssetLoader>())->Init();
 
   // to cleanup crash leaked shm: for i in $( ipcs -m | grep "^m " | awk '{print $2}' ); do ipcrm -m $i; done

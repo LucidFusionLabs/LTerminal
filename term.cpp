@@ -117,7 +117,7 @@ struct PlaybackTerminalController : public TerminalControllerInterface {
   unique_ptr<FlatFile> playback;
   PlaybackTerminalController(TerminalTabInterface *p, unique_ptr<FlatFile> f) :
     TerminalControllerInterface(p), playback(move(f)) {}
-  int Open(TextArea*) { return -1; }
+  Socket Open(TextArea*) { return InvalidSocket; }
   int Write(const StringPiece &b) { return b.size(); }
   StringPiece Read() {
 #ifdef LFL_FLATBUFFERS
@@ -143,7 +143,7 @@ struct ReadBuffer {
 };
 
 struct PTYTerminalController : public TerminalControllerInterface {
-  int fd = -1;
+  Socket fd = -1;
   ProcessPipe process;
   ReadBuffer read_buf;
   PTYTerminalController(TerminalTabInterface *p) : TerminalControllerInterface(p), read_buf(65536) {}
@@ -151,7 +151,7 @@ struct PTYTerminalController : public TerminalControllerInterface {
     if (process.in) app->scheduler.DelMainWaitSocket(app->focused, fileno(process.in));
   }
 
-  int Open(TextArea*) {
+  Socket Open(TextArea*) {
     if (FLAGS_term.empty()) setenv("TERM", (FLAGS_term = "xterm").c_str(), 1);
     string shell = BlankNull(getenv("SHELL")), lang = BlankNull(getenv("LANG"));
     if (shell.empty()) setenv("SHELL", (shell = "/bin/bash").c_str(), 1);
@@ -198,7 +198,7 @@ struct SSHTerminalController : public NetworkTerminalController {
   int fingerprint_type=0;
   unordered_set<Socket> forward_fd;
 
-  SSHTerminalController(TerminalTabInterface *p, Service *s, SSHClient::Params a, const Callback &ccb) :
+  SSHTerminalController(TerminalTabInterface *p, SocketService *s, SSHClient::Params a, const Callback &ccb) :
     NetworkTerminalController(p, s, a.hostport, ccb), params(move(a)) {
     for (auto &f : params.forward_local) ForwardLocalPort(f.port, f.target_host, f.target_port);
   }
@@ -210,7 +210,7 @@ struct SSHTerminalController : public NetworkTerminalController {
     }
   }
 
-  int Open(TextArea *t) {
+  Socket Open(TextArea *t) {
     Terminal *term = dynamic_cast<Terminal*>(t);
     SSHReadCB(0, StrCat("Connecting to ", params.user, "@", params.hostport, "\r\n"));
     app->RunInNetworkThread([=](){
@@ -223,7 +223,7 @@ struct SSHTerminalController : public NetworkTerminalController {
                                  bind(&SSHTerminalController::LoadIdentityCB, this, _1),
                                  bind(&SSHTerminalController::LoadPasswordCB, this, _1));
     });
-    return -1;
+    return InvalidSocket;
   }
 
   bool FingerprintCB(int hostkey_type, const StringPiece &in) {
@@ -281,7 +281,7 @@ struct SSHTerminalController : public NetworkTerminalController {
   }
 
   StringPiece Read() {
-    if (conn && conn->state == Connection::Connected && NBReadable(conn->socket)) {
+    if (conn && conn->state == Connection::Connected) {
       if (conn->Read() < 0)                                 { ERROR(conn->Name(), ": Read");       Close(); return ""; }
       if (conn->rb.size() && conn->handler->Read(conn) < 0) { ERROR(conn->Name(), ": query read"); Close(); return ""; }
     }
@@ -448,6 +448,8 @@ struct MyTerminalTab : public TerminalTab {
     if (effects) root->gd->UseShader(0);
   }
 
+  void UpdateTargetFPS() { parent->UpdateTargetFPS(); }
+
   void SetFontSize(int n) {
     bool drew = false;
     root->default_font.desc.size = n;
@@ -610,10 +612,20 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
   Box viewport;
   string password;
   Callback savehost_cb;
-  RFBTerminalController(TerminalTabInterface *p, Service *s, RFBClient::Params a, const Callback &ccb, FrameBuffer *f) :
-    NetworkTerminalController(p, s, a.hostport, ccb), params(move(a)), fb(f) {}
+  float scroll_c = 1, scroll_vel_x = 0, scroll_vel_y = 0;
+  int inc_x=128, inc_y=128, scroll_frames=30, scroll_count_x=0, scroll_count_y=0;
+  RFBTerminalController(TerminalTabInterface *p, SocketService *s, RFBClient::Params a, const Callback &ccb, FrameBuffer *f) :
+    NetworkTerminalController(p, s, a.hostport, ccb), params(move(a)), fb(f) {
+    float v = 1;
+    for (int i=1; i<scroll_frames; ++i) scroll_c += (v *= .95);
+  }
 
-  int Open(TextArea*) {
+  template <class X> X MouseToFramebufferCoords(const X &p) const {
+    return X(viewport.x +        float(p.x)                   / parent->root->width   * viewport.w,
+             viewport.y + (1.0 - float(p.y - parent->root->y) / parent->root->height) * viewport.h);
+  }
+
+  Socket Open(TextArea*) override {
     INFO("Connecting to vnc://", params.user, "@", params.hostport);
     app->RunInNetworkThread([=](){
       success_cb = bind(&RFBTerminalController::RFBLoginCB, this);
@@ -626,39 +638,48 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
     return -1;
   }
 
-  StringPiece Read() {
-    if (conn && conn->state == Connection::Connected && NBReadable(conn->socket)) {
+  StringPiece Read() override {
+    if (conn && conn->state == Connection::Connected) {
       if (conn->Read() < 0)                                 { ERROR(conn->Name(), ": Read");       Close(); return ""; }
       if (conn->rb.size() && conn->handler->Read(conn) < 0) { ERROR(conn->Name(), ": query read"); Close(); return ""; }
     }
     return StringPiece();
   }
 
-  int SendKeyEvent(InputEvent::Id event, bool down) {
+  int SendKeyEvent(InputEvent::Id event, bool down) override {
     if (conn && conn->state == Connection::Connected)
       RFBClient::SendKeyEvent(conn, InputEvent::GetKey(event), down);
     return 1;
   }
 
-  int SendMouseEvent(InputEvent::Id id, const point &p, int down, int flag) {
+  int SendMouseEvent(InputEvent::Id id, const point &p, const point &d, int down, int flag) override {
     uint8_t buttons = app->input->MouseButton1Down() | app->input->MouseButton2Down()<<2;
-    if (conn && conn->state == Connection::Connected)
-      RFBClient::SendPointerEvent
-        (conn, viewport.x + float(p.x) / parent->root->width * viewport.w,
-         viewport.y + (1.0 - float(p.y - parent->root->y) / parent->root->height) * viewport.h, buttons);
+    if (down && id == Mouse::Event::Motion) {
+      if (d.x) { scroll_vel_x += d.x/scroll_c * -1; scroll_count_x = 1; }
+      if (d.y) { scroll_vel_y += d.y/scroll_c;      scroll_count_y = 1; }
+    }
+    if (conn && conn->state == Connection::Connected) {
+      point fp = MouseToFramebufferCoords(p);
+      RFBClient::SendPointerEvent(conn, fp.x, fp.y, buttons);
+    }
     return 1;
   }
 
-  int SendWheelEvent(InputEvent::Id id, const v2 &p, const v2 &d) {
-    static const int inc_x = 128, inc_y = 128;
+  int SendWheelEvent(InputEvent::Id id, const v2 &p, const v2 &d) override {
     if (id == Mouse::Event::Wheel) {
-      if      (p.x >  1e-6) viewport.x = max(0,                           viewport.x - inc_x);
-      else if (p.x < -1e-6) viewport.x = min(fb->tex.width  - viewport.w, viewport.x + inc_x);
-      if      (p.y >  1e-6) viewport.y = min(fb->tex.height - viewport.h, viewport.y + inc_y);
-      else if (p.y < -1e-6) viewport.y = max(0,                           viewport.y - inc_y);
+      if      (p.x >  1e-6) { scroll_vel_x -= inc_x/scroll_c; scroll_count_x = 1; }
+      else if (p.x < -1e-6) { scroll_vel_x += inc_x/scroll_c; scroll_count_x = 1; }
+      if      (p.y >  1e-6) { scroll_vel_y += inc_x/scroll_c; scroll_count_y = 1; }
+      else if (p.y < -1e-6) { scroll_vel_y -= inc_x/scroll_c; scroll_count_y = 1; }
+      parent->UpdateTargetFPS();
     } else if (id == Mouse::Event::Zoom) {
+      v2 fp = MouseToFramebufferCoords(p);
       viewport.w = Clamp<float>(viewport.w * d.x, inc_x*2, fb->tex.width);
       viewport.h = Clamp<float>(viewport.h * d.y, inc_y*2, fb->tex.height);
+      viewport.x = max(0.0f, fp.x - viewport.w/2);
+      viewport.y = max(0.0f, fp.y - viewport.h/2);
+      viewport.w = min(viewport.w, fb->tex.width  - viewport.x);
+      viewport.h = min(viewport.h, fb->tex.height - viewport.y);
     }
     return 1;
   }
@@ -694,6 +715,27 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
                               copy_from.x, copy_from.y, b.w, b.h);
     fb->Release();
   }
+
+  void Animate() {
+    bool update_fps = 0;
+    if (scroll_count_x) {
+      viewport.x += scroll_vel_x;
+      scroll_vel_x *= .95;
+      if      (Max(&viewport.x, 0))                          scroll_count_x = 0;
+      else if (Min(&viewport.x, fb->tex.width - viewport.w)) scroll_count_x = 0;
+      else if (++scroll_count_x >= scroll_frames)            scroll_count_x = 0;
+      if (!scroll_count_x) update_fps = true;
+    }
+    if (scroll_count_y) {
+      viewport.y += scroll_vel_y;
+      scroll_vel_y *= .95;
+      if      (Max(&viewport.y, 0))                           scroll_count_y = 0;
+      else if (Min(&viewport.y, fb->tex.height - viewport.h)) scroll_count_y = 0;
+      else if (++scroll_count_y >= scroll_frames)             scroll_count_y = 0;
+      if (!scroll_count_y) update_fps = true;
+    }
+    if (update_fps) parent->UpdateTargetFPS();
+  }
 };
 
 struct MyRFBTab : public TerminalTabInterface {
@@ -714,6 +756,8 @@ struct MyRFBTab : public TerminalTabInterface {
 
   MouseController    *GetMouseTarget()    { return rfb; }
   KeyboardController *GetKeyboardTarget() { return rfb; }
+  bool Animating() const { return (rfb && (rfb->scroll_count_x || rfb->scroll_count_y)) || Effects(); }
+  void UpdateTargetFPS() { parent->UpdateTargetFPS(); }
   void SetFontSize(int) {}
   void ScrollDown() {}
   void ScrollUp() {}
@@ -722,6 +766,7 @@ struct MyRFBTab : public TerminalTabInterface {
     float tex[4];
     Box draw_box = root->Box();
     int effects = PrepareEffects(&draw_box, my_app->downscale_effects, 0);
+    if (rfb) rfb->Animate();
     Texture::Coordinates(tex, rfb ? rfb->viewport : Box(), fb.tex.width, fb.tex.height);
     GraphicsContext gc(root->gd);
     gc.gd->DisableBlend();
@@ -790,7 +835,7 @@ struct MyTerminalWindow : public TerminalWindowInterface<TerminalTabInterface> {
   void UpdateTargetFPS() {
     bool animating = tabs.top->Animating() || (root->console && root->console->animating);
     app->scheduler.SetAnimating(root, animating);
-    if (my_app->downscale_effects) app->SetDownScale(animating);
+    if (my_app->downscale_effects > 1) app->SetDownScale(tabs.top->Effects());
   }
 
   void ShowTransparencyControls() {
@@ -1027,7 +1072,7 @@ extern "C" int MyAppMain() {
 #endif
 
   if (start_network_thread) {
-    app->net = make_unique<Network>();
+    app->net = make_unique<SocketServices>();
 #if !defined(LFL_MOBILE)
     app->log_pid = true;
     app->render_process = make_unique<ProcessAPIClient>();
@@ -1037,13 +1082,14 @@ extern "C" int MyAppMain() {
   }
 
   app->StartNewWindow(app->focused);
-#ifdef LFL_MOBILE
-  app->SetVerticalSwipeRecognizer(2);
-  app->SetHorizontalSwipeRecognizer(2);
   app->SetPinchRecognizer(true);
+#ifdef LFL_MOBILE
+  app->SetPanRecognizer(true);
   my_app->menus = make_unique<MyTerminalMenus>();
   my_app->menus->hosts_nav->Show(true);
 #else
+  app->SetVerticalSwipeRecognizer(2);
+  app->SetHorizontalSwipeRecognizer(2);
   auto tw = GetActiveWindow();
   if (auto t = dynamic_cast<MyTerminalTab*>(tw->tabs.top)) {
     my_app->new_win_width  = t->terminal->style.font->FixedWidth() * t->terminal->term_width;

@@ -102,7 +102,7 @@ MyAboutViewController::MyAboutViewController(MyTerminalMenus *m) :
   view->BeginUpdates();
   view->ReplaceSection(0, "LTerminal", m->logo_icon, 0, TableItemVec{
     TableItem("Version",                 TableItem::None,    "", app->GetVersion(), 0, 0, 0),
-    TableItem("Credits",                 TableItem::Command, "", ">", 0, 0, 0, [=](){ if (!m->credits) m->credits = make_unique<SystemTextView>(Asset::FileContents("credits.txt")); m->hosts_nav->PushTextView(m->credits.get()); }),
+    TableItem("Credits",                 TableItem::Command, "", ">", 0, 0, 0, [=](){ if (!m->credits) m->credits = make_unique<SystemTextView>("Credits", Asset::FileContents("credits.txt")); m->hosts_nav->PushTextView(m->credits.get()); }),
     TableItem("LTerminal Web Page",      TableItem::Command, "", ">", 0, 0, 0, bind(&Application::OpenSystemBrowser, app, "http://www.lucidfusionlabs.com/terminal/")),
     TableItem("Lucid Fusion Labs, LLC.", TableItem::Command, "", ">", 0, 0, 0, bind(&Application::OpenSystemBrowser, app, "http://www.lucidfusionlabs.com/")),
   });
@@ -116,8 +116,8 @@ MySupportViewController::MySupportViewController(MyTerminalMenus *m) :
   })) {
   view->BeginUpdates();
   view->ReplaceSection(0, "Contact", 0, 0, TableItemVec{
-    TableItem("Email",   TableItem::Command, "", ">", 0, 0, 0, bind(&Application::OpenSystemBrowser, app, "mailto:info@lucidfusionlabs.com")),
-    TableItem("Twitter", TableItem::Command, "", ">", 0, 0, 0, bind(&Application::OpenSystemBrowser, app, "https://twitter.com/intent/tweet?text=@LucidFusionLabs"))
+    TableItem("Email",   TableItem::Command, "", "support@lucidfusionlabs.com", 0, 0, 0, bind(&Application::OpenSystemBrowser, app, "mailto:info@lucidfusionlabs.com")),
+    TableItem("Twitter", TableItem::Command, "", "@LucidFusionLabs",            0, 0, 0, bind(&Application::OpenSystemBrowser, app, "https://twitter.com/intent/tweet?text=@LucidFusionLabs"))
   });
   view->EndUpdates(); 
 }

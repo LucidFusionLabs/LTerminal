@@ -667,13 +667,23 @@ struct MyTerminalMenus {
     for (auto t : tw->tabs.tabs) v.push_back
       (MenuItem{"", t->title, [=](){ tw->tabs.SelectTab(t); app->scheduler.Wakeup(tw->root); } });
     v.push_back(MenuItem{"", "Close Session", bind(&MyTerminalMenus::CloseActiveSession, this)});
-    v.push_back(MenuItem{"", "New", [=](){
-      hosts.view->SetTitle("New Session"); 
-      keyboard_toolbar->Show(false);
-      hosts_nav->Show(true);
-    }}); 
+    v.push_back(MenuItem{"", "New", bind(&MyTerminalMenus::ShowNewSessionMenu, this)});
     sessions_menu = make_unique<SystemMenuView>("Sessions", v);
     sessions_menu->Show();
+  }
+
+  void ShowNewSessionMenu() {
+    app->ShowSystemStatusBar(true);
+    hosts.view->SetTitle("New Session"); 
+    keyboard_toolbar->Show(false);
+    hosts_nav->Show(true);
+  }
+
+  void HideNewSessionMenu() {
+    app->ShowSystemStatusBar(false);
+    hosts_nav->Show(false);
+    keyboard_toolbar->Show(true);
+    app->scheduler.Wakeup(app->focused);
   }
 
   void CloseActiveSession() {
@@ -692,6 +702,7 @@ struct MyTerminalMenus {
   }
 
   void HideInterfaceSettings() {
+    app->ShowSystemStatusBar(false);
     keyboard_toolbar->Show(true);
     interfacesettings_nav->PopAll();
     interfacesettings_nav->Show(false);
@@ -709,6 +720,7 @@ struct MyTerminalMenus {
       terminalinterfacesettings.UpdateViewFromModel(host_model.settings);
       interfacesettings_nav->PushTableView(terminalinterfacesettings.view.get());
     }
+    app->ShowSystemStatusBar(true);
     interfacesettings_nav->Show(true);
     keyboard_toolbar->Show(false);
   }
@@ -819,12 +831,9 @@ struct MyTerminalMenus {
   void MenuStartSession() {
     hosts_nav->Show(false);
     hosts.view->AddNavigationButton
-      (HAlign::Left, TableItem("Back", TableItem::Button, "", "", 0, 0, 0, [=](){
-         hosts_nav->Show(false);
-         keyboard_toolbar->Show(true);
-         app->scheduler.Wakeup(app->focused);
-       }));
+      (HAlign::Left, TableItem("Back", TableItem::Button, "", "", 0, 0, 0, bind(&MyTerminalMenus::HideNewSessionMenu, this)));
     keyboard_toolbar->Show(true);
+    app->ShowSystemStatusBar(false);
     app->CloseTouchKeyboardAfterReturn(false);
     app->OpenTouchKeyboard();
   }
