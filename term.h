@@ -65,38 +65,34 @@ struct TerminalControllerInterface : public Terminal::Controller {
 };
   
 struct NetworkTerminalController : public TerminalControllerInterface {
-  SocketService *svc=0;
   Connection *conn=0;
   Callback detach_cb, close_cb, success_cb;
   string remote, read_buf, ret_buf;
-  bool success_on_connect=false;
-  NetworkTerminalController(TerminalTabInterface *p, SocketService *s, const string &r, const Callback &ccb) :
-    TerminalControllerInterface(p), svc(s), detach_cb(bind(&NetworkTerminalController::ConnectedCB, this)),
+  bool background_services=true, success_on_connect=false;
+  NetworkTerminalController(TerminalTabInterface *p, const string &r, const Callback &ccb) :
+    TerminalControllerInterface(p), detach_cb(bind(&NetworkTerminalController::ConnectedCB, this)),
     close_cb(ccb), remote(r) {}
-  virtual ~NetworkTerminalController() {
-    if (conn) app->scheduler.DelMainWaitSocket(parent->root, conn->GetSocket());
-  }
+  virtual ~NetworkTerminalController() { if (conn) conn->RemoveFromMainWait(parent->root); }
 
   virtual Socket Open(TextArea *t) {
     if (remote.empty()) return InvalidSocket;
     t->Write(StrCat("Connecting to ", remote, "\r\n"));
     app->RunInNetworkThread([=](){
-      if (!(conn = svc->Connect(remote, 0, &detach_cb)))
+      if (!(conn = app->ConnectTCP(remote, 0, &detach_cb, background_services)))
         if (app->network_thread) app->RunInMainThread([=](){ Close(); }); });
     return app->network_thread ? InvalidSocket : (conn ? conn->GetSocket() : InvalidSocket);
   }
 
   virtual void Close() {
     if (!conn || conn->state != Connection::Connected) return;
-    if (app->network_thread) app->scheduler.DelMainWaitSocket(parent->root, conn->GetSocket());
-    if (auto c = dynamic_cast<SocketConnection*>(conn)) app->net->ConnCloseDetached(svc, c);
+    conn->RemoveFromMainWait(parent->root);
+    conn->Close();
     conn = 0;
     close_cb();
   }
 
   virtual void ConnectedCB() {
-    if (app->network_thread) app->scheduler.AddMainWaitSocket
-      (parent->root, conn->GetSocket(), SocketSet::READABLE, bind(&TerminalTabInterface::ControllerReadableCB, parent));
+    conn->AddToMainWait(parent->root, bind(&TerminalTabInterface::ControllerReadableCB, parent));
     if (success_on_connect && success_cb) success_cb();
   }
 

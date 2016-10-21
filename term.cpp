@@ -198,8 +198,8 @@ struct SSHTerminalController : public NetworkTerminalController {
   int fingerprint_type=0;
   unordered_set<Socket> forward_fd;
 
-  SSHTerminalController(TerminalTabInterface *p, SocketService *s, SSHClient::Params a, const Callback &ccb) :
-    NetworkTerminalController(p, s, a.hostport, ccb), params(move(a)) {
+  SSHTerminalController(TerminalTabInterface *p, SSHClient::Params a, const Callback &ccb) :
+    NetworkTerminalController(p, a.hostport, ccb), params(move(a)) {
     for (auto &f : params.forward_local) ForwardLocalPort(f.port, f.target_host, f.target_port);
   }
 
@@ -213,6 +213,7 @@ struct SSHTerminalController : public NetworkTerminalController {
   Socket Open(TextArea *t) {
     Terminal *term = dynamic_cast<Terminal*>(t);
     SSHReadCB(0, StrCat("Connecting to ", params.user, "@", params.hostport, "\r\n"));
+    params.background_services = background_services;
     app->RunInNetworkThread([=](){
       success_cb = bind(&SSHTerminalController::SSHLoginCB, this, term);
       conn = SSHClient::Open(params, SSHClient::ResponseCB
@@ -489,8 +490,7 @@ struct MyTerminalTab : public TerminalTab {
     bool close_on_disconn = params.close_on_disconnect;
     auto ssh =
       make_unique<SSHTerminalController>
-      (this, app->net->tcp_client.get(), move(params), 
-       close_on_disconn ? closed_cb : [=](){ UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n"); });
+      (this, move(params), close_on_disconn ? closed_cb : [=](){ UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n"); });
     ssh->metakey_cb = move(metakey_cb);
     ssh->savehost_cb = move(savehost_cb);
     ssh->fingerprint_cb = move(fingerprint_cb);
@@ -502,8 +502,8 @@ struct MyTerminalTab : public TerminalTab {
 
   void UseTelnetTerminalController(const string &hostport, Callback savehost_cb=Callback()) {
     title = StrCat("Telnet ", hostport);
-    auto telnet = make_unique<NetworkTerminalController>(this, app->net->tcp_client.get(), hostport,
-                                                         [=](){ UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n"); });
+    auto telnet = make_unique<NetworkTerminalController>
+      (this, hostport, [=](){ UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n"); });
     telnet->success_cb = move(savehost_cb);
     telnet->success_on_connect = true;
     ChangeController(move(telnet));
@@ -614,8 +614,8 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
   Callback savehost_cb;
   float scroll_c = 1, scroll_vel_x = 0, scroll_vel_y = 0;
   int inc_x=128, inc_y=128, scroll_frames=30, scroll_count_x=0, scroll_count_y=0;
-  RFBTerminalController(TerminalTabInterface *p, SocketService *s, RFBClient::Params a, const Callback &ccb, FrameBuffer *f) :
-    NetworkTerminalController(p, s, a.hostport, ccb), params(move(a)), fb(f) {
+  RFBTerminalController(TerminalTabInterface *p, RFBClient::Params a, const Callback &ccb, FrameBuffer *f) :
+    NetworkTerminalController(p, a.hostport, ccb), params(move(a)), fb(f) {
     float v = 1;
     for (int i=1; i<scroll_frames; ++i) scroll_c += (v *= .95);
   }
@@ -746,8 +746,7 @@ struct MyRFBTab : public TerminalTabInterface {
   MyRFBTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P, RFBClient::Params a, string pw, Callback scb) :
     TerminalTabInterface(W, 1.0, 1.0), parent(P), fb(root->gd) {
     title = StrCat("VNC: ", a.hostport);
-    auto c = make_unique<RFBTerminalController>(this, app->net->tcp_client.get(), move(a),
-                                                [=](){ closed_cb(); }, &fb);
+    auto c = make_unique<RFBTerminalController>(this, move(a), [=](){ closed_cb(); }, &fb);
     c->savehost_cb = move(scb);
     rfb = c.get();
     rfb->password = move(pw);

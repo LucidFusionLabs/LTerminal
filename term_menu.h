@@ -866,7 +866,7 @@ struct MyTerminalMenus {
       GetActiveWindow()->AddTerminalTab()->UseSSHTerminalController
         (SSHClient::Params{ host.Hostport(), host.username, host.settings.terminal_type,
          host.settings.startup_command.size() ? StrCat(host.settings.startup_command, "\r") : "",
-         host.settings.compression, host.settings.agent_forwarding, host.settings.close_on_disconnect, 
+         host.settings.compression, host.settings.agent_forwarding, host.settings.close_on_disconnect, true,
          host.settings.local_forward, host.settings.remote_forward },
          host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "", identity, 
          bind(&SystemToolbarView::ToggleButton, keyboard_toolbar.get(), _1), move(cb), move(fingerprint_cb));
