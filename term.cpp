@@ -1085,6 +1085,7 @@ extern "C" int MyAppMain() {
 #ifdef LFL_MOBILE
   app->SetPanRecognizer(true);
   my_app->menus = make_unique<MyTerminalMenus>();
+  my_app->menus->hosts_nav->PushTableView(my_app->menus->hosts.view.get());
   my_app->menus->hosts_nav->Show(true);
 #else
   app->SetVerticalSwipeRecognizer(2);

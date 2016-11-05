@@ -198,7 +198,7 @@ struct MyHostModel {
     else if (p == "VNC")         { protocol = LTerminal::Protocol_RFB;        username.clear(); }
     else if (p == "Telnet")      { protocol = LTerminal::Protocol_Telnet;     username.clear(); cred.Load(); }
     else if (p == "Local Shell") { protocol = LTerminal::Protocol_LocalShell; username.clear(); cred.Load(); }
-    else { FATAL("unknown protocol"); }
+    else { FATAL("unknown protocol '", p, "'"); }
   }
 
   void SetPort(int p) { port = p ? p : DefaultPort(); }
@@ -561,7 +561,6 @@ struct MyTerminalMenus {
     if (UnlockEncryptedDatabase(pw_empty)) hosts.LoadUnlockedUI(&host_db);
     else if ((db_protected = true))        hosts.LoadLockedUI  (&host_db);
     hostsfolder.LoadFolderUI(&host_db);
-    hosts_nav->PushTableView(hosts.view.get());
   }
 
   void PressKey (const string &key) { FindAndDispatch(mobile_key_cmd,       key); }
@@ -648,7 +647,7 @@ struct MyTerminalMenus {
   void ChooseKey(int cred_row_id) {
     hosts_nav->PopView(1);
     SystemTableView *host_menu = hosts_nav->Back();
-    int key_row = 2 + (host_menu->GetKey(0, 0) == "");
+    int key_row = 2 + (host_menu->GetKey(0, 0) == "Nickname");
     host_menu->BeginUpdates();
     if (cred_row_id) {
       MyCredentialModel cred(&credential_db, cred_row_id);

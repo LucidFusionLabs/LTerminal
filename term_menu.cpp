@@ -45,8 +45,8 @@ MyGenKeyViewController::MyGenKeyViewController(MyTerminalMenus *m) {
     TableItem("Size", TableItem::Separator, ""),
     TableItem("Bits", TableItem::Selector, "2048,4096"),
     TableItem("", TableItem::Separator, ""),
-    TableItem("Generate", TableItem::Button, "", "", 0, m->keygen_icon, 0, bind(&MyTerminalMenus::GenerateKey, m))
-    }, -1);
+    TableItem("Generate", TableItem::Command, "", ">", 0, m->keygen_icon, 0, bind(&MyTerminalMenus::GenerateKey, m))
+    });
   view->show_cb = bind(&MyGenKeyViewController::UpdateViewFromModel, this);
 }
 
@@ -275,7 +275,7 @@ MySSHFingerprintViewController::MySSHFingerprintViewController(MyTerminalMenus *
   view(make_unique<SystemTableView>("Fingerprint", "", TableItemVec{
     TableItem("Type", TableItem::Label, ""), TableItem("MD5", TableItem::Label, ""),
     TableItem("SHA256", TableItem::Label, ""), TableItem("", TableItem::Separator, ""),
-    TableItem("Clear", TableItem::Button, "", "", 0, m->none_icon, 0, [=](){
+    TableItem("Clear", TableItem::Command, "", ">", 0, m->none_icon, 0, [=](){
       m->updatehost.prev_model.SetFingerprint(0, "");
       UpdateViewFromModel(m->updatehost.prev_model);
     })
@@ -292,14 +292,14 @@ void MySSHFingerprintViewController::UpdateViewFromModel(const MyHostModel &mode
 MySSHPortForwardViewController::MySSHPortForwardViewController(MyTerminalMenus *m) :
   view(make_unique<SystemTableView>("New Port Forward", "", TableItemVec{
     TableItem("Type", TableItem::Selector, "Local,Remote", "", 0, 0, 0, Callback(), Callback(), {
-              {"Local",  {{1,0,"\x01Port",0,0,0,"Local Port"},  {1,1,"\x01Hostname",0,0,0,"Target Host"}, {1,2,"\x01Port",0,0,0,"Target Port"} }},
-              {"Remote", {{1,0,"\x01Port",0,0,0,"Remote Port"}, {1,1,"\x01Hostname",0,0,0,"Target Host"}, {1,2,"\x01Port",0,0,0,"Target Port"}  }}, }),
+              {"Local",  {{1,0,"\x01Port",0,0,0,0,"Local Port"},  {1,1,"\x01Hostname",0,0,0,0,"Target Host"}, {1,2,"\x01Port",0,0,0,0,"Target Port"} }},
+              {"Remote", {{1,0,"\x01Port",0,0,0,0,"Remote Port"}, {1,1,"\x01Hostname",0,0,0,0,"Target Host"}, {1,2,"\x01Port",0,0,0,0,"Target Port"}  }}, }),
     TableItem("", TableItem::Separator, ""),
     TableItem("Local Port", TableItem::NumberInput, "\x01Port"),
     TableItem("Target Host", TableItem::TextInput, "\x01Hostname"),
     TableItem("Target Port", TableItem::NumberInput, "\x01Port"),
     TableItem("", TableItem::Separator, ""),
-    TableItem("Add", TableItem::Button, "", "", 0, m->plus_green_icon, 0, [=](){
+    TableItem("Add", TableItem::Command, "", ">", 0, m->plus_green_icon, 0, [=](){
       string type, port_text, target_host, target_port_text;
       view->GetSectionText(0, {&type});
       view->GetSectionText(1, {&port_text, &target_host, &target_port_text});
@@ -313,7 +313,7 @@ MySSHPortForwardViewController::MySSHPortForwardViewController(MyTerminalMenus *
       }
       m->hosts_nav->PopView();
     })
-  }, -1)) {
+  })) {
   view->show_cb = [=](){
     view->BeginUpdates();
     view->SetSectionValues(1, vector<string>{"\x01Port", "\x01Hostname", "\x01Port"});
@@ -465,37 +465,35 @@ bool MyLocalShellSettingsViewController::UpdateModelFromView(MyHostSettingsModel
 
 vector<TableItem> MyQuickConnectViewController::GetSchema(MyTerminalMenus *m) {
   return vector<TableItem>{
-    TableItem("Protocol", TableItem::Dropdown, "", "", 0, 0, 0, Callback(), Callback(), {
-              {"SSH",         {{0,1,"\x01Username"}, {0,2,m->pw_default,false,0,m->key_icon}, {2,0,"",false,m->settings_gray_icon,0,"SSH Settings",        bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_SSH) } }},
-              {"Telnet",      {{0,1,"",true},        {0,2,"",true,0,-1},                      {2,0,"",false,m->settings_gray_icon,0,"Telnet Settings",     bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_Telnet) } }},
-              {"VNC",         {{0,1,"",true},        {0,2,m->pw_default,false,0,-1},          {2,0,"",false,m->settings_gray_icon,0,"VNC Settings",        bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_RFB) } }},
-              {"Local Shell", {{0,1,"",true},        {0,2,"",true,0,-1},                      {2,0,"",false,m->settings_gray_icon,0,"Local Shell Settings",bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_LocalShell) }}} }, false, 0, {
+    TableItem("Protocol", TableItem::DropdownKey, "", "", 0, m->host_locked_icon, 0, Callback(), Callback(), {
+              {"SSH",         {{0,0,"",false,m->host_locked_icon}, {0,1,"\x01Username"}, {0,2,StrCat(",",m->pw_default,","),false,0,0,TableItem::DropdownKey},   {2,0,"",false,m->settings_gray_icon,0,0,"SSH Settings",        bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_SSH) } }},
+              {"Telnet",      {{0,0,"",false,m->host_icon},        {0,1,"",true},        {0,2,"",true,0,0},                                                      {2,0,"",false,m->settings_gray_icon,0,0,"Telnet Settings",     bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_Telnet) } }},
+              {"VNC",         {{0,0,"",false,m->vnc_icon},         {0,1,"",true},        {0,2,StrCat(",",m->pw_default,","),false,0,0,TableItem::FixedDropdown}, {2,0,"",false,m->settings_gray_icon,0,0,"VNC Settings",        bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_RFB) } }},
+              {"Local Shell", {{0,0,"",false,m->terminal_icon},    {0,1,"",true},        {0,2,"",true,0,0},                                                      {2,0,"",false,m->settings_gray_icon,0,0,"Local Shell Settings",bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_LocalShell) }}} }, false, 0, {
               TableItemChild("SSH",         TableItem::TextInput, "\x01Host[:port]", ">", 0, m->host_locked_icon),
               TableItemChild("Telnet",      TableItem::TextInput, "\x01Host[:port]", ">", 0, m->host_icon), 
               TableItemChild("VNC",         TableItem::TextInput, "\x01Host[:port]", ">", 0, m->vnc_icon),
               TableItemChild("Local Shell", TableItem::None,      "",                ">", 0, m->terminal_icon) }),
-    TableItem("Username", TableItem::TextInput, "\x01Username"),
-    TableItem("Credential", TableItem::FixedDropdown, "", "", 0, 0, m->key_icon, Callback(),
-              bind(&SystemNavigationView::PushTableView, m->hosts_nav.get(), m->keys.view.get()), TableItem::Depends(), false, 0,
-              { TableItem("Password", TableItem::PasswordInput, m->pw_default), TableItem("Key", TableItem::Label) }),
+    TableItem("Username", TableItem::TextInput, "\x01Username", "", 0, m->info_icon),
+    TableItem("Credential", TableItem::DropdownKey, "", "", 0, m->locked_icon, 0, bind(&SystemNavigationView::PushTableView, m->hosts_nav.get(), m->keys.view.get()), Callback(), {
+              {"Password", {{0,2,"",false,m->locked_icon}}},
+              {"Key",      {{0,2,"",false,m->key_icon}}} }, false, 0, {
+              TableItemChild("Password", TableItem::PasswordInput, m->pw_default, ">", 0, m->locked_icon),
+              TableItemChild("Key",      TableItem::Label,         "",            ">", 0, m->key_icon) }),
     TableItem("", TableItem::Separator, ""),
-    TableItem("Connect", TableItem::Button, "", "", 0, m->plus_red_icon, 0, [=](){}),
+    TableItem("Connect", TableItem::Command, "", ">", 0, m->plus_red_icon, 0, [=](){}),
     TableItem("", TableItem::Separator, ""),
-    TableItem("SSH Settings", TableItem::Button, "", "", 0, m->settings_gray_icon, 0, bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_SSH)) };
+    TableItem("SSH Settings", TableItem::Command, "", ">", 0, m->settings_gray_icon, 0, bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_SSH)) };
 }
 
 MyNewHostViewController::MyNewHostViewController(MyTerminalMenus *m) : menus(m),
-  view(make_unique<SystemTableView>("New Host", "", GetSchema(m), -1)) { view->SelectRow(0, 1); }
+  view(make_unique<SystemTableView>("New Host", "", GetSchema(m))) { view->SelectRow(0, 1); }
 
 vector<TableItem> MyNewHostViewController::GetSchema(MyTerminalMenus *m) {
   vector<TableItem> ret = MyQuickConnectViewController::GetSchema(m);
-  for (auto &dep : ret[0].depends) for (auto &d : dep.second) if (d.section == 0) d.row++;
-  ret[0].depends["SSH"]        .push_back({0, 0, "\x01Nickname", false, m->host_locked_icon});
-  ret[0].depends["Telnet"]     .push_back({0, 0, "\x01Nickname", false, m->host_icon});
-  ret[0].depends["VNC"]        .push_back({0, 0, "\x01Nickname", false, m->vnc_icon});
-  ret[0].depends["Local Shell"].push_back({0, 0, "\x01Nickname", false, m->terminal_icon});
+  for (auto &r : ret) for (auto &dep : r.depends) for (auto &d : dep.second) if (d.section == 0) d.row++;
   ret[4].CheckAssign("Connect", bind(&MyTerminalMenus::NewHostConnect, m));
-  ret.insert(ret.begin(), TableItem{"", TableItem::TextInput, "\x01Nickname", "", 0, m->host_locked_icon});
+  ret.insert(ret.begin(), TableItem{"Nickname", TableItem::TextInput, "\x01Nickname", "", 0, m->logo_icon});
   return ret;
 }
 
@@ -526,7 +524,7 @@ bool MyNewHostViewController::UpdateModelFromView(MyHostModel *model, MyCredenti
 }
 
 MyUpdateHostViewController::MyUpdateHostViewController(MyTerminalMenus *m) : menus(m),
-  view(make_unique<SystemTableView>("Update Host", "", GetSchema(m), -1)) {}
+  view(make_unique<SystemTableView>("Update Host", "", GetSchema(m))) {}
 
 vector<TableItem> MyUpdateHostViewController::GetSchema(MyTerminalMenus *m) {
   vector<TableItem> ret = MyNewHostViewController::GetSchema(m);
@@ -588,7 +586,7 @@ void MyHostsViewController::LoadLockedUI(MyHostDB *model) {
   view->BeginUpdates();
   view->ReplaceSection(1, "", 0, 0, TableItemVec{});
   view->ReplaceSection(0, "", 0, 0, TableItemVec{
-    TableItem("Unlock", TableItem::Button, "", "", 0, 0, 0, [=](){
+    TableItem("Unlock", TableItem::Command, "", ">", 0, 0, 0, [=](){
       my_app->passphrase_alert->ShowCB("Unlock", "Passphrase", "", [=](const string &pw){
         if (menus->UnlockEncryptedDatabase(pw)) { LoadUnlockedUI(model); view->show_cb(); }
       }); })
