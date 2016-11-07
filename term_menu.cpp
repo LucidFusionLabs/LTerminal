@@ -70,6 +70,27 @@ bool MyGenKeyViewController::UpdateModelFromView(MyGenKeyModel *model) const {
   return true;
 }
 
+MyKeyInfoViewController::MyKeyInfoViewController(MyTerminalMenus *m) : menus(m),
+  view(make_unique<SystemTableView>("Info", "", TableItemVec{
+    TableItem("Name", TableItem::TextInput, "", "", 0, m->font_icon),
+    TableItem("Type", TableItem::Label,     "", "", 0, m->key_icon),
+    TableItem("", TableItem::Separator, ""), TableItem("Copy Public Key to Clipboard",  TableItem::Command, "", ">", 0, m->clipboard_upload_icon, 0, [=](){ m->CopyKeyToClipboard(cred_row_id, false); }),
+    TableItem("", TableItem::Separator, ""), TableItem("Copy Private Key to Clipboard", TableItem::Command, "", ">", 0, m->clipboard_upload_icon, 0, [=](){ m->CopyKeyToClipboard(cred_row_id, true);  })
+  })) {
+  view->hide_cb = [=](){
+    if (view->changed) {
+      INFO("key changed");
+    }
+  };
+}
+
+void MyKeyInfoViewController::UpdateViewFromModel(const MyCredentialModel &m) {
+  cred_row_id = m.cred_id;
+  view->BeginUpdates();
+  view->SetSectionValues(0, StringVec{ m.name, "" });
+  view->EndUpdates();
+}
+
 MyKeysViewController::MyKeysViewController(MyTerminalMenus *m, MyCredentialDB *mo) :
   menus(m), model(mo), view(make_unique<SystemTableView>("Choose Key", "", vector<TableItem>{
     TableItem("None",                     TableItem::Command, "", ">", 0, m->none_icon,               0, bind(&MyTerminalMenus::ChooseKey, menus, 0)),
@@ -87,7 +108,8 @@ void MyKeysViewController::UpdateViewFromModel() {
     if (c->type() != CredentialType_PEM) continue;
     string name = c->displayname() ? c->displayname()->data() : "";
     section.push_back({name, TableItem::Command, "", "", credential.first, menus->key_icon, menus->settings_gray_icon,
-                      Callback(bind(&MyTerminalMenus::ChooseKey, menus, credential.first))});
+                      Callback(bind(&MyTerminalMenus::ChooseKey, menus, credential.first)),
+                      Callback(bind(&MyTerminalMenus::KeyInfo,   menus, credential.first))});
   }
   view->BeginUpdates();
   view->ReplaceSection(1, section.size() ? "Keys" : "", 0,
@@ -474,7 +496,7 @@ vector<TableItem> MyQuickConnectViewController::GetSchema(MyTerminalMenus *m) {
               TableItemChild("Telnet",      TableItem::TextInput, "\x01Host[:port]", ">", 0, m->host_icon), 
               TableItemChild("VNC",         TableItem::TextInput, "\x01Host[:port]", ">", 0, m->vnc_icon),
               TableItemChild("Local Shell", TableItem::None,      "",                ">", 0, m->terminal_icon) }),
-    TableItem("Username", TableItem::TextInput, "\x01Username", "", 0, m->info_icon),
+    TableItem("Username", TableItem::TextInput, "\x01Username", "", 0, m->user_icon),
     TableItem("Credential", TableItem::DropdownKey, "", "", 0, m->locked_icon, 0, bind(&SystemNavigationView::PushTableView, m->hosts_nav.get(), m->keys.view.get()), Callback(), {
               {"Password", {{0,2,"",false,m->locked_icon}}},
               {"Key",      {{0,2,"",false,m->key_icon}}} }, false, 0, {

@@ -16,6 +16,12 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#ifndef WIN32
+#include <sys/socket.h>
+#include <sys/ioctl.h>
+#include <termios.h>
+#endif
+
 #include "core/app/app.h"
 #include "core/app/gui.h"
 #include "core/app/ipc.h"
@@ -33,13 +39,11 @@
 #endif
 #include "term.h"
 
-#ifndef WIN32
-#include <sys/socket.h>
-#include <sys/ioctl.h>
-#include <termios.h>
+#ifdef LFL_MOBILE
+#define LFL_TERMINAL_MENUS
 #endif
 
-#if defined(__APPLE__) && !defined(LFL_MOBILE) && !defined(LFL_QT)
+#if defined(__APPLE__) && !defined(LFL_TERMINAL_MENUS) && !defined(LFL_QT)
 #define LFL_TERMINAL_JOIN_READS
 #endif
 
@@ -68,25 +72,6 @@ DEFINE_bool  (resize_grid,     true,   "Resize window in glyph bound increments"
 DEFINE_FLAG(dim, point, point(80,25),  "Initial terminal dimensions");
 extern FlagOfType<bool> FLAGS_enable_network_;
 
-#ifdef LFL_CRYPTO
-static bool ParsePortForward(const string &text, vector<SSHClient::Params::Forward> *out) {
-  vector<string> v;
-  Split(text, isint<':'>, &v);
-  if (v.size() != 3) return false;
-  int port1 = atoi(v[0]), port2 = atoi(v[2]);
-  if (port1 <= 0 || port2 <= 0) return false;
-  out->push_back(SSHClient::Params::Forward{ port1, v[1], port2 });
-  return true;
-}
-#endif
-
-template <class X> struct TerminalWindowInterface : public GUI {
-  TabbedDialog<X> tabs;
-  TerminalWindowInterface(Window *W) : GUI(W), tabs(this) {}
-  virtual void UpdateTargetFPS() = 0;
-  virtual X *AddRFBTab(RFBClient::Params p, string, Callback savehost_cb=Callback()) = 0;
-};
-
 struct MyTerminalMenus;
 struct MyTerminalTab;
 struct MyTerminalWindow;
@@ -112,319 +97,6 @@ struct MyAppState {
     return &shader->second;
   }
 } *my_app = nullptr;
-
-struct PlaybackTerminalController : public TerminalControllerInterface {
-  unique_ptr<FlatFile> playback;
-  PlaybackTerminalController(TerminalTabInterface *p, unique_ptr<FlatFile> f) :
-    TerminalControllerInterface(p), playback(move(f)) {}
-  Socket Open(TextArea*) { return InvalidSocket; }
-  int Write(const StringPiece &b) { return b.size(); }
-  StringPiece Read() {
-#ifdef LFL_FLATBUFFERS
-    auto r = playback ? playback->Next<LTerminal::RecordLog>() : nullptr;
-    auto ret = (r && r->data()) ? StringPiece(MakeSigned(r->data()->data()), r->data()->size()) : StringPiece();
-    unsigned long long stamp = r ? r->stamp() : 0;
-    fprintf(stderr, "Playback %llu \"%s\"\n", stamp, CHexEscapeNonAscii(ret).c_str());
-    return ret;
-#else
-    ERROR("Playback not supported");
-    return StringPiece();
-#endif
-  }
-};
-
-#ifndef WIN32
-struct ReadBuffer {
-  int size;
-  Time stamp;
-  string data;
-  ReadBuffer(int S=0) : size(S), stamp(Now()), data(S, 0) {}
-  void Reset() { stamp=Now(); data.resize(size); }
-};
-
-struct PTYTerminalController : public TerminalControllerInterface {
-  Socket fd = -1;
-  ProcessPipe process;
-  ReadBuffer read_buf;
-  PTYTerminalController(TerminalTabInterface *p) : TerminalControllerInterface(p), read_buf(65536) {}
-  virtual ~PTYTerminalController() {
-    if (process.in) app->scheduler.DelMainWaitSocket(app->focused, fileno(process.in));
-  }
-
-  Socket Open(TextArea*) {
-    if (FLAGS_term.empty()) setenv("TERM", (FLAGS_term = "xterm").c_str(), 1);
-    string shell = BlankNull(getenv("SHELL")), lang = BlankNull(getenv("LANG"));
-    if (shell.empty()) setenv("SHELL", (shell = "/bin/bash").c_str(), 1);
-    if (lang .empty()) setenv("LANG", "en_US.UTF-8", 1);
-    const char *av[] = { shell.c_str(), 0 };
-    CHECK_EQ(process.OpenPTY(av, app->startdir.c_str()), 0);
-    return (fd = fileno(process.out));
-  }
-
-  int Write(const StringPiece &b) { return write(fd, b.data(), b.size()); }
-  void IOCtlWindowSize(int w, int h) {
-    struct winsize ws;
-    memzero(ws);
-    ws.ws_col = w;
-    ws.ws_row = h;
-    ioctl(fd, TIOCSWINSZ, &ws);
-  }
-
-  StringPiece Read() {
-    if (!process.in) return StringPiece();
-    read_buf.Reset();
-    if (NBRead(fd, &read_buf.data) < 0) { ERROR("PTYTerminalController read"); Close(); return ""; }
-    return read_buf.data;
-  }
-
-  void Close() {
-    if (process.in) {
-      app->scheduler.DelMainWaitSocket(app->focused, fileno(process.in));
-      process.Close();
-    }
-  }
-};
-#endif
-
-#ifdef LFL_CRYPTO
-struct SSHTerminalController : public NetworkTerminalController {
-  typedef function<void(int, const string&)> SavehostCB;
-  SSHClient::Params params;
-  StringCB metakey_cb;
-  SavehostCB savehost_cb;
-  SSHClient::FingerprintCB fingerprint_cb;
-  shared_ptr<SSHClient::Identity> identity;
-  string fingerprint, password;
-  int fingerprint_type=0;
-  unordered_set<Socket> forward_fd;
-
-  SSHTerminalController(TerminalTabInterface *p, SSHClient::Params a, const Callback &ccb) :
-    NetworkTerminalController(p, a.hostport, ccb), params(move(a)) {
-    for (auto &f : params.forward_local) ForwardLocalPort(f.port, f.target_host, f.target_port);
-  }
-
-  virtual ~SSHTerminalController() {
-    for (auto &fd : forward_fd) {
-      app->scheduler.DelMainWaitSocket(parent->root, fd);
-      SystemNetwork::CloseSocket(fd);
-    }
-  }
-
-  Socket Open(TextArea *t) {
-    Terminal *term = dynamic_cast<Terminal*>(t);
-    SSHReadCB(0, StrCat("Connecting to ", params.user, "@", params.hostport, "\r\n"));
-    params.background_services = background_services;
-    app->RunInNetworkThread([=](){
-      success_cb = bind(&SSHTerminalController::SSHLoginCB, this, term);
-      conn = SSHClient::Open(params, SSHClient::ResponseCB
-                             (bind(&SSHTerminalController::SSHReadCB, this, _1, _2)), &detach_cb, &success_cb);
-      if (!conn) { app->RunInMainThread(bind(&NetworkTerminalController::Dispose, this)); return; }
-      SSHClient::SetTerminalWindowSize(conn, term->term_width, term->term_height);
-      SSHClient::SetCredentialCB(conn, bind(&SSHTerminalController::FingerprintCB, this, _1, _2),
-                                 bind(&SSHTerminalController::LoadIdentityCB, this, _1),
-                                 bind(&SSHTerminalController::LoadPasswordCB, this, _1));
-    });
-    return InvalidSocket;
-  }
-
-  bool FingerprintCB(int hostkey_type, const StringPiece &in) {
-    string type = SSH::Key::Name((fingerprint_type = hostkey_type));
-    fingerprint = in.str();
-    INFO(params.hostport, ": fingerprint: ", type, " ", "MD5", HexEscape(Crypto::MD5(fingerprint), ":"));
-    return fingerprint_cb ? fingerprint_cb(fingerprint_type, fingerprint) : true;
-  }
-
-  bool LoadPasswordCB(string *out) {
-    if (password.size()) { out->clear(); swap(*out, password); return true; }
-    else {
-      my_app->passphrase_alert->ShowCB("Password", "Password", "",
-                                       [=](const string &pw){ SSHClient::WritePassword(conn, pw); });
-      return false;
-    } 
-  }
-
-  bool LoadIdentityCB(shared_ptr<SSHClient::Identity> *out) {
-    if (identity) {
-      *out = identity;
-      return true;
-    } else if (!FLAGS_keyfile.empty()) {
-      INFO("Load keyfile ", FLAGS_keyfile);
-      *out = make_shared<SSHClient::Identity>();
-      if (!Crypto::ParsePEM(&LocalFile::FileContents(FLAGS_keyfile)[0], &(*out)->rsa, &(*out)->dsa, &(*out)->ec, &(*out)->ed25519,
-                            [=](string v) { return my_app->passphrase_alert->RunModal(v); })) { (*out).reset(); return false; }
-      return true;
-    }
-    return false;
-  }
-
-  void SSHLoginCB(Terminal *term) {
-    SSHReadCB(0, "Connected.\r\n");
-    if (savehost_cb) savehost_cb(fingerprint_type, fingerprint);
-  }
-
-  void SSHReadCB(Connection *c, const StringPiece &b) { 
-    if (b.empty()) Close();
-    else read_buf.append(b.data(), b.size());
-  }
-
-  void IOCtlWindowSize(int w, int h) { if (conn) SSHClient::SetTerminalWindowSize(conn, w, h); }
-  int Write(const StringPiece &in) {
-    StringPiece b = in;
-#ifdef LFL_MOBILE
-    char buf[1];
-    if (b.size() == 1 && ctrl_down && !(ctrl_down = false)) {
-      if (metakey_cb) metakey_cb("ctrl");
-      b = StringPiece(&(buf[0] = Key::CtrlModified(*MakeUnsigned(b.data()))), 1);
-    }
-#endif
-    if (!conn || conn->state != Connection::Connected) return -1;
-    return SSHClient::WriteChannelData(conn, b);
-  }
-
-  StringPiece Read() {
-    if (conn && conn->state == Connection::Connected) {
-      if (conn->Read() < 0)                                 { ERROR(conn->Name(), ": Read");       Close(); return ""; }
-      if (conn->rb.size() && conn->handler->Read(conn) < 0) { ERROR(conn->Name(), ": query read"); Close(); return ""; }
-    }
-    swap(read_buf, ret_buf);
-    read_buf.clear();
-    return ret_buf;
-  }
-
-  bool ForwardLocalPort(int port, const string &remote_h, int remote_p) {
-    Socket fd = SystemNetwork::Listen(Protocol::TCP, IPV4::Parse("127.0.0.1"), port, 1, false);
-    if (fd == InvalidSocket) return ERRORv(false, "listen ", port);
-    app->scheduler.AddMainWaitSocket
-      (parent->root, fd, SocketSet::READABLE, bind(&SSHTerminalController::LocalForwardAcceptCB, this, fd, remote_h, remote_p));
-    forward_fd.insert(fd);
-    return true;
-  }
-
-  bool LocalForwardAcceptCB(Socket listen_fd, const string &remote_h, int remote_p) {
-    int accept_port = 0;
-    IPV4::Addr accept_addr = 0;
-    Socket fd = SystemNetwork::Accept(listen_fd, &accept_addr, &accept_port);
-    if (!conn || conn->state != Connection::Connected) { SystemNetwork::CloseSocket(fd); return ERRORv(false, "no conn"); }
-    SSHClient::Channel *chan = SSHClient::OpenTCPChannel
-      (conn, IPV4::Text(accept_addr), accept_port, remote_h, remote_p,
-       bind(&SSHTerminalController::LocalForwardRemoteReadCB, this, fd, _1, _2, _3));
-    if (!chan) { SystemNetwork::CloseSocket(fd); return ERRORv(false, "open chan"); } 
-    app->scheduler.AddMainWaitSocket
-      (parent->root, fd, SocketSet::READABLE, bind(&SSHTerminalController::LocalForwardLocalReadCB, this, fd, chan));
-    forward_fd.insert(fd);
-    return false;
-  }
-
-  bool LocalForwardLocalReadCB(Socket fd, SSHClient::Channel *chan) {
-    string buf(4096, 0);
-    int l = ::recv(fd, &buf[0], buf.size(), 0);
-    if (l <= 0) { LocalForwardLocalCloseCB(fd, chan); return false; }
-    buf.resize(l);
-    if (!chan->opened) chan->buf.append(buf);
-    else if (!SSHClient::WriteToChannel(conn, chan, buf)) ERROR(conn->Name(), ": write");
-    return false;
-  }
-
-  void LocalForwardLocalCloseCB(Socket fd, SSHClient::Channel *chan) {
-    if (!SSHClient::CloseChannel(conn, chan)) ERROR(conn->Name(), ": write");
-    app->scheduler.DelMainWaitSocket(parent->root, fd);
-    SystemNetwork::CloseSocket(fd);
-    forward_fd.erase(fd);
-  }
-
-  int LocalForwardRemoteReadCB(Socket fd, Connection*, SSHClient::Channel *chan, const StringPiece &b) {
-    if (!chan->opened) LocalForwardRemoteCloseCB(fd, chan);
-    else if (!b.len) {
-      if (chan->buf.size()) {
-        if (!SSHClient::WriteToChannel(conn, chan, chan->buf)) return ERRORv(0, conn->Name(), ": write");
-        chan->buf.clear();
-      }
-    } else {
-      if (::send(fd, b.data(), b.size(), 0) != b.size()) LocalForwardLocalCloseCB(fd, chan);
-    }
-    return 0;
-  }
-
-  void LocalForwardRemoteCloseCB(Socket fd, SSHClient::Channel *chan) {
-    auto it = forward_fd.find(fd);
-    if (it == forward_fd.end()) return;
-    app->scheduler.DelMainWaitSocket(parent->root, fd);
-    SystemNetwork::CloseSocket(fd);
-    forward_fd.erase(it);
-  }
-};
-#endif
-
-struct ShellTerminalController : public InteractiveTerminalController {
-  string ssh_usage="\r\nusage: ssh -l user host[:port]";
-  StringCB telnet_cb;
-  function<void(RFBClient::Params)> vnc_cb;
-#ifdef LFL_CRYPTO
-  function<void(SSHClient::Params)> ssh_cb;
-#endif
-
-  ShellTerminalController(TerminalTabInterface *p, const string &hdr, StringCB tcb, StringVecCB ecb) :
-    InteractiveTerminalController(p), telnet_cb(move(tcb)) {
-    header = StrCat(hdr, "LTerminal 1.0", ssh_usage, "\r\n\r\n");
-#ifdef LFL_CRYPTO
-    shell.Add("ssh",      bind(&ShellTerminalController::MySSHCmd,      this, _1));
-#endif
-    shell.Add("vnc",      bind(&ShellTerminalController::MyVNCCmd,      this, _1));
-    shell.Add("telnet",   bind(&ShellTerminalController::MyTelnetCmd,   this, _1));
-    shell.Add("nslookup", bind(&ShellTerminalController::MyNSLookupCmd, this, _1));
-    shell.Add("help",     bind(&ShellTerminalController::MyHelpCmd,     this, _1));
-    shell.Add("exit",     move(ecb));
-  }
-
-#ifdef LFL_CRYPTO
-  void MySSHCmd(const vector<string> &arg) {
-    string host, login;
-    ParseHostAndLogin(arg, &host, &login);
-    if (login.empty() || host.empty()) { if (term) term->Write(ssh_usage); }
-    else ssh_cb(SSHClient::Params{host, login, FLAGS_term, FLAGS_command, FLAGS_compress,
-                FLAGS_forward_agent, false});
-  }
-#endif
-
-  void MyVNCCmd(const vector<string> &arg) {
-    string host, login;
-    ParseHostAndLogin(arg, &host, &login);
-    if (login.empty() || host.empty()) { if (term) term->Write("\r\nusage: vnc -l user host[:port]"); }
-    else vnc_cb(RFBClient::Params{host, login});
-  }
-
-  void MyTelnetCmd(const vector<string> &arg) {
-    if (arg.empty()) { if (term) term->Write("\r\nusage: telnet host"); }
-    else telnet_cb(arg[0]);
-  }
-
-  void MyNSLookupCmd(const vector<string> &arg) {
-    if (arg.empty() || !app->network_thread) return;
-    if ((blocking = 1)) app->RunInNetworkThread(bind(&ShellTerminalController::MyNetworkThreadNSLookup, this, arg[0]));
-  }
-
-  void MyNetworkThreadNSLookup(const string &host) {
-    app->net->system_resolver->NSLookup(host, bind(&ShellTerminalController::MyNetworkThreadNSLookupResponse, this, host, _1, _2));
-  }
-
-  void MyNetworkThreadNSLookupResponse(const string &host, IPV4::Addr ipv4_addr, DNS::Response*) {
-    app->RunInMainThread(bind(&ShellTerminalController::UnBlockWithResponse, this, StrCat("host = ", IPV4::Text(ipv4_addr))));
-  }
-
-  void MyHelpCmd(const vector<string> &arg) {
-    WriteText("\r\n\r\nLTerminal interpreter commands:\r\n\r\n"
-              "* ssh -l user host[:port]\r\n"
-              "* vnc -l user host[:port]\r\n"
-              "* telnet host[:port]\r\n"
-              "* nslookup host\r\n");
-  }
-
-  static void ParseHostAndLogin(const vector<string> &arg, string *host, string *login) {
-    int ind = 0;
-    for (; ind < arg.size() && arg[ind][0] == '-'; ind += 2) if (arg[ind] == "-l") *login = arg[ind+1];
-    if (ind < arg.size()) *host = arg[ind];
-  }
-};
 
 struct MyTerminalTab : public TerminalTab {
   TerminalWindowInterface<TerminalTabInterface> *parent;
@@ -473,6 +145,7 @@ struct MyTerminalTab : public TerminalTab {
     auto c = make_unique<ShellTerminalController>
       (this, m, [=](const string &h){ UseTelnetTerminalController(h); },
        [=](const StringVec&) { closed_cb(); });
+    c->ssh_term = FLAGS_term;
 #ifdef LFL_CRYPTO
     c->ssh_cb = [=](SSHClient::Params p){ UseSSHTerminalController(move(p)); };
 #endif
@@ -494,6 +167,7 @@ struct MyTerminalTab : public TerminalTab {
     ssh->metakey_cb = move(metakey_cb);
     ssh->savehost_cb = move(savehost_cb);
     ssh->fingerprint_cb = move(fingerprint_cb);
+    ssh->passphrase_alert = my_app->passphrase_alert.get();
     if (pw.size()) ssh->password = pw;
     if (identity) ssh->identity = identity;
     ChangeController(move(ssh));
@@ -510,9 +184,10 @@ struct MyTerminalTab : public TerminalTab {
   }
 
   void UseDefaultTerminalController() {
-#if defined(WIN32) || defined(LFL_MOBILE)
+#if defined(WIN32) || defined(LFL_TERMINAL_MENUS)
     UseShellTerminalController("");
 #else
+    if (FLAGS_term.empty()) setenv("TERM", (FLAGS_term = "xterm").c_str(), 1);
     ChangeController(make_unique<PTYTerminalController>(this));
 #endif
   }
@@ -524,8 +199,8 @@ struct MyTerminalTab : public TerminalTab {
     else if (FLAGS_ssh.size()) {
       SSHClient::Params params{FLAGS_ssh, FLAGS_login, FLAGS_term, FLAGS_command, FLAGS_compress,
         FLAGS_forward_agent, 0};
-      if (FLAGS_forward_local .size()) ParsePortForward(FLAGS_forward_local,  &params.forward_local);
-      if (FLAGS_forward_remote.size()) ParsePortForward(FLAGS_forward_remote, &params.forward_remote);
+      if (FLAGS_forward_local .size()) SSHClient::ParsePortForward(FLAGS_forward_local,  &params.forward_local);
+      if (FLAGS_forward_remote.size()) SSHClient::ParsePortForward(FLAGS_forward_remote, &params.forward_remote);
       return UseSSHTerminalController(params);
     }
 #endif
@@ -606,138 +281,7 @@ struct MyTerminalTab : public TerminalTab {
   }
 };
 
-struct RFBTerminalController : public NetworkTerminalController, public KeyboardController, public MouseController {
-  RFBClient::Params params;
-  FrameBuffer *fb;
-  Box viewport;
-  string password;
-  Callback savehost_cb;
-  float scroll_c = 1, scroll_vel_x = 0, scroll_vel_y = 0;
-  int inc_x=128, inc_y=128, scroll_frames=30, scroll_count_x=0, scroll_count_y=0;
-  RFBTerminalController(TerminalTabInterface *p, RFBClient::Params a, const Callback &ccb, FrameBuffer *f) :
-    NetworkTerminalController(p, a.hostport, ccb), params(move(a)), fb(f) {
-    float v = 1;
-    for (int i=1; i<scroll_frames; ++i) scroll_c += (v *= .95);
-  }
-
-  template <class X> X MouseToFramebufferCoords(const X &p) const {
-    return X(viewport.x +        float(p.x)                   / parent->root->width   * viewport.w,
-             viewport.y + (1.0 - float(p.y - parent->root->y) / parent->root->height) * viewport.h);
-  }
-
-  Socket Open(TextArea*) override {
-    INFO("Connecting to vnc://", params.user, "@", params.hostport);
-    app->RunInNetworkThread([=](){
-      success_cb = bind(&RFBTerminalController::RFBLoginCB, this);
-      conn = RFBClient::Open(params, bind(&RFBTerminalController::LoadPasswordCB, this, _1), 
-                             bind(&RFBTerminalController::RFBUpdateCB, this, _1, _2, _3, _4),
-                             bind(&RFBTerminalController::RFBCopyCB, this, _1, _2, _3),
-                             &detach_cb, &success_cb);
-      if (!conn) { app->RunInMainThread(bind(&NetworkTerminalController::Dispose, this)); return; }
-    });
-    return -1;
-  }
-
-  StringPiece Read() override {
-    if (conn && conn->state == Connection::Connected) {
-      if (conn->Read() < 0)                                 { ERROR(conn->Name(), ": Read");       Close(); return ""; }
-      if (conn->rb.size() && conn->handler->Read(conn) < 0) { ERROR(conn->Name(), ": query read"); Close(); return ""; }
-    }
-    return StringPiece();
-  }
-
-  int SendKeyEvent(InputEvent::Id event, bool down) override {
-    if (conn && conn->state == Connection::Connected)
-      RFBClient::SendKeyEvent(conn, InputEvent::GetKey(event), down);
-    return 1;
-  }
-
-  int SendMouseEvent(InputEvent::Id id, const point &p, const point &d, int down, int flag) override {
-    uint8_t buttons = app->input->MouseButton1Down() | app->input->MouseButton2Down()<<2;
-    if (down && id == Mouse::Event::Motion) {
-      if (d.x) { scroll_vel_x += d.x/scroll_c * -1; scroll_count_x = 1; }
-      if (d.y) { scroll_vel_y += d.y/scroll_c;      scroll_count_y = 1; }
-    }
-    if (conn && conn->state == Connection::Connected) {
-      point fp = MouseToFramebufferCoords(p);
-      RFBClient::SendPointerEvent(conn, fp.x, fp.y, buttons);
-    }
-    return 1;
-  }
-
-  int SendWheelEvent(InputEvent::Id id, const v2 &p, const v2 &d) override {
-    if (id == Mouse::Event::Wheel) {
-      if      (p.x >  1e-6) { scroll_vel_x -= inc_x/scroll_c; scroll_count_x = 1; }
-      else if (p.x < -1e-6) { scroll_vel_x += inc_x/scroll_c; scroll_count_x = 1; }
-      if      (p.y >  1e-6) { scroll_vel_y += inc_x/scroll_c; scroll_count_y = 1; }
-      else if (p.y < -1e-6) { scroll_vel_y -= inc_x/scroll_c; scroll_count_y = 1; }
-      parent->UpdateTargetFPS();
-    } else if (id == Mouse::Event::Zoom) {
-      v2 fp = MouseToFramebufferCoords(p);
-      viewport.w = Clamp<float>(viewport.w * d.x, inc_x*2, fb->tex.width);
-      viewport.h = Clamp<float>(viewport.h * d.y, inc_y*2, fb->tex.height);
-      viewport.x = max(0.0f, fp.x - viewport.w/2);
-      viewport.y = max(0.0f, fp.y - viewport.h/2);
-      viewport.w = min(viewport.w, fb->tex.width  - viewport.x);
-      viewport.h = min(viewport.h, fb->tex.height - viewport.y);
-    }
-    return 1;
-  }
-
-  bool LoadPasswordCB(string *out) {
-    if (password.size()) {
-      *out = move(password);
-      return true;
-    } else {
-      my_app->passphrase_alert->ShowCB("Password", "Password", "",
-                                       [=](const string &pw){ RFBClient::SendChallengeResponse(conn, pw); });
-      return false;
-    }
-  }
-
-  void RFBLoginCB() { if (savehost_cb) savehost_cb(); }
-
-  void RFBUpdateCB(Connection *c, const Box &b, int pf, const StringPiece &data) {
-    if (!data.buf) {
-      if (b.w && b.h) {
-        CHECK_EQ(0, b.x);
-        CHECK_EQ(0, b.y);
-        viewport = b;
-        fb->Create(b.w, b.h, FrameBuffer::Flag::CreateTexture | FrameBuffer::Flag::ReleaseFB);
-      }
-    } else fb->tex.UpdateGL(MakeUnsigned(data.buf), b, pf, Texture::Flag::FlipY); 
-  }
-
-  void RFBCopyCB(Connection *c, const Box &b, point copy_from) {
-    fb->Attach();
-    fb->tex.Bind();
-    fb->gd->CopyTexSubImage2D(fb->tex.GLTexType(), 0, b.x, fb->tex.height - b.y - b.h,
-                              copy_from.x, copy_from.y, b.w, b.h);
-    fb->Release();
-  }
-
-  void Animate() {
-    bool update_fps = 0;
-    if (scroll_count_x) {
-      viewport.x += scroll_vel_x;
-      scroll_vel_x *= .95;
-      if      (Max(&viewport.x, 0))                          scroll_count_x = 0;
-      else if (Min(&viewport.x, fb->tex.width - viewport.w)) scroll_count_x = 0;
-      else if (++scroll_count_x >= scroll_frames)            scroll_count_x = 0;
-      if (!scroll_count_x) update_fps = true;
-    }
-    if (scroll_count_y) {
-      viewport.y += scroll_vel_y;
-      scroll_vel_y *= .95;
-      if      (Max(&viewport.y, 0))                           scroll_count_y = 0;
-      else if (Min(&viewport.y, fb->tex.height - viewport.h)) scroll_count_y = 0;
-      else if (++scroll_count_y >= scroll_frames)             scroll_count_y = 0;
-      if (!scroll_count_y) update_fps = true;
-    }
-    if (update_fps) parent->UpdateTargetFPS();
-  }
-};
-
+#ifdef LFL_RFB
 struct MyRFBTab : public TerminalTabInterface {
   TerminalWindowInterface<TerminalTabInterface> *parent;
   FrameBuffer fb;
@@ -747,6 +291,7 @@ struct MyRFBTab : public TerminalTabInterface {
     TerminalTabInterface(W, 1.0, 1.0), parent(P), fb(root->gd) {
     title = StrCat("VNC: ", a.hostport);
     auto c = make_unique<RFBTerminalController>(this, move(a), [=](){ closed_cb(); }, &fb);
+    c->passphrase_alert = my_app->passphrase_alert.get();
     c->savehost_cb = move(scb);
     rfb = c.get();
     rfb->password = move(pw);
@@ -797,6 +342,7 @@ struct MyRFBTab : public TerminalTabInterface {
     parent->UpdateTargetFPS();
   }
 };
+#endif // LFL_RFB
 
 struct MyTerminalWindow : public TerminalWindowInterface<TerminalTabInterface> {
   MyTerminalWindow(Window *W) : TerminalWindowInterface(W) {}
@@ -847,7 +393,7 @@ struct MyTerminalWindow : public TerminalWindowInterface<TerminalTabInterface> {
 inline TerminalTabInterface *GetActiveTab() { return GetActiveWindow()->tabs.top; }
 inline MyTerminalTab *GetActiveTerminalTab() { return dynamic_cast<MyTerminalTab*>(GetActiveTab()); }
 
-#ifdef LFL_MOBILE
+#ifdef LFL_TERMINAL_MENUS
 }; // namespace LFL
 #include "term_menu.h"
 #include "term_menu.cpp"
@@ -860,7 +406,7 @@ MyAppState::~MyAppState() {}
   
 MyTerminalTab *MyTerminalWindow::AddTerminalTab() {
   auto t = new MyTerminalTab(root, this);
-#ifdef LFL_MOBILE
+#ifdef LFL_TERMINAL_MENUS
   t->terminal->line_fb.align_top_or_bot = t->terminal->cmd_fb.align_top_or_bot = true;
 #endif
   InitTab(t);
@@ -868,13 +414,17 @@ MyTerminalTab *MyTerminalWindow::AddTerminalTab() {
 }
 
 TerminalTabInterface *MyTerminalWindow::AddRFBTab(RFBClient::Params p, string pw, Callback savehost_cb) {
+#ifdef LFL_RFB
   auto t = new MyRFBTab(root, this, move(p), move(pw), move(savehost_cb));
   InitTab(t);
   return t;
+#else
+  return 0;
+#endif
 }
 
 void MyTerminalWindow::InitTab(TerminalTabInterface *t) {
-#ifdef LFL_MOBILE
+#ifdef LFL_TERMINAL_MENUS
   t->closed_cb = [=]() {
     t->deleted_cb();
     if (!tabs.top) {
@@ -908,9 +458,9 @@ void MyWindowStart(Window *W) {
   if (my_app->image_browser) W->shell->AddBrowserCommands(my_app->image_browser.get());
   app->scheduler.AddMainWaitMouse(W);
 
-#ifndef LFL_MOBILE                                                                                 
+#ifndef LFL_TERMINAL_MENUS
   TerminalTabInterface *t = nullptr;
-  ONCE_ELSE({ if (FLAGS_vnc.size()) t = tw->AddRFBTab(RFBClient::Params{FLAGS_vnc, FLAGS_login}, "");
+  ONCE_ELSE({ if (FLAGS_vnc.size()) t = tw->AddRFBTab(RFBClient::Params{FLAGS_vnc}, "");
               else { auto tt = tw->AddTerminalTab(); tt->UseInitialTerminalController(); t=tt; }
               },   { auto tt = tw->AddTerminalTab(); tt->UseDefaultTerminalController(); t=tt; });
   if (FLAGS_resize_grid)
@@ -943,7 +493,7 @@ void MyWindowClosed(Window *W) {
 using namespace LFL;
 
 extern "C" void MyAppCreate(int argc, const char* const* argv) {
-#ifdef LFL_MOBILE
+#ifdef LFL_TERMINAL_MENUS
   Application::LoadDefaultSettings(StringPairVec{
     StringPair("send_crash_reports", "1"),
     StringPair("write_log_file",     "0"),
@@ -968,7 +518,7 @@ extern "C" void MyAppCreate(int argc, const char* const* argv) {
   app->window_start_cb = MyWindowStart;
   app->window_init_cb = MyWindowInit;
   app->window_init_cb(app->focused);
-#ifdef LFL_MOBILE
+#ifdef LFL_TERMINAL_MENUS
   my_app->downscale_effects = app->SetExtraScale(true);
   app->SetTitleBar(false);
   app->SetKeepScreenOn(false);
@@ -1020,7 +570,7 @@ extern "C" int MyAppMain() {
     { "style", "" }, { "Paste key failed", "Load key failed" }, { "", "" }, { "Continue", "" } });
   my_app->hostkey_alert = make_unique<SystemAlertView>(AlertItemVec{
     { "style", "" }, { "", "" }, { "Cancel", "" }, { "Continue", "" } });
-#ifndef LFL_MOBILE
+#ifndef LFL_TERMINAL_MENUS
   my_app->edit_menu = SystemMenuView::CreateEditMenu(vector<MenuItem>());
   my_app->view_menu = make_unique<SystemMenuView>("View", MenuItemVec{
 #ifdef __APPLE__
@@ -1082,7 +632,7 @@ extern "C" int MyAppMain() {
 
   app->StartNewWindow(app->focused);
   app->SetPinchRecognizer(true);
-#ifdef LFL_MOBILE
+#ifdef LFL_TERMINAL_MENUS
   app->SetPanRecognizer(true);
   my_app->menus = make_unique<MyTerminalMenus>();
   my_app->menus->hosts_nav->PushTableView(my_app->menus->hosts.view.get());

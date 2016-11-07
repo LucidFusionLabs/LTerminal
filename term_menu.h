@@ -318,6 +318,14 @@ struct MyGenKeyViewController {
   bool UpdateModelFromView(MyGenKeyModel *model) const;
 };
 
+struct MyKeyInfoViewController {
+  MyTerminalMenus *menus;
+  int cred_row_id=0;
+  unique_ptr<SystemTableView> view;
+  MyKeyInfoViewController(MyTerminalMenus*);
+  void UpdateViewFromModel(const MyCredentialModel&);
+};
+
 struct MyKeysViewController {
   MyTerminalMenus *menus;
   MyCredentialDB *model;
@@ -460,7 +468,8 @@ struct MyTerminalMenus {
   int key_icon, host_icon, host_locked_icon, bolt_icon, terminal_icon, settings_blue_icon, settings_gray_icon,
       audio_icon, eye_icon, recycle_icon, fingerprint_icon, info_icon, keyboard_icon, folder_icon, logo_icon,
       plus_red_icon, plus_green_icon, vnc_icon, locked_icon, unlocked_icon, font_icon, toys_icon,
-      arrowleft_icon, arrowright_icon, clipboard_upload_icon, clipboard_download_icon, keygen_icon, none_icon;
+      arrowleft_icon, arrowright_icon, clipboard_upload_icon, clipboard_download_icon, keygen_icon,
+      user_icon, none_icon;
   string pw_default = "\x01""Ask each time", pw_empty = "lfl_default";
 
   int                              connected_host_id=0;
@@ -469,6 +478,7 @@ struct MyTerminalMenus {
   MyKeyboardSettingsViewController keyboard;
   MyNewKeyViewController           newkey;
   MyGenKeyViewController           genkey;
+  MyKeyInfoViewController          keyinfo;
   MyKeysViewController             keys;
   MyAboutViewController            about;
   MySupportViewController          support;
@@ -498,7 +508,9 @@ struct MyTerminalMenus {
     { "pgup",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->PageUp();      if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
     { "pgdown", bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->PageDown();    if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
     { "home",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->Home();        if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
-    { "end",    bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->End();         if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) } };
+    { "end",    bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->End();         if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
+    { "paste",  bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->InputString(app->GetClipboardText()); } }) },
+  };
 
   unordered_map<string, Callback> mobile_togglekey_cmd = {
     { "ctrl", bind([&]{ if (auto t = GetActiveTerminalTab()) { t->controller->ctrl_down = !t->controller->ctrl_down; } }) },
@@ -533,10 +545,11 @@ struct MyTerminalMenus {
     clipboard_upload_icon  (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/clipboard_upload.png"))),
     clipboard_download_icon(CheckNotNull(app->LoadSystemImage("drawable-xhdpi/clipboard_download.png"))),
     keygen_icon            (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/keygen.png"))),
+    user_icon              (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/user.png"))),
     none_icon              (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/none.png"))),
     hosts_nav(make_unique<SystemNavigationView>()), interfacesettings_nav(make_unique<SystemNavigationView>()),
-    keyboard(this), newkey(this), genkey(this), keys(this, &credential_db), about(this), support(this),
-    privacy(this), settings(this), terminalinterfacesettings(this), rfbinterfacesettings(this),
+    keyboard(this), newkey(this), genkey(this), keyinfo(this), keys(this, &credential_db), about(this),
+    support(this), privacy(this), settings(this), terminalinterfacesettings(this), rfbinterfacesettings(this),
     sshfingerprint(this), sshportforward(this), sshsettings(this), telnetsettings(this), vncsettings(this),
     localshellsettings(this), newhost(this), updatehost(this), hosts(this, true), hostsfolder(this, false) {
 
@@ -552,6 +565,7 @@ struct MyTerminalMenus {
       { "\U000023EC", "",       bind(&MyTerminalMenus::PressKey,         this, "pgdown") }, 
       { "\U000023EA", "",       bind(&MyTerminalMenus::PressKey,         this, "home") },
       { "\U000023E9", "",       bind(&MyTerminalMenus::PressKey,         this, "end") }, 
+      { "\U0001F4CB", "",       bind(&MyTerminalMenus::PressKey,         this, "paste") },
       { "ctrl",       "toggle", bind(&MyTerminalMenus::ToggleKey,        this, "ctrl") },
       // { "alt",        "toggle", bind(&MyTerminalMenus::ToggleKey,        this, "alt") },
       { "\U00002328", "",       bind(&Application::ToggleTouchKeyboard, app) },
@@ -626,7 +640,7 @@ struct MyTerminalMenus {
     hosts_nav->PopView(1);
 
     string pubkey, privkey;
-    if (!Crypto::GenerateKey(gk.algo, gk.bits, "", "", &pubkey, &privkey)) return ERROR("generate ", gk.algo, " key");
+    if (!Crypto::GenerateKey(gk.algo, gk.bits, gk.pw, gk.pw, &pubkey, &privkey)) return ERROR("generate ", gk.algo, " key");
 
     int row_id = MyCredentialModel(CredentialType_PEM, privkey, gk.name).Save(&credential_db);
     keys.view->show_cb();
@@ -644,6 +658,20 @@ struct MyTerminalMenus {
     }
   }
   
+  void KeyInfo(int cred_row_id) {
+    if (!cred_row_id) return;
+    keyinfo.UpdateViewFromModel(MyCredentialModel(&credential_db, cred_row_id));
+    hosts_nav->PushTableView(keyinfo.view.get());
+  }
+
+  void CopyKeyToClipboard(int cred_row_id, bool private_key) {
+    if (!cred_row_id) return;
+    MyCredentialModel key(&credential_db, cred_row_id);
+    if (key.credtype == CredentialType_PEM) {
+      if (private_key) app->SetClipboardText(key.creddata);
+    }
+  }
+
   void ChooseKey(int cred_row_id) {
     hosts_nav->PopView(1);
     SystemTableView *host_menu = hosts_nav->Back();
@@ -875,7 +903,7 @@ struct MyTerminalMenus {
         (host.Hostport(), (bool(cb) ? Callback([=](){ cb(0, ""); }) : Callback()));
       ApplyTerminalSettings(host.settings);
     } else if (host.protocol == LTerminal::Protocol_RFB) {
-      GetActiveWindow()->AddRFBTab(RFBClient::Params{host.Hostport(), host.username},
+      GetActiveWindow()->AddRFBTab(RFBClient::Params{host.Hostport()},
                                    host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "",
                                    (bool(cb) ? Callback([=](){ cb(0, ""); }) : Callback()));
     } else if (host.protocol == LTerminal::Protocol_LocalShell) {
