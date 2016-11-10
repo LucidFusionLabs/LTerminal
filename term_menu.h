@@ -132,7 +132,7 @@ struct MyAppSettingsModel {
 struct MyCredentialModel {
   int cred_id;
   LTerminal::CredentialType credtype;
-  string creddata, name;
+  string creddata, name, gentype, gendate;
 
   MyCredentialModel(CredentialType t=CredentialType_Ask, string d="", string n="") { Load(t, move(d), move(n)); }
   MyCredentialModel(MyCredentialDB *cred_db, int id) { Load(cred_db, id); }
@@ -151,13 +151,15 @@ struct MyCredentialModel {
       credtype = cred->type();
       creddata = GetFlatBufferString(cred->data());
       name = GetFlatBufferString(cred->displayname());
+      gendate = GetFlatBufferString(cred->gendate());
+      gentype = GetFlatBufferString(cred->gentype());
     } else Load();
   }
 
   flatbuffers::Offset<LTerminal::Credential> SaveProto(FlatBufferBuilder &fb) const {
     return LTerminal::CreateCredential
       (fb, credtype, fb.CreateVector(reinterpret_cast<const uint8_t*>(creddata.data()), creddata.size()),
-       fb.CreateString(name)); 
+       fb.CreateString(name), fb.CreateString(gendate), fb.CreateString(gentype)); 
   }
 
   FlatBufferPiece SaveBlob() const {
@@ -469,7 +471,7 @@ struct MyTerminalMenus {
       audio_icon, eye_icon, recycle_icon, fingerprint_icon, info_icon, keyboard_icon, folder_icon, logo_icon,
       plus_red_icon, plus_green_icon, vnc_icon, locked_icon, unlocked_icon, font_icon, toys_icon,
       arrowleft_icon, arrowright_icon, clipboard_upload_icon, clipboard_download_icon, keygen_icon,
-      user_icon, none_icon;
+      user_icon, calendar_icon, none_icon;
   string pw_default = "\x01""Ask each time", pw_empty = "lfl_default";
 
   int                              connected_host_id=0;
@@ -546,6 +548,7 @@ struct MyTerminalMenus {
     clipboard_download_icon(CheckNotNull(app->LoadSystemImage("drawable-xhdpi/clipboard_download.png"))),
     keygen_icon            (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/keygen.png"))),
     user_icon              (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/user.png"))),
+    calendar_icon          (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/calendar.png"))),
     none_icon              (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/none.png"))),
     hosts_nav(make_unique<SystemNavigationView>()), interfacesettings_nav(make_unique<SystemNavigationView>()),
     keyboard(this), newkey(this), genkey(this), keyinfo(this), keys(this, &credential_db), about(this),
@@ -634,16 +637,25 @@ struct MyTerminalMenus {
     }
   }
 
-  void GenerateKey() {
+  int GenerateKey() {
     MyGenKeyModel gk;
     genkey.UpdateModelFromView(&gk);
     hosts_nav->PopView(1);
 
     string pubkey, privkey;
-    if (!Crypto::GenerateKey(gk.algo, gk.bits, gk.pw, gk.pw, &pubkey, &privkey)) return ERROR("generate ", gk.algo, " key");
+    if (!Crypto::GenerateKey(gk.algo, gk.bits, gk.pw, gk.pw, &pubkey, &privkey)) return ERRORv(0, "generate ", gk.algo, " key");
 
-    int row_id = MyCredentialModel(CredentialType_PEM, privkey, gk.name).Save(&credential_db);
+    MyCredentialModel cred(CredentialType_PEM, privkey, gk.name);
+    cred.gentype = StrCat(gk.algo, " Key");
+    cred.gendate = localhttptime(Now());
+    int row_id = cred.Save(&credential_db);
     keys.view->show_cb();
+
+    shared_ptr<SSHClient::Identity> new_identity = make_shared<SSHClient::Identity>();
+    if (!Crypto::ParsePEM(cred.creddata.c_str(), &new_identity->rsa, &new_identity->dsa,
+                          &new_identity->ec, &new_identity->ed25519, [&](string) { return gk.pw; })) return ERRORv(0, "load just generated key failed");
+    identity_loaded[row_id] = new_identity;
+    return row_id;
   }
   
   void PasteKey() {
@@ -654,7 +666,7 @@ struct MyTerminalMenus {
       int row_id = MyCredentialModel(CredentialType_PEM, pem, pemtype).Save(&credential_db);
       keys.view->show_cb();
     } else {
-      my_app->keypastefailed_alert->Show("");
+      my_app->info_alert->ShowCB("Paste key failed", "Load key failed", "", StringCB());
     }
   }
   
@@ -666,10 +678,27 @@ struct MyTerminalMenus {
 
   void CopyKeyToClipboard(int cred_row_id, bool private_key) {
     if (!cred_row_id) return;
-    MyCredentialModel key(&credential_db, cred_row_id);
-    if (key.credtype == CredentialType_PEM) {
-      if (private_key) app->SetClipboardText(key.creddata);
+    MyCredentialModel cred(&credential_db, cred_row_id);
+    if (cred.credtype == CredentialType_PEM) {
+      if (private_key) {
+        app->SetClipboardText(cred.creddata);
+        my_app->info_alert->ShowCB("Copied to Clipboard", "Copied Private Key to Clipboard", "", StringCB());
+      } else {
+        shared_ptr<SSHClient::Identity> identity = LoadIdentity(cred);
+        if (!identity) return LoadNewIdentity
+          (cred, [=](shared_ptr<SSHClient::Identity> new_identity){ CopyPublicKeyToClipboard(new_identity); });
+        CopyPublicKeyToClipboard(identity);
+      }
     }
+  }
+
+  void CopyPublicKeyToClipboard(shared_ptr<SSHClient::Identity> identity) {
+    string comment;
+    if      (identity->ed25519) app->SetClipboardText(Ed25519OpenSSHPublicKey(identity->ed25519, comment));
+    else if (identity->ec)      app->SetClipboardText(ECDSAOpenSSHPublicKey  (identity->ec,      comment));
+    else if (identity->rsa)     app->SetClipboardText(RSAOpenSSHPublicKey    (identity->rsa,     comment));
+    else if (identity->dsa)     app->SetClipboardText(DSAOpenSSHPublicKey    (identity->dsa,     comment));
+    my_app->info_alert->ShowCB("Copied to Clipboard", "Copied Public Key to Clipboard", "", StringCB());
   }
 
   void ChooseKey(int cred_row_id) {
@@ -865,30 +894,38 @@ struct MyTerminalMenus {
     app->OpenTouchKeyboard();
   }
 
+  shared_ptr<SSHClient::Identity> LoadIdentity(const MyCredentialModel &cred) {
+    CHECK(cred.cred_id);
+    auto it = identity_loaded.find(cred.cred_id);
+    if (it != identity_loaded.end()) return it->second;
+
+    bool password_needed = false;
+    shared_ptr<SSHClient::Identity> identity = make_shared<SSHClient::Identity>();
+    Crypto::ParsePEM(cred.creddata.c_str(), &identity->rsa, &identity->dsa, &identity->ec,
+                     &identity->ed25519, [&](string v) { password_needed = true; return ""; });
+    if (!password_needed) identity_loaded[cred.cred_id] = identity;
+    return password_needed ? nullptr : identity;
+  }
+
+  void LoadNewIdentity(const MyCredentialModel &cred, SSHClient::IdentityCB success_cb) {
+    my_app->passphrase_alert->ShowCB
+      ("Identity passphrase", "Passphrase", "", [=](const string &v) {
+         shared_ptr<SSHClient::Identity> new_identity = make_shared<SSHClient::Identity>();
+         if (!Crypto::ParsePEM(cred.creddata.c_str(), &new_identity->rsa, &new_identity->dsa,
+                               &new_identity->ec, &new_identity->ed25519, [=](string) { return v; })) return;
+         identity_loaded[cred.cred_id] = new_identity;
+         if (success_cb) success_cb(new_identity);
+       });
+  }
+
   void MenuConnect(const MyHostModel &host,
                    SSHClient::FingerprintCB fingerprint_cb=SSHClient::FingerprintCB(),
                    SSHTerminalController::SavehostCB cb=SSHTerminalController::SavehostCB()) {
     if (host.protocol == LTerminal::Protocol_SSH) {
       shared_ptr<SSHClient::Identity> identity;
       if (host.cred.credtype == LTerminal::CredentialType_PEM) {
-        CHECK(host.cred.cred_id);
-        auto it = identity_loaded.find(host.cred.cred_id);
-        if (it != identity_loaded.end()) identity = it->second;
-        else {
-          bool password_needed = false;
-          identity = make_shared<SSHClient::Identity>();
-          Crypto::ParsePEM(host.cred.creddata.c_str(), &identity->rsa, &identity->dsa, &identity->ec,
-                           &identity->ed25519, [&](string v) { password_needed = true; return ""; });
-          if (!password_needed) identity_loaded[host.cred.cred_id] = identity;
-          else return my_app->passphrase_alert->ShowCB
-            ("Identity passphrase", "Passphrase", "", [=](const string &v) {
-               shared_ptr<SSHClient::Identity> new_identity = make_shared<SSHClient::Identity>();
-               if (!Crypto::ParsePEM(host.cred.creddata.c_str(), &new_identity->rsa, &new_identity->dsa,
-                                     &new_identity->ec, &new_identity->ed25519, [=](string) { return v; })) return;
-               identity_loaded[host.cred.cred_id] = new_identity;
-               MenuConnect(host, fingerprint_cb, cb);
-             });
-        }
+        if (!(identity = LoadIdentity(host.cred))) return LoadNewIdentity
+          (host.cred, [=](shared_ptr<SSHClient::Identity>){ MenuConnect(host, fingerprint_cb, cb); });
       }
       GetActiveWindow()->AddTerminalTab()->UseSSHTerminalController
         (SSHClient::Params{ host.Hostport(), host.username, host.settings.terminal_type,
@@ -915,7 +952,7 @@ struct MyTerminalMenus {
   }
 
   bool ShowAcceptFingerprintAlert() {
-    my_app->hostkey_alert->ShowCB("Accept fingerprint", "", "", bind(&MyTerminalMenus::AcceptFingerprintCB, this, _1));
+    my_app->confirm_alert->ShowCB("Accept fingerprint", "", "", bind(&MyTerminalMenus::AcceptFingerprintCB, this, _1));
     return false;
   }
 

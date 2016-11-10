@@ -83,7 +83,7 @@ inline MyTerminalWindow *GetActiveWindow() {
 struct MyAppState {
   unordered_map<string, Shader> shader_map;
   unique_ptr<Browser> image_browser;
-  unique_ptr<SystemAlertView> passphrase_alert, passphraseconfirm_alert, passphrasefailed_alert, keypastefailed_alert, hostkey_alert;
+  unique_ptr<SystemAlertView> info_alert, confirm_alert, passphrase_alert, passphraseconfirm_alert, passphrasefailed_alert;
   unique_ptr<SystemMenuView> edit_menu, view_menu, toys_menu;
   unique_ptr<MyTerminalMenus> menus;
   int new_win_width = FLAGS_dim.x*Fonts::InitFontWidth(), new_win_height = FLAGS_dim.y*Fonts::InitFontHeight();
@@ -149,7 +149,9 @@ struct MyTerminalTab : public TerminalTab {
 #ifdef LFL_CRYPTO
     c->ssh_cb = [=](SSHClient::Params p){ UseSSHTerminalController(move(p)); };
 #endif
+#ifdef LFL_RFB
     c->vnc_cb = [=](RFBClient::Params p){ parent->AddRFBTab(move(p), ""); };
+#endif
     ChangeController(move(c));
   }
 
@@ -507,6 +509,7 @@ extern "C" void MyAppCreate(int argc, const char* const* argv) {
                        Application::GetSetting("crash_report_name"),
                        Application::GetSetting("crash_report_email"));
   }
+  if (atoi(Application::GetSetting("write_log_file"))) FLAGS_logfile = "\x01";
 #endif
   FLAGS_enable_video = FLAGS_enable_input = 1;
   app = new Application(argc, argv);
@@ -560,16 +563,16 @@ extern "C" int MyAppMain() {
 #endif
 
   my_app->image_browser = make_unique<Browser>();
+  my_app->info_alert = make_unique<SystemAlertView>(AlertItemVec{
+    { "style", "" }, { "", "" }, { "", "" }, { "Continue", "" } });
+  my_app->confirm_alert = make_unique<SystemAlertView>(AlertItemVec{
+    { "style", "" }, { "", "" }, { "Cancel", "" }, { "Continue", "" } });
   my_app->passphrase_alert = make_unique<SystemAlertView>(AlertItemVec{
     { "style", "pwinput" }, { "Passphrase", "Passphrase" }, { "Cancel", "" }, { "Continue", "" } });
   my_app->passphraseconfirm_alert = make_unique<SystemAlertView>(AlertItemVec{
     { "style", "pwinput" }, { "Passphrase", "Confirm Passphrase" }, { "Cancel", "" }, { "Continue", "" } });
   my_app->passphrasefailed_alert = make_unique<SystemAlertView>(AlertItemVec{
     { "style", "" }, { "Invalid passphrase", "Passphrase failed" }, { "", "" }, { "Continue", "" } });
-  my_app->keypastefailed_alert = make_unique<SystemAlertView>(AlertItemVec{
-    { "style", "" }, { "Paste key failed", "Load key failed" }, { "", "" }, { "Continue", "" } });
-  my_app->hostkey_alert = make_unique<SystemAlertView>(AlertItemVec{
-    { "style", "" }, { "", "" }, { "Cancel", "" }, { "Continue", "" } });
 #ifndef LFL_TERMINAL_MENUS
   my_app->edit_menu = SystemMenuView::CreateEditMenu(vector<MenuItem>());
   my_app->view_menu = make_unique<SystemMenuView>("View", MenuItemVec{

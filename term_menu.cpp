@@ -74,6 +74,7 @@ MyKeyInfoViewController::MyKeyInfoViewController(MyTerminalMenus *m) : menus(m),
   view(make_unique<SystemTableView>("Info", "", TableItemVec{
     TableItem("Name", TableItem::TextInput, "", "", 0, m->font_icon),
     TableItem("Type", TableItem::Label,     "", "", 0, m->key_icon),
+    TableItem("Date", TableItem::Label,     "", "", 0, m->calendar_icon),
     TableItem("", TableItem::Separator, ""), TableItem("Copy Public Key to Clipboard",  TableItem::Command, "", ">", 0, m->clipboard_upload_icon, 0, [=](){ m->CopyKeyToClipboard(cred_row_id, false); }),
     TableItem("", TableItem::Separator, ""), TableItem("Copy Private Key to Clipboard", TableItem::Command, "", ">", 0, m->clipboard_upload_icon, 0, [=](){ m->CopyKeyToClipboard(cred_row_id, true);  })
   })) {
@@ -87,7 +88,7 @@ MyKeyInfoViewController::MyKeyInfoViewController(MyTerminalMenus *m) : menus(m),
 void MyKeyInfoViewController::UpdateViewFromModel(const MyCredentialModel &m) {
   cred_row_id = m.cred_id;
   view->BeginUpdates();
-  view->SetSectionValues(0, StringVec{ m.name, "" });
+  view->SetSectionValues(0, StringVec{ m.name, m.gentype, m.gendate });
   view->EndUpdates();
 }
 

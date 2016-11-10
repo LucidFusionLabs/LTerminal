@@ -544,9 +544,11 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
 struct ShellTerminalController : public InteractiveTerminalController {
   string ssh_usage="\r\nusage: ssh -l user host[:port]", ssh_term;
   StringCB telnet_cb;
-  function<void(RFBClient::Params)> vnc_cb;
 #ifdef LFL_CRYPTO
   function<void(SSHClient::Params)> ssh_cb;
+#endif
+#ifdef LFL_RFB
+  function<void(RFBClient::Params)> vnc_cb;
 #endif
 
   ShellTerminalController(TerminalTabInterface *p, const string &hdr, StringCB tcb, StringVecCB ecb) :
@@ -555,7 +557,9 @@ struct ShellTerminalController : public InteractiveTerminalController {
 #ifdef LFL_CRYPTO
     shell.Add("ssh",      bind(&ShellTerminalController::MySSHCmd,      this, _1));
 #endif
+#ifdef LFL_RFB
     shell.Add("vnc",      bind(&ShellTerminalController::MyVNCCmd,      this, _1));
+#endif
     shell.Add("telnet",   bind(&ShellTerminalController::MyTelnetCmd,   this, _1));
     shell.Add("nslookup", bind(&ShellTerminalController::MyNSLookupCmd, this, _1));
     shell.Add("help",     bind(&ShellTerminalController::MyHelpCmd,     this, _1));
@@ -571,12 +575,14 @@ struct ShellTerminalController : public InteractiveTerminalController {
   }
 #endif
 
+#ifdef LFL_RFB
   void MyVNCCmd(const vector<string> &arg) {
     string host, login;
     ParseHostAndLogin(arg, &host, &login);
     if (login.empty() || host.empty()) { if (term) term->Write("\r\nusage: vnc -l user host[:port]"); }
     else vnc_cb(RFBClient::Params{host});
   }
+#endif
 
   void MyTelnetCmd(const vector<string> &arg) {
     if (arg.empty()) { if (term) term->Write("\r\nusage: telnet host"); }
@@ -668,7 +674,9 @@ template <class X> struct TerminalWindowInterface : public GUI {
   TabbedDialog<X> tabs;
   TerminalWindowInterface(Window *W) : GUI(W), tabs(this) {}
   virtual void UpdateTargetFPS() = 0;
+#ifdef LFL_RFB
   virtual X *AddRFBTab(RFBClient::Params p, string, Callback savehost_cb=Callback()) = 0;
+#endif
 };
 
 }; // namespace LFL
