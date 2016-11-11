@@ -66,7 +66,8 @@ struct TerminalControllerInterface : public Terminal::Controller {
   
 struct NetworkTerminalController : public TerminalControllerInterface {
   Connection *conn=0;
-  Callback detach_cb, close_cb, success_cb;
+  Connection::CB detach_cb;
+  Callback close_cb, success_cb;
   string remote, read_buf, ret_buf;
   bool background_services=true, success_on_connect=false;
   NetworkTerminalController(TerminalTabInterface *p, const string &r, const Callback &ccb) :
@@ -236,6 +237,7 @@ struct SSHTerminalController : public NetworkTerminalController {
   SSHClient::Params params;
   StringCB metakey_cb;
   SavehostCB savehost_cb;
+  Connection::CB remote_forward_detach_cb;
   SSHClient::FingerprintCB fingerprint_cb;
   shared_ptr<SSHClient::Identity> identity;
   string fingerprint, password;
@@ -244,7 +246,8 @@ struct SSHTerminalController : public NetworkTerminalController {
   SystemAlertView *passphrase_alert=0;
 
   SSHTerminalController(TerminalTabInterface *p, SSHClient::Params a, const Callback &ccb) :
-    NetworkTerminalController(p, a.hostport, ccb), params(move(a)) {
+    NetworkTerminalController(p, a.hostport, ccb), params(move(a)),
+    remote_forward_detach_cb(bind(&SSHTerminalController::RemotePortForwardConnectCB, this, _1)) {
     for (auto &f : params.forward_local) ForwardLocalPort(f.port, f.target_host, f.target_port);
   }
 
@@ -268,6 +271,7 @@ struct SSHTerminalController : public NetworkTerminalController {
       SSHClient::SetCredentialCB(conn, bind(&SSHTerminalController::FingerprintCB, this, _1, _2),
                                  bind(&SSHTerminalController::LoadIdentityCB, this, _1),
                                  bind(&SSHTerminalController::LoadPasswordCB, this, _1));
+      SSHClient::SetRemoteForwardCB(conn, bind(&SSHTerminalController::RemotePortForwardAcceptCB, this, _1, _2, _3, _4, _5));
     });
     return InvalidSocket;
   }
@@ -342,61 +346,85 @@ struct SSHTerminalController : public NetworkTerminalController {
     return ret_buf;
   }
 
-  bool ForwardLocalPort(int port, const string &remote_h, int remote_p) {
+  bool ForwardLocalPort(int port, const string &target_h, int target_p) {
     Socket fd = SystemNetwork::Listen(Protocol::TCP, IPV4::Parse("127.0.0.1"), port, 1, false);
     if (fd == InvalidSocket) return ERRORv(false, "listen ", port);
     app->scheduler.AddMainWaitSocket
-      (parent->root, fd, SocketSet::READABLE, bind(&SSHTerminalController::LocalForwardAcceptCB, this, fd, remote_h, remote_p));
+      (parent->root, fd, SocketSet::READABLE, bind(&SSHTerminalController::LocalPortForwardAcceptCB, this, fd, target_h, target_p));
     forward_fd.insert(fd);
     return true;
   }
 
-  bool LocalForwardAcceptCB(Socket listen_fd, const string &remote_h, int remote_p) {
+  bool LocalPortForwardAcceptCB(Socket listen_fd, const string &target_h, int target_p) {
     int accept_port = 0;
     IPV4::Addr accept_addr = 0;
     Socket fd = SystemNetwork::Accept(listen_fd, &accept_addr, &accept_port);
     if (!conn || conn->state != Connection::Connected) { SystemNetwork::CloseSocket(fd); return ERRORv(false, "no conn"); }
     SSHClient::Channel *chan = SSHClient::OpenTCPChannel
-      (conn, IPV4::Text(accept_addr), accept_port, remote_h, remote_p,
-       bind(&SSHTerminalController::LocalForwardRemoteReadCB, this, fd, _1, _2, _3));
+      (conn, IPV4::Text(accept_addr), accept_port, target_h, target_p,
+       bind(&SSHTerminalController::PortForwardRemoteReadCB, this, fd, _1, _2, _3));
     if (!chan) { SystemNetwork::CloseSocket(fd); return ERRORv(false, "open chan"); } 
     app->scheduler.AddMainWaitSocket
-      (parent->root, fd, SocketSet::READABLE, bind(&SSHTerminalController::LocalForwardLocalReadCB, this, fd, chan));
+      (parent->root, fd, SocketSet::READABLE, bind(&SSHTerminalController::PortForwardLocalReadCB, this, fd, chan));
     forward_fd.insert(fd);
     return false;
   }
 
-  bool LocalForwardLocalReadCB(Socket fd, SSHClient::Channel *chan) {
+  void RemotePortForwardAcceptCB(SSHClient::Channel *chan, const string &target_h, int target_p,
+                                 const string &local_h, int local_p) {
+    INFO("Forwarding ", local_h, ":", local_p, " -> ", target_h, ":", target_p);
+    chan->cb = bind(&SSHTerminalController::PortForwardRemoteReadCB, this, 0, _1, _2, _3);
+    app->RunInNetworkThread([=](){
+      if (auto c = app->ConnectTCP(target_h, target_p, &remote_forward_detach_cb, false)) c->data = chan; 
+    });
+  }
+
+  void RemotePortForwardConnectCB(Connection *c) {
+    unique_ptr<SocketConnection> conn(dynamic_cast<SocketConnection*>(c));
+    Socket fd = conn->socket;
+    auto chan = static_cast<SSHClient::Channel*>(conn->data);
+    chan->cb = bind(&SSHTerminalController::PortForwardRemoteReadCB, this, fd, _1, _2, _3);
+    app->scheduler.AddMainWaitSocket
+      (parent->root, fd, SocketSet::READABLE, bind(&SSHTerminalController::PortForwardLocalReadCB, this, fd, chan));
+    forward_fd.insert(fd);
+    if (chan->buf.size()) {
+      if (::send(fd, chan->buf.data(), chan->buf.size(), 0) != chan->buf.size()) PortForwardLocalCloseCB(fd, chan);
+      chan->buf.clear();
+    }
+  }
+
+  bool PortForwardLocalReadCB(Socket fd, SSHClient::Channel *chan) {
     string buf(4096, 0);
     int l = ::recv(fd, &buf[0], buf.size(), 0);
-    if (l <= 0) { LocalForwardLocalCloseCB(fd, chan); return false; }
+    if (l <= 0) { PortForwardLocalCloseCB(fd, chan); return false; }
     buf.resize(l);
     if (!chan->opened) chan->buf.append(buf);
     else if (!SSHClient::WriteToChannel(conn, chan, buf)) ERROR(conn->Name(), ": write");
     return false;
   }
 
-  void LocalForwardLocalCloseCB(Socket fd, SSHClient::Channel *chan) {
+  void PortForwardLocalCloseCB(Socket fd, SSHClient::Channel *chan) {
     if (!SSHClient::CloseChannel(conn, chan)) ERROR(conn->Name(), ": write");
     app->scheduler.DelMainWaitSocket(parent->root, fd);
     SystemNetwork::CloseSocket(fd);
     forward_fd.erase(fd);
   }
 
-  int LocalForwardRemoteReadCB(Socket fd, Connection*, SSHClient::Channel *chan, const StringPiece &b) {
-    if (!chan->opened) LocalForwardRemoteCloseCB(fd, chan);
+  int PortForwardRemoteReadCB(Socket fd, Connection*, SSHClient::Channel *chan, const StringPiece &b) {
+    if (!chan->opened) PortForwardRemoteCloseCB(fd, chan);
     else if (!b.len) {
       if (chan->buf.size()) {
         if (!SSHClient::WriteToChannel(conn, chan, chan->buf)) return ERRORv(0, conn->Name(), ": write");
         chan->buf.clear();
       }
     } else {
-      if (::send(fd, b.data(), b.size(), 0) != b.size()) LocalForwardLocalCloseCB(fd, chan);
+      if (!fd) chan->buf.append(b.str());
+      else if (::send(fd, b.data(), b.size(), 0) != b.size()) PortForwardLocalCloseCB(fd, chan);
     }
     return 0;
   }
 
-  void LocalForwardRemoteCloseCB(Socket fd, SSHClient::Channel *chan) {
+  void PortForwardRemoteCloseCB(Socket fd, SSHClient::Channel *chan) {
     auto it = forward_fd.find(fd);
     if (it == forward_fd.end()) return;
     app->scheduler.DelMainWaitSocket(parent->root, fd);
