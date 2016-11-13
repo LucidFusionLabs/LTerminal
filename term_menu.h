@@ -823,8 +823,9 @@ struct MyTerminalMenus {
 
   void ConnectHost(int host_id) {
     MyHostModel host(&host_db, &credential_db, &settings_db, (connected_host_id = host_id));
-    MenuConnect(host, [=](int fpt, const StringPiece &fp) -> bool {
-      return host.FingerprintMatch(fpt, fp.str()) ? true : ShowAcceptFingerprintAlert();
+    MenuConnect(host, [=](int fpt, const StringPiece &fpb) -> bool {
+      string fp = fpb.str();
+      return host.FingerprintMatch(fpt, fp) ? true : ShowAcceptFingerprintAlert(fp);
     }, [=](int fpt, const string &fp) mutable {
       if (host.FingerprintMatch(fpt, fp)) return;
       host.SetFingerprint(fpt, fp);
@@ -875,8 +876,9 @@ struct MyTerminalMenus {
     UpdateModelFromSettingsView(host.protocol, &host.settings, &host.folder);
     if (host.cred.credtype == CredentialType_PEM)
       if (!(host.cred.cred_id = updatehost.view->GetTag(0, 3))) host.cred.credtype = CredentialType_Ask;
-    MenuConnect(host, [=](int fpt, const StringPiece &fp) -> bool {
-        return updatehost.prev_model.FingerprintMatch(fpt, fp.str()) ? true : ShowAcceptFingerprintAlert();
+    MenuConnect(host, [=](int fpt, const StringPiece &fpb) -> bool {
+        string fp = fpb.str();
+        return updatehost.prev_model.FingerprintMatch(fpt, fp) ? true : ShowAcceptFingerprintAlert(fp);
       }, [=](int fpt, const string &fp) mutable {
         host.SetFingerprint(fpt, fp);
         connected_host_id = host.Update(updatehost.prev_model, &host_db, &credential_db,
@@ -931,13 +933,13 @@ struct MyTerminalMenus {
         (SSHClient::Params{ host.Hostport(), host.username, host.settings.terminal_type,
          host.settings.startup_command.size() ? StrCat(host.settings.startup_command, "\r") : "",
          host.settings.compression, host.settings.agent_forwarding, host.settings.close_on_disconnect, true,
-         host.settings.local_forward, host.settings.remote_forward },
+         host.settings.local_forward, host.settings.remote_forward }, false,
          host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "", identity, 
          bind(&SystemToolbarView::ToggleButton, keyboard_toolbar.get(), _1), move(cb), move(fingerprint_cb));
       ApplyTerminalSettings(host.settings);
     } else if (host.protocol == LTerminal::Protocol_Telnet) {
       GetActiveWindow()->AddTerminalTab()->UseTelnetTerminalController
-        (host.Hostport(), (bool(cb) ? Callback([=](){ cb(0, ""); }) : Callback()));
+        (host.Hostport(), false, host.settings.close_on_disconnect, (bool(cb) ? Callback([=](){ cb(0, ""); }) : Callback()));
       ApplyTerminalSettings(host.settings);
     } else if (host.protocol == LTerminal::Protocol_RFB) {
       GetActiveWindow()->AddRFBTab(RFBClient::Params{host.Hostport()},
@@ -951,15 +953,21 @@ struct MyTerminalMenus {
     MenuStartSession();
   }
 
-  bool ShowAcceptFingerprintAlert() {
-    my_app->confirm_alert->ShowCB("Accept fingerprint", "", "", bind(&MyTerminalMenus::AcceptFingerprintCB, this, _1));
+  bool ShowAcceptFingerprintAlert(const string &fp) {
+    my_app->confirm_alert->ShowCB
+      ("Host key changed.", StrCat("Accept new key? Fingerprint MD5: ",
+                                   fp.size() ? HexEscape(Crypto::MD5(fp), ":").substr(1) : ""),
+       "", bind(&MyTerminalMenus::AcceptFingerprintCB, this, _1));
     return false;
   }
 
   void AcceptFingerprintCB(const string&) {
     if (auto t = GetActiveTerminalTab())
-      if (auto ssh = dynamic_cast<SSHTerminalController*>(t->controller.get()))
-        SSHClient::AcceptHostKeyAndBeginAuthRequest(ssh->conn);
+      if (auto controller = dynamic_cast<SSHTerminalController*>(t->controller.get()))
+        if (auto conn = controller->conn)
+            if (auto ssh = dynamic_cast<SSHClient::Handler*>(conn->handler.get()))
+              if (conn->state == Connection::Connected && !ssh->accepted_hostkey)
+                SSHClient::AcceptHostKeyAndBeginAuthRequest(conn);
   }
 };
 

@@ -293,19 +293,7 @@ struct SSHTerminalController : public NetworkTerminalController {
   }
 
   bool LoadIdentityCB(shared_ptr<SSHClient::Identity> *out) {
-    if (identity) {
-      *out = identity;
-      return true;
-    }
-#if 0
-    else if (!FLAGS_keyfile.empty()) {
-      INFO("Load keyfile ", FLAGS_keyfile);
-      *out = make_shared<SSHClient::Identity>();
-      if (!Crypto::ParsePEM(&LocalFile::FileContents(FLAGS_keyfile)[0], &(*out)->rsa, &(*out)->dsa, &(*out)->ec, &(*out)->ed25519,
-                            [=](string v) { return my_app->passphrase_alert->RunModal(v); })) { (*out).reset(); return false; }
-      return true;
-    }
-#endif
+    if (identity) { *out = identity; return true; }
     return false;
   }
 
@@ -570,7 +558,7 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
 #endif // LFL_RFB
 
 struct ShellTerminalController : public InteractiveTerminalController {
-  string ssh_usage="\r\nusage: ssh -l user host[:port]", ssh_term;
+  string ssh_usage="\r\nusage: ssh -l user host[:port]", ssh_term, discon_msg;
   StringCB telnet_cb;
 #ifdef LFL_CRYPTO
   function<void(SSHClient::Params)> ssh_cb;
@@ -578,10 +566,12 @@ struct ShellTerminalController : public InteractiveTerminalController {
 #ifdef LFL_RFB
   function<void(RFBClient::Params)> vnc_cb;
 #endif
+  Callback reconnect_cb;
 
-  ShellTerminalController(TerminalTabInterface *p, const string &hdr, StringCB tcb, StringVecCB ecb) :
-    InteractiveTerminalController(p), telnet_cb(move(tcb)) {
-    header = StrCat(hdr, "LTerminal 1.0", ssh_usage, "\r\n\r\n");
+  ShellTerminalController(TerminalTabInterface *p, const string &msg, StringCB tcb, StringVecCB ecb, Callback rcb, bool commands) :
+    InteractiveTerminalController(p), discon_msg(msg), telnet_cb(move(tcb)), reconnect_cb(move(rcb)) {
+    if (!commands) { prompt.clear(); return; }
+    header = StrCat("LTerminal 1.0", ssh_usage, "\r\n\r\n");
 #ifdef LFL_CRYPTO
     shell.Add("ssh",      bind(&ShellTerminalController::MySSHCmd,      this, _1));
 #endif
@@ -592,6 +582,22 @@ struct ShellTerminalController : public InteractiveTerminalController {
     shell.Add("nslookup", bind(&ShellTerminalController::MyNSLookupCmd, this, _1));
     shell.Add("help",     bind(&ShellTerminalController::MyHelpCmd,     this, _1));
     shell.Add("exit",     move(ecb));
+  }
+
+  Socket Open(TextArea *ta) override {
+    if (discon_msg.size()) ta->Write(discon_msg);
+    if (auto t = dynamic_cast<Terminal*>(ta)) {
+      if (reconnect_cb) {
+        Callback r_cb;
+        swap(r_cb, reconnect_cb);
+        string text ="[Reconnect]";
+        t->Write(StrCat("\r\n\x08\x1b[1;31m", text, "\x08\x1b[0m"));
+        auto l = t->GetCursorLine();
+        t->AddUrlBox(l, 0, l, text.size()-1, "", move(r_cb));
+        t->Write("\r\n\r\n");
+      }
+    }
+    return InteractiveTerminalController::Open(ta);
   }
 
 #ifdef LFL_CRYPTO

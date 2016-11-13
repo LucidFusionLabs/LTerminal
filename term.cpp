@@ -140,14 +140,14 @@ struct MyTerminalTab : public TerminalTab {
     ChangeController(make_unique<PlaybackTerminalController>(this, move(f)));
   }
 
-  void UseShellTerminalController(const string &m) {
+  void UseShellTerminalController(const string &m, bool commands=true, Callback reconnect_cb=Callback()) {
     title = "Interactive Shell";
     auto c = make_unique<ShellTerminalController>
-      (this, m, [=](const string &h){ UseTelnetTerminalController(h); },
-       [=](const StringVec&) { closed_cb(); });
+      (this, m, [=](const string &h){ UseTelnetTerminalController(h, true); },
+       [=](const StringVec&) { closed_cb(); }, move(reconnect_cb), commands);
     c->ssh_term = FLAGS_term;
 #ifdef LFL_CRYPTO
-    c->ssh_cb = [=](SSHClient::Params p){ UseSSHTerminalController(move(p)); };
+    c->ssh_cb = [=](SSHClient::Params p){ UseSSHTerminalController(move(p), true); };
 #endif
 #ifdef LFL_RFB
     c->vnc_cb = [=](RFBClient::Params p){ parent->AddRFBTab(move(p), ""); };
@@ -156,16 +156,20 @@ struct MyTerminalTab : public TerminalTab {
   }
 
 #ifdef LFL_CRYPTO
-  void UseSSHTerminalController(SSHClient::Params params, const string &pw="",
+  void UseSSHTerminalController(SSHClient::Params params, bool from_shell=false, const string &pw="",
                                 shared_ptr<SSHClient::Identity> identity=shared_ptr<SSHClient::Identity>(),
                                 StringCB metakey_cb=StringCB(),
                                 SSHTerminalController::SavehostCB savehost_cb=SSHTerminalController::SavehostCB(),
                                 SSHClient::FingerprintCB fingerprint_cb=SSHClient::FingerprintCB()) {
     title = StrCat("SSH ", params.user, "@", params.hostport);
     bool close_on_disconn = params.close_on_disconnect;
-    auto ssh =
-      make_unique<SSHTerminalController>
-      (this, move(params), close_on_disconn ? closed_cb : [=](){ UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n"); });
+    Callback reconnect_cb = close_on_disconn ? Callback() : [=](){
+      if (dynamic_cast<InteractiveTerminalController*>(controller.get()))
+        UseSSHTerminalController(params, from_shell, pw, identity, metakey_cb, SSHTerminalController::SavehostCB(), fingerprint_cb);
+    };
+    auto ssh = make_unique<SSHTerminalController>(this, move(params), close_on_disconn ? closed_cb : [=, r = move(reconnect_cb)]() {
+      UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n", from_shell, move(r));
+    });
     ssh->metakey_cb = move(metakey_cb);
     ssh->savehost_cb = move(savehost_cb);
     ssh->fingerprint_cb = move(fingerprint_cb);
@@ -176,10 +180,16 @@ struct MyTerminalTab : public TerminalTab {
   }
 #endif
 
-  void UseTelnetTerminalController(const string &hostport, Callback savehost_cb=Callback()) {
+  void UseTelnetTerminalController(const string &hostport, bool from_shell=false,
+                                   bool close_on_disconn=false, Callback savehost_cb=Callback()) {
     title = StrCat("Telnet ", hostport);
-    auto telnet = make_unique<NetworkTerminalController>
-      (this, hostport, [=](){ UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n"); });
+    Callback reconnect_cb = close_on_disconn ? Callback() : [=](){
+      if (dynamic_cast<InteractiveTerminalController*>(controller.get()))
+        UseTelnetTerminalController(hostport, from_shell, close_on_disconn, Callback());
+    };
+    auto telnet = make_unique<NetworkTerminalController>(this, hostport, close_on_disconn ? closed_cb : [=, r = move(reconnect_cb)]() {
+      UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n", from_shell, move(r));
+    });
     telnet->success_cb = move(savehost_cb);
     telnet->success_on_connect = true;
     ChangeController(move(telnet));
@@ -203,7 +213,14 @@ struct MyTerminalTab : public TerminalTab {
         FLAGS_forward_agent, 0};
       if (FLAGS_forward_local .size()) SSHClient::ParsePortForward(FLAGS_forward_local,  &params.forward_local);
       if (FLAGS_forward_remote.size()) SSHClient::ParsePortForward(FLAGS_forward_remote, &params.forward_remote);
-      return UseSSHTerminalController(params);
+      shared_ptr<SSHClient::Identity> identity;
+      if (!FLAGS_keyfile.empty()) {
+        INFO("Load keyfile ", FLAGS_keyfile);
+        identity = make_shared<SSHClient::Identity>();
+        if (!Crypto::ParsePEM(&LocalFile::FileContents(FLAGS_keyfile)[0], &identity->rsa, &identity->dsa, &identity->ec, &identity->ed25519,
+                              [&](string v) { return my_app->passphrase_alert->RunModal(v); })) identity.reset();
+      }
+      return UseSSHTerminalController(params, false, string(), identity);
     }
 #endif
     else if (FLAGS_telnet.size()) return UseTelnetTerminalController(FLAGS_telnet);
@@ -410,6 +427,8 @@ MyTerminalTab *MyTerminalWindow::AddTerminalTab() {
   auto t = new MyTerminalTab(root, this);
 #ifdef LFL_TERMINAL_MENUS
   t->terminal->line_fb.align_top_or_bot = t->terminal->cmd_fb.align_top_or_bot = true;
+  if (atoi(Application::GetSetting("record_session")))
+    t->record = make_unique<FlatFile>(StrCat(app->savedir, "session_", logfiletime(Now()), ".data"));
 #endif
   InitTab(t);
   return t;
