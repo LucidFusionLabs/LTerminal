@@ -21,8 +21,10 @@ set(LFL_TERMINAL_CRYPTO_LIB app_net_ssh app_net_rfb
 
 if(LFL_MOBILE OR LFL_WINDOWS)
   set(LFL_TERMINAL_MENUS 1)
+  set(MENUS_DEF -DLFL_TERMINAL_MENUS)
   set(DB_LIB ${LFL_TERMINAL_DB_LIB})
 else()
+  set(MENUS_DEF)
   set(DB_LIB app_null_sqlite)
 endif()
 
@@ -48,7 +50,7 @@ endif()
 
 lfl_project(lterm)
 lfl_add_package(lterm SOURCES term.cpp term.rc ${FLATBUFFERS_SRC_OUTPUTS}
-                COMPILE_DEFINITIONS ${CRYPTO_DEF} ${PTY_DEF}
+                COMPILE_DEFINITIONS ${CRYPTO_DEF} ${MENUS_DEF} ${PTY_DEF}
                 LINK_LIBRARIES ${LFL_APP_LIB} ${LFL_APP_FRAMEWORK} ${LFL_APP_GRAPHICS}
                 app_null_audio app_null_camera app_null_matrix app_null_fft
                 app_simple_resampler app_simple_loader ${LFL_APP_CONVERT} app_libpng_png

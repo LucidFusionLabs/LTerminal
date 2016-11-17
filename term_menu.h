@@ -54,7 +54,7 @@ struct MyHostSettingsModel {
     startup_command  = "";
     font_name        = FLAGS_font;
     font_size        = 15;
-    color_scheme     = "Solarized Dark";
+    color_scheme     = "VGA";
     beep_type        = LTerminal::BeepType_None;
     text_encoding    = LTerminal::TextEncoding_UTF8;
     delete_mode      = LTerminal::DeleteMode_Normal;
@@ -924,19 +924,24 @@ struct MyTerminalMenus {
                    SSHClient::FingerprintCB fingerprint_cb=SSHClient::FingerprintCB(),
                    SSHTerminalController::SavehostCB cb=SSHTerminalController::SavehostCB()) {
     if (host.protocol == LTerminal::Protocol_SSH) {
-      shared_ptr<SSHClient::Identity> identity;
-      if (host.cred.credtype == LTerminal::CredentialType_PEM) {
-        if (!(identity = LoadIdentity(host.cred))) return LoadNewIdentity
-          (host.cred, [=](shared_ptr<SSHClient::Identity>){ MenuConnect(host, fingerprint_cb, cb); });
-      }
-      GetActiveWindow()->AddTerminalTab()->UseSSHTerminalController
+      SSHClient::LoadIdentityCB identity_cb = host.cred.credtype != LTerminal::CredentialType_PEM ? SSHClient::LoadIdentityCB() :
+        [=](shared_ptr<SSHClient::Identity> *out) { *out = LoadIdentity(host.cred); return true; };
+      auto ssh = GetActiveWindow()->AddTerminalTab()->UseSSHTerminalController
         (SSHClient::Params{ host.Hostport(), host.username, host.settings.terminal_type,
          host.settings.startup_command.size() ? StrCat(host.settings.startup_command, "\r") : "",
          host.settings.compression, host.settings.agent_forwarding, host.settings.close_on_disconnect, true,
          host.settings.local_forward, host.settings.remote_forward }, false,
-         host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "", identity, 
+         host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "", identity_cb,
          bind(&SystemToolbarView::ToggleButton, keyboard_toolbar.get(), _1), move(cb), move(fingerprint_cb));
       ApplyTerminalSettings(host.settings);
+      if (host.cred.credtype == LTerminal::CredentialType_PEM)
+        ssh->identity_cb = [=](shared_ptr<SSHClient::Identity> *out) { 
+          if ((*out = LoadIdentity(host.cred))) return true;
+          LoadNewIdentity(host.cred, [=](shared_ptr<SSHClient::Identity> identity){
+            SSHClient::SendAuthenticationRequest(ssh->conn, identity);
+          });
+          return false;
+        };
     } else if (host.protocol == LTerminal::Protocol_Telnet) {
       GetActiveWindow()->AddTerminalTab()->UseTelnetTerminalController
         (host.Hostport(), false, host.settings.close_on_disconnect, (bool(cb) ? Callback([=](){ cb(0, ""); }) : Callback()));

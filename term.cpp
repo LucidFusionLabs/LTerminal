@@ -39,10 +39,6 @@
 #endif
 #include "term.h"
 
-#ifdef LFL_MOBILE
-#define LFL_TERMINAL_MENUS
-#endif
-
 #if defined(__APPLE__) && !defined(LFL_TERMINAL_MENUS) && !defined(LFL_QT)
 #define LFL_TERMINAL_JOIN_READS
 #endif
@@ -102,6 +98,7 @@ struct MyTerminalTab : public TerminalTab {
   TerminalWindowInterface<TerminalTabInterface> *parent;
   Time join_read_interval = Time(100), refresh_interval = Time(33);
   int join_read_pending = 0;
+  bool add_reconnect_links = true;
 
   virtual ~MyTerminalTab() { root->DelGUI(terminal); }
   MyTerminalTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P) :
@@ -156,34 +153,37 @@ struct MyTerminalTab : public TerminalTab {
   }
 
 #ifdef LFL_CRYPTO
-  void UseSSHTerminalController(SSHClient::Params params, bool from_shell=false, const string &pw="",
-                                shared_ptr<SSHClient::Identity> identity=shared_ptr<SSHClient::Identity>(),
-                                StringCB metakey_cb=StringCB(),
-                                SSHTerminalController::SavehostCB savehost_cb=SSHTerminalController::SavehostCB(),
-                                SSHClient::FingerprintCB fingerprint_cb=SSHClient::FingerprintCB()) {
+  SSHTerminalController*
+  UseSSHTerminalController(SSHClient::Params params, bool from_shell=false, const string &pw="",
+                           SSHClient::LoadIdentityCB identity_cb=SSHClient::LoadIdentityCB(),
+                           StringCB metakey_cb=StringCB(),
+                           SSHTerminalController::SavehostCB savehost_cb=SSHTerminalController::SavehostCB(),
+                           SSHClient::FingerprintCB fingerprint_cb=SSHClient::FingerprintCB()) {
     title = StrCat("SSH ", params.user, "@", params.hostport);
     bool close_on_disconn = params.close_on_disconnect;
-    Callback reconnect_cb = close_on_disconn ? Callback() : [=](){
+    Callback reconnect_cb = (!add_reconnect_links || close_on_disconn) ? Callback() : [=](){
       if (dynamic_cast<InteractiveTerminalController*>(controller.get()))
-        UseSSHTerminalController(params, from_shell, pw, identity, metakey_cb, SSHTerminalController::SavehostCB(), fingerprint_cb);
+        UseSSHTerminalController(params, from_shell, pw, identity_cb, metakey_cb, SSHTerminalController::SavehostCB(), fingerprint_cb);
     };
     auto ssh = make_unique<SSHTerminalController>(this, move(params), close_on_disconn ? closed_cb : [=, r = move(reconnect_cb)]() {
       UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n", from_shell, move(r));
     });
+    auto ret = ssh.get();
     ssh->metakey_cb = move(metakey_cb);
     ssh->savehost_cb = move(savehost_cb);
     ssh->fingerprint_cb = move(fingerprint_cb);
     ssh->passphrase_alert = my_app->passphrase_alert.get();
+    ssh->identity_cb = identity_cb;
     if (pw.size()) ssh->password = pw;
-    if (identity) ssh->identity = identity;
     ChangeController(move(ssh));
+    return ret;
   }
 #endif
 
   void UseTelnetTerminalController(const string &hostport, bool from_shell=false,
                                    bool close_on_disconn=false, Callback savehost_cb=Callback()) {
     title = StrCat("Telnet ", hostport);
-    Callback reconnect_cb = close_on_disconn ? Callback() : [=](){
+    Callback reconnect_cb = (!add_reconnect_links || close_on_disconn) ? Callback() : [=](){
       if (dynamic_cast<InteractiveTerminalController*>(controller.get()))
         UseTelnetTerminalController(hostport, from_shell, close_on_disconn, Callback());
     };
@@ -213,14 +213,15 @@ struct MyTerminalTab : public TerminalTab {
         FLAGS_forward_agent, 0};
       if (FLAGS_forward_local .size()) SSHClient::ParsePortForward(FLAGS_forward_local,  &params.forward_local);
       if (FLAGS_forward_remote.size()) SSHClient::ParsePortForward(FLAGS_forward_remote, &params.forward_remote);
-      shared_ptr<SSHClient::Identity> identity;
+      SSHClient::LoadIdentityCB identity_cb;
       if (!FLAGS_keyfile.empty()) {
         INFO("Load keyfile ", FLAGS_keyfile);
-        identity = make_shared<SSHClient::Identity>();
+        auto identity = make_shared<SSHClient::Identity>();
         if (!Crypto::ParsePEM(&LocalFile::FileContents(FLAGS_keyfile)[0], &identity->rsa, &identity->dsa, &identity->ec, &identity->ed25519,
                               [&](string v) { return my_app->passphrase_alert->RunModal(v); })) identity.reset();
+        if (identity) identity_cb = [=](shared_ptr<SSHClient::Identity> *out) { *out = identity; return true; };
       }
-      return UseSSHTerminalController(params, false, string(), identity);
+      return ReturnVoid(UseSSHTerminalController(params, false, string(), identity_cb));
     }
 #endif
     else if (FLAGS_telnet.size()) return UseTelnetTerminalController(FLAGS_telnet);

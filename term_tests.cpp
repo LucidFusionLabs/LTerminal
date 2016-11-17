@@ -34,14 +34,18 @@ struct MyTerminalTab : public TerminalTab {
   virtual ~MyTerminalTab() { root->DelGUI(terminal); }
   MyTerminalTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P) :
     TerminalTab(W, W->AddGUI(make_unique<Terminal>(nullptr, W, W->default_font, point(80,25)))), parent(P) {}
+
   void ChangeColors(const string &colors_name, bool redraw=true) {}
   void UseShellTerminalController(const string &m) {}
-  void UseSSHTerminalController(SSHClient::Params params, const string &pw="",
-                                shared_ptr<SSHClient::Identity> identity=shared_ptr<SSHClient::Identity>(),
-                                StringCB metakey_cb=StringCB(),
-                                SSHTerminalController::SavehostCB savehost_cb=SSHTerminalController::SavehostCB(),
-                                SSHClient::FingerprintCB fingerprint_cb=SSHClient::FingerprintCB()) {}
-  void UseTelnetTerminalController(const string &hostport, Callback savehost_cb=Callback()) {}
+  void UseTelnetTerminalController(const string &hostport, bool from_shell=false,
+                                   bool close_on_disconn=false, Callback savehost_cb=Callback()) {}
+
+  SSHTerminalController*
+  UseSSHTerminalController(SSHClient::Params params, bool from_shell=false, const string &pw="",
+                           SSHClient::LoadIdentityCB identity_cb=SSHClient::LoadIdentityCB(),
+                           StringCB metakey_cb=StringCB(),
+                           SSHTerminalController::SavehostCB savehost_cb=SSHTerminalController::SavehostCB(),
+                           SSHClient::FingerprintCB fingerprint_cb=SSHClient::FingerprintCB()) { return nullptr; }
 };
 
 inline MyTerminalWindow *GetActiveWindow() {

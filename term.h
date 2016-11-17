@@ -239,7 +239,7 @@ struct SSHTerminalController : public NetworkTerminalController {
   SavehostCB savehost_cb;
   Connection::CB remote_forward_detach_cb;
   SSHClient::FingerprintCB fingerprint_cb;
-  shared_ptr<SSHClient::Identity> identity;
+  SSHClient::LoadIdentityCB identity_cb;
   string fingerprint, password;
   int fingerprint_type=0;
   unordered_set<Socket> forward_fd;
@@ -283,6 +283,7 @@ struct SSHTerminalController : public NetworkTerminalController {
     return fingerprint_cb ? fingerprint_cb(fingerprint_type, fingerprint) : true;
   }
 
+  bool LoadIdentityCB(shared_ptr<SSHClient::Identity> *out) { return identity_cb ? identity_cb(out) : true; }
   bool LoadPasswordCB(string *out) {
     if (password.size()) { out->clear(); swap(*out, password); return true; }
     else {
@@ -290,11 +291,6 @@ struct SSHTerminalController : public NetworkTerminalController {
         ("Password", "Password", "", [=](const string &pw){ SSHClient::WritePassword(conn, pw); });
       return false;
     } 
-  }
-
-  bool LoadIdentityCB(shared_ptr<SSHClient::Identity> *out) {
-    if (identity) { *out = identity; return true; }
-    return false;
   }
 
   void SSHLoginCB(Terminal *term) {
