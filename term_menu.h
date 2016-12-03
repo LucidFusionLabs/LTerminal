@@ -511,6 +511,7 @@ struct MyTerminalMenus {
     { "pgdown", bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->PageDown();    if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
     { "home",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->Home();        if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
     { "end",    bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->End();         if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
+    { "tab",    bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->Tab();         if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
     { "paste",  bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->InputString(app->GetClipboardText()); } }) },
   };
 
@@ -559,6 +560,8 @@ struct MyTerminalMenus {
     keyboard_toolbar = make_unique<SystemToolbarView>(MenuItemVec{
       { "\U00002699", "",       bind(&MyTerminalMenus::ShowInterfaceSettings, this) },
       { "esc",        "",       bind(&MyTerminalMenus::PressKey,         this, "esc") },
+      { "ctrl",       "toggle", bind(&MyTerminalMenus::ToggleKey,        this, "ctrl") },
+      // { "alt",     "toggle", bind(&MyTerminalMenus::ToggleKey,        this, "alt") },
       { "tab",        "",       bind(&MyTerminalMenus::PressKey,         this, "tab") },
       { "\U000025C0", "",       bind(&MyTerminalMenus::PressKey,         this, "left") },
       { "\U000025B6", "",       bind(&MyTerminalMenus::PressKey,         this, "right") },
@@ -568,9 +571,6 @@ struct MyTerminalMenus {
       { "\U000023EC", "",       bind(&MyTerminalMenus::PressKey,         this, "pgdown") }, 
       { "\U000023EA", "",       bind(&MyTerminalMenus::PressKey,         this, "home") },
       { "\U000023E9", "",       bind(&MyTerminalMenus::PressKey,         this, "end") }, 
-      { "\U0001F4CB", "",       bind(&MyTerminalMenus::PressKey,         this, "paste") },
-      { "ctrl",       "toggle", bind(&MyTerminalMenus::ToggleKey,        this, "ctrl") },
-      // { "alt",        "toggle", bind(&MyTerminalMenus::ToggleKey,        this, "alt") },
       { "\U00002328", "",       bind(&Application::ToggleTouchKeyboard, app) },
       { "\U000025F0", "",       bind(&MyTerminalMenus::ShowSessionsMenu, this) },
     });

@@ -581,8 +581,9 @@ struct ShellTerminalController : public InteractiveTerminalController {
   }
 
   Socket Open(TextArea *ta) override {
-    if (discon_msg.size()) ta->Write(discon_msg);
     if (auto t = dynamic_cast<Terminal*>(ta)) {
+      t->SetScrollRegion(1, t->term_height);
+      if (discon_msg.size()) ta->Write(discon_msg);
       if (reconnect_cb) {
         Callback r_cb;
         swap(r_cb, reconnect_cb);
@@ -592,7 +593,7 @@ struct ShellTerminalController : public InteractiveTerminalController {
         t->AddUrlBox(l, 0, l, text.size()-1, "", move(r_cb));
         t->Write("\r\n\r\n");
       }
-    }
+    } else if (discon_msg.size()) ta->Write(discon_msg);
     return InteractiveTerminalController::Open(ta);
   }
 
