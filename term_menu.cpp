@@ -662,4 +662,15 @@ void MyHostsViewController::UpdateViewFromModel(MyHostDB *model) {
   view->changed = false;
 }
 
+MySessionsViewController::MySessionsViewController(MyTerminalMenus *m) :
+  menus(m), view(make_unique<SystemTableView>("Sessions", "big", TableItemVec{
+    TableItem("",              TableItem::Separator),
+    TableItem{"Close Session", TableItem::Command, "", ">", 0, m->none_icon,       0, bind(&MyTerminalMenus::CloseActiveSession, m)},
+    TableItem{"New",           TableItem::Command, "", ">", 0, m->plus_green_icon, 0, bind(&MyTerminalMenus::ShowNewSessionMenu, m, "New Session", true)},
+  })) {
+  view->AddNavigationButton(HAlign::Left,
+                            TableItem("Back", TableItem::Button, "", "", 0, 0, 0,
+                                      bind(&MyTerminalMenus::HideNewSessionMenu, m)));
+}
+
 }; // namespace LFL

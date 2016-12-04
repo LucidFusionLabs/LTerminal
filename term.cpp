@@ -108,14 +108,15 @@ struct MyTerminalTab : public TerminalTab {
     if (terminal->bg_color) W->gd->clear_color = *terminal->bg_color;
   }
 
-  void Draw() {
-    Box draw_box = root->Box(), orig_draw_box = draw_box;
+  void Draw() { DrawBox(root->gd, root->Box(), true); }
+  void DrawBox(GraphicsDevice *gd, Box draw_box, bool check_resized) {
+    Box orig_draw_box = draw_box;
     int effects = PrepareEffects(&draw_box, my_app->downscale_effects, terminal->extra_height);
-    terminal->CheckResized(orig_draw_box);
-    root->gd->DisableBlend();
+    if (check_resized) terminal->CheckResized(orig_draw_box);
+    gd->DisableBlend();
     terminal->Draw(draw_box, effects > 1 ? Terminal::DrawFlag::DrawCursor : Terminal::DrawFlag::Default,
                    effects ? activeshader : NULL);
-    if (effects) root->gd->UseShader(0);
+    if (effects) gd->UseShader(0);
   }
 
   void UpdateTargetFPS() { parent->UpdateTargetFPS(); }
@@ -326,13 +327,13 @@ struct MyRFBTab : public TerminalTabInterface {
   void ScrollDown() {}
   void ScrollUp() {}
 
-  void Draw() {
+  void Draw() { DrawBox(root->gd, root->Box(), true); }
+  void DrawBox(GraphicsDevice *gd, Box draw_box, bool check_resized) {
     float tex[4];
-    Box draw_box = root->Box();
     int effects = PrepareEffects(&draw_box, my_app->downscale_effects, 0);
     if (rfb) rfb->Animate();
     Texture::Coordinates(tex, rfb ? rfb->viewport : Box(), fb.tex.width, fb.tex.height);
-    GraphicsContext gc(root->gd);
+    GraphicsContext gc(gd);
     gc.gd->DisableBlend();
     if (effects) {
       float scale = activeshader->scale;

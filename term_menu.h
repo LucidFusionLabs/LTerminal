@@ -460,6 +460,13 @@ struct MyHostsViewController {
   void UpdateViewFromModel(MyHostDB *model);
 };
 
+struct MySessionsViewController {
+  MyTerminalMenus *menus;
+  unique_ptr<SystemTableView> view;
+  MySessionsViewController(MyTerminalMenus*);
+  void UpdateViewFromModel();
+};
+
 struct MyTerminalMenus {
   bool db_protected = false, db_opened = false;
   SQLite::Database db;
@@ -472,6 +479,8 @@ struct MyTerminalMenus {
       plus_red_icon, plus_green_icon, vnc_icon, locked_icon, unlocked_icon, font_icon, toys_icon,
       arrowleft_icon, arrowright_icon, clipboard_upload_icon, clipboard_download_icon, keygen_icon,
       user_icon, calendar_icon, none_icon;
+  vector<int> sessions_icon;
+  FrameBuffer icon_fb;
   string pw_default = "\x01""Ask each time", pw_empty = "lfl_default";
 
   int                              connected_host_id=0;
@@ -497,7 +506,7 @@ struct MyTerminalMenus {
   MyNewHostViewController          newhost;
   MyUpdateHostViewController       updatehost;
   MyHostsViewController            hosts, hostsfolder;
-  unique_ptr<SystemMenuView>       sessions_menu;
+  MySessionsViewController         sessions;
   unique_ptr<SystemToolbarView>    keyboard_toolbar;
 
   PickerItem color_picker = PickerItem{ {{"VGA", "Solarized Dark", "Solarized Light"}}, {0} };
@@ -551,11 +560,13 @@ struct MyTerminalMenus {
     user_icon              (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/user.png"))),
     calendar_icon          (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/calendar.png"))),
     none_icon              (CheckNotNull(app->LoadSystemImage("drawable-xhdpi/none.png"))),
+    icon_fb(app->focused->gd),
     hosts_nav(make_unique<SystemNavigationView>()), interfacesettings_nav(make_unique<SystemNavigationView>()),
     keyboard(this), newkey(this), genkey(this), keyinfo(this), keys(this, &credential_db), about(this),
     support(this), privacy(this), settings(this), terminalinterfacesettings(this), rfbinterfacesettings(this),
     sshfingerprint(this), sshportforward(this), sshsettings(this), telnetsettings(this), vncsettings(this),
-    localshellsettings(this), newhost(this), updatehost(this), hosts(this, true), hostsfolder(this, false) {
+    localshellsettings(this), newhost(this), updatehost(this), hosts(this, true), hostsfolder(this, false),
+    sessions(this) {
 
     keyboard_toolbar = make_unique<SystemToolbarView>(MenuItemVec{
       { "\U00002699", "",       bind(&MyTerminalMenus::ShowInterfaceSettings, this) },
@@ -716,40 +727,70 @@ struct MyTerminalMenus {
   }
 
   void ShowSessionsMenu() {
-    interfacesettings_nav->PopAll();
-    interfacesettings_nav->Show(false);
-    MenuItemVec v;
+    int icon_pf = Pixel::RGB24;
+    GraphicsContext gc(app->focused->gd);
+    Box b(app->focused->width, app->focused->height), iconb(128, 128);
+    icon_fb.Resize(b.w, b.h, FrameBuffer::Flag::CreateGL | FrameBuffer::Flag::CreateTexture);
+    unique_ptr<VideoResamplerInterface> resampler(CreateVideoResampler());
+    resampler->Open(b.w, b.h, Texture::preferred_pf, iconb.w, iconb.h, icon_pf);
+
+    int count = 0;
+    vector<TableItem> section;
     auto tw = GetActiveWindow();
-    for (auto t : tw->tabs.tabs) v.push_back
-      (MenuItem{"", t->title, [=](){ tw->tabs.SelectTab(t); app->scheduler.Wakeup(tw->root); } });
-    v.push_back(MenuItem{"", "Close Session", bind(&MyTerminalMenus::CloseActiveSession, this)});
-    v.push_back(MenuItem{"", "New", bind(&MyTerminalMenus::ShowNewSessionMenu, this)});
-    sessions_menu = make_unique<SystemMenuView>("Sessions", v);
-    sessions_menu->Show();
+    for (auto t : tw->tabs.tabs) {
+      Texture screen_tex, icon_tex;
+      gc.gd->Clear();
+      t->DrawBox(gc.gd, b, false);
+      gc.gd->ScreenshotBox(&screen_tex, b, 0);
+      icon_tex.Resize(iconb.w, iconb.h, icon_pf, Texture::Flag::CreateBuf);
+      resampler->Resample(screen_tex.buf, screen_tex.LineSize(), icon_tex.buf, icon_tex.LineSize(), 0, true);
+
+      if (count == sessions_icon.size()) sessions_icon.push_back(app->LoadSystemImage(""));
+      CHECK_LT(count, sessions_icon.size());
+      int icon = sessions_icon[count++];
+      app->UpdateSystemImage(icon, icon_tex);
+      section.push_back({t->title, TableItem::Command, "", ">", 0, icon, 0, [=](){
+        HideNewSessionMenu();
+        tw->tabs.SelectTab(t);
+        app->scheduler.Wakeup(tw->root);
+      }});
+    }
+    icon_fb.Release();
+    sessions.view->BeginUpdates();
+    sessions.view->ReplaceSection(0, "", 0, 0, section);
+    sessions.view->EndUpdates();
+
+    hosts_nav->PopAll();
+    hosts_nav->PushTableView(sessions.view.get());
+    hosts_nav->Show(true);
   }
 
-  void ShowNewSessionMenu() {
+  void ShowNewSessionMenu(const string &title, bool back) {
+    hosts.view->SetTitle(title); 
+    if (!back) hosts.view->DelNavigationButton(HAlign::Left);
+    else       hosts.view->AddNavigationButton
+      (HAlign::Left, TableItem("Back", TableItem::Button, "", "", 0, 0, 0, bind(&MyTerminalMenus::HideNewSessionMenu, this)));
+    hosts_nav->PushTableView(my_app->menus->hosts.view.get());
     app->ShowSystemStatusBar(true);
-    hosts.view->SetTitle("New Session"); 
     keyboard_toolbar->Show(false);
-    hosts_nav->Show(true);
   }
 
   void HideNewSessionMenu() {
     app->ShowSystemStatusBar(false);
     hosts_nav->Show(false);
     keyboard_toolbar->Show(true);
+    app->OpenTouchKeyboard();
     app->scheduler.Wakeup(app->focused);
   }
 
   void CloseActiveSession() {
     auto tw = GetActiveWindow();
     tw->CloseActiveTab();
-    if (tw->tabs.top) return;
-    keyboard_toolbar->Show(false);
-    hosts.view->DelNavigationButton(HAlign::Left);
-    hosts.view->SetTitle("LTerminal");
-    hosts_nav->Show(true);
+    if (tw->tabs.top) HideNewSessionMenu();
+    else {
+      hosts_nav->PopAll();
+      ShowNewSessionMenu("LTerminal", false);
+    }
   }
 
   void ShowToysMenu() {
@@ -762,6 +803,7 @@ struct MyTerminalMenus {
     keyboard_toolbar->Show(true);
     interfacesettings_nav->PopAll();
     interfacesettings_nav->Show(false);
+    app->OpenTouchKeyboard();
     app->scheduler.Wakeup(app->focused);
   }
 
@@ -888,8 +930,6 @@ struct MyTerminalMenus {
 
   void MenuStartSession() {
     hosts_nav->Show(false);
-    hosts.view->AddNavigationButton
-      (HAlign::Left, TableItem("Back", TableItem::Button, "", "", 0, 0, 0, bind(&MyTerminalMenus::HideNewSessionMenu, this)));
     keyboard_toolbar->Show(true);
     app->ShowSystemStatusBar(false);
     app->CloseTouchKeyboardAfterReturn(false);

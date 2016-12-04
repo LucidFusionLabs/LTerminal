@@ -25,7 +25,7 @@ struct TerminalTabInterface : public Dialog {
   Callback closed_cb;
   unique_ptr<Terminal::Controller> controller, last_controller;
   Shader *activeshader = &app->shaders->shader_default;
-  using Dialog::Dialog;
+  TerminalTabInterface(Window *W, float w, float h, int flag=0) : Dialog(W,w,h,flag) {}
 
   virtual int ReadAndUpdateTerminalFramebuffer() = 0;
   virtual bool ControllerReadableCB() { ReadAndUpdateTerminalFramebuffer(); return true; }
@@ -35,6 +35,7 @@ struct TerminalTabInterface : public Dialog {
   virtual void UpdateTargetFPS() = 0;
   virtual MouseController *GetMouseTarget() = 0;
   virtual KeyboardController *GetKeyboardTarget() = 0;
+  virtual void DrawBox(GraphicsDevice*, Box draw_box, bool check_resized) = 0;
   virtual void TakeFocus() { root->active_textbox = GetKeyboardTarget();     root->active_controller = GetMouseTarget(); }
   virtual void LoseFocus() { root->active_textbox = root->default_textbox(); root->active_controller = root->default_controller(); }
 
