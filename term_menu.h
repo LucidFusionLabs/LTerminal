@@ -424,6 +424,11 @@ struct MyLocalShellSettingsViewController {
   bool UpdateModelFromView(MyHostSettingsModel *model, string *folder) const;
 };
 
+struct MyProtocolViewController {
+  unique_ptr<SystemTableView> view;
+  MyProtocolViewController(MyTerminalMenus*);
+};
+
 struct MyQuickConnectViewController {
   static vector<TableItem> GetSchema(MyTerminalMenus*);
 };
@@ -503,6 +508,7 @@ struct MyTerminalMenus {
   MyTelnetSettingsViewController   telnetsettings;
   MyVNCSettingsViewController      vncsettings;
   MyLocalShellSettingsViewController localshellsettings;
+  MyProtocolViewController         protocol;
   MyNewHostViewController          newhost;
   MyUpdateHostViewController       updatehost;
   MyHostsViewController            hosts, hostsfolder;
@@ -565,8 +571,8 @@ struct MyTerminalMenus {
     keyboard(this), newkey(this), genkey(this), keyinfo(this), keys(this, &credential_db), about(this),
     support(this), privacy(this), settings(this), terminalinterfacesettings(this), rfbinterfacesettings(this),
     sshfingerprint(this), sshportforward(this), sshsettings(this), telnetsettings(this), vncsettings(this),
-    localshellsettings(this), newhost(this), updatehost(this), hosts(this, true), hostsfolder(this, false),
-    sessions(this) {
+    localshellsettings(this), protocol(this), newhost(this), updatehost(this), hosts(this, true),
+    hostsfolder(this, false), sessions(this) {
 
     keyboard_toolbar = make_unique<SystemToolbarView>(MenuItemVec{
       { "\U00002699", "",       bind(&MyTerminalMenus::ShowInterfaceSettings, this) },
@@ -719,10 +725,22 @@ struct MyTerminalMenus {
     host_menu->BeginUpdates();
     if (cred_row_id) {
       MyCredentialModel cred(&credential_db, cred_row_id);
+      host_menu->SetKey(0, key_row, "Key");
       host_menu->SetTag(0, key_row, cred.cred_id);
-      host_menu->SetValue(0, key_row, StrCat(",", pw_default, ",", cred.name));
-      host_menu->SetDropdown(0, key_row, 1);
-    } else host_menu->SetDropdown(0, key_row, 0);
+      host_menu->SetValue(0, key_row, cred.name);
+    } else {
+      host_menu->SetKey(0, key_row, "Password");
+      host_menu->SetValue(0, key_row, pw_default);
+    }
+    host_menu->EndUpdates();
+  }
+
+  void ChooseProtocol(const string &n) {
+    hosts_nav->PopView(1);
+    SystemTableView *host_menu = hosts_nav->Back();
+    int host_row = (host_menu->GetKey(0, 0) == "Nickname");
+    host_menu->BeginUpdates();
+    host_menu->SetKey(0, host_row, n);
     host_menu->EndUpdates();
   }
 
