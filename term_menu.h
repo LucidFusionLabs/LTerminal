@@ -781,6 +781,8 @@ struct MyTerminalMenus {
     hosts_nav->PopAll();
     hosts_nav->PushTableView(sessions.view.get());
     hosts_nav->Show(true);
+    app->ShowSystemStatusBar(true);
+    keyboard_toolbar->Show(false);
   }
 
   void ShowNewSessionMenu(const string &title, bool back) {
@@ -789,8 +791,6 @@ struct MyTerminalMenus {
     else       hosts.view->AddNavigationButton
       (HAlign::Left, TableItem("Back", TableItem::Button, "", "", 0, 0, 0, bind(&MyTerminalMenus::HideNewSessionMenu, this)));
     hosts_nav->PushTableView(my_app->menus->hosts.view.get());
-    app->ShowSystemStatusBar(true);
-    keyboard_toolbar->Show(false);
   }
 
   void HideNewSessionMenu() {

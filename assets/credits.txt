@@ -164,3 +164,8 @@ Icon set: Misc
 By: Catherine Costantino
 License: copyright www.lucidfusionlabs.com
 Size (px): 512 × 512
+
+Development Credits
+-------------------
+
+Marc Uscilka

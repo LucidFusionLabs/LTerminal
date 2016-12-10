@@ -632,6 +632,7 @@ extern "C" int MyAppMain() {
   MakeValueTuple(&my_app->shader_map, "darkly");
 
 #ifdef LFL_CRYPTO
+  INFO("Using ", Crypto::LibraryName(), " cryptography");
   Crypto::PublicKeyInit();
   if (FLAGS_keygen.size()) {
     string pw = my_app->passphrase_alert->RunModal(""), fn="identity", pubkey, privkey;

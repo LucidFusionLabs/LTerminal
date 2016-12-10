@@ -74,7 +74,7 @@ struct NetworkTerminalController : public TerminalControllerInterface {
   NetworkTerminalController(TerminalTabInterface *p, const string &r, const Callback &ccb) :
     TerminalControllerInterface(p), detach_cb(bind(&NetworkTerminalController::ConnectedCB, this)),
     close_cb(ccb), remote(r) {}
-  virtual ~NetworkTerminalController() { if (conn) conn->RemoveFromMainWait(parent->root); }
+  virtual ~NetworkTerminalController() { close_cb=Callback(); Close(); }
 
   virtual Socket Open(TextArea *t) {
     if (remote.empty()) return InvalidSocket;
@@ -90,7 +90,7 @@ struct NetworkTerminalController : public TerminalControllerInterface {
     conn->RemoveFromMainWait(parent->root);
     conn->Close();
     conn = 0;
-    close_cb();
+    if (close_cb) close_cb();
   }
 
   virtual void ConnectedCB() {
