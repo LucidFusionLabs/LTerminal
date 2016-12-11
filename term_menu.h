@@ -488,7 +488,6 @@ struct MyTerminalMenus {
   FrameBuffer icon_fb;
   string pw_default = "\x01""Ask each time", pw_empty = "lfl_default";
 
-  int                              connected_host_id=0;
   unique_ptr<SystemNavigationView> hosts_nav, interfacesettings_nav;
   unique_ptr<SystemTextView>       credits;
   MyKeyboardSettingsViewController keyboard;
@@ -826,9 +825,10 @@ struct MyTerminalMenus {
   }
 
   void ShowInterfaceSettings() {
-    if (auto t = GetActiveTerminalTab()) t->ChangeShader("none");
-    if (!connected_host_id || interfacesettings_nav->shown) return;
-    MyHostModel host_model(&host_db, &credential_db, &settings_db, connected_host_id);
+    auto t = GetActiveTerminalTab();
+    if (t) t->ChangeShader("none");
+    if (!t || !t->connected_host_id || interfacesettings_nav->shown) return;
+    MyHostModel host_model(&host_db, &credential_db, &settings_db, t->connected_host_id);
     if (host_model.protocol == LTerminal::Protocol_RFB) {
       rfbinterfacesettings.UpdateViewFromModel(host_model.settings);
       interfacesettings_nav->PushTableView(rfbinterfacesettings.view.get());
@@ -875,14 +875,13 @@ struct MyTerminalMenus {
   }
 
   void StartShell() {
-    connected_host_id = 1;
-    GetActiveWindow()->AddTerminalTab()->UseShellTerminalController("");
+    GetActiveWindow()->AddTerminalTab(1)->UseShellTerminalController("");
     MenuStartSession();
     app->scheduler.Wakeup(app->focused);
   }
 
   void ConnectHost(int host_id) {
-    MyHostModel host(&host_db, &credential_db, &settings_db, (connected_host_id = host_id));
+    MyHostModel host(&host_db, &credential_db, &settings_db, host_id);
     MenuConnect(host, [=](int fpt, const StringPiece &fpb) -> bool {
       string fp = fpb.str();
       return host.FingerprintMatch(fpt, fp) ? true : ShowAcceptFingerprintAlert(fp);
@@ -901,6 +900,8 @@ struct MyTerminalMenus {
     MyHostModel host(&host_db, &credential_db, &settings_db, host_id);
     if (host.cred.credtype == LTerminal::CredentialType_Password) credential_db.Erase(host.cred.cred_id);
     host_db.Erase(host.host_id);
+    if (auto w = GetActiveWindow())
+      for (auto t : w->tabs.tabs) if (t->connected_host_id == host_id) t->connected_host_id = 0;
   }
 
   void HostInfo(int host_id) {
@@ -912,7 +913,6 @@ struct MyTerminalMenus {
 
   void NewHostConnect() {
     hosts_nav->PopView(1);
-    connected_host_id = 0;
     MyHostModel host;
     newhost.UpdateModelFromView(&host, &credential_db);
     UpdateModelFromSettingsView(host.protocol, &host.settings, &host.folder);
@@ -924,13 +924,12 @@ struct MyTerminalMenus {
     }
     MenuConnect(host, SSHClient::FingerprintCB(), [=](int fpt, const string &fp) mutable {
       host.SetFingerprint(fpt, fp);           
-      connected_host_id = host.SaveNew(&host_db, &credential_db, &settings_db);
+      GetActiveTerminalTab()->connected_host_id = host.SaveNew(&host_db, &credential_db, &settings_db);
     });
   }
 
   void UpdateHostConnect() {
     hosts_nav->PopToRoot();
-    connected_host_id = 0;
     MyHostModel host;
     updatehost.UpdateModelFromView(&host, &credential_db);
     UpdateModelFromSettingsView(host.protocol, &host.settings, &host.folder);
@@ -941,8 +940,7 @@ struct MyTerminalMenus {
         return updatehost.prev_model.FingerprintMatch(fpt, fp) ? true : ShowAcceptFingerprintAlert(fp);
       }, [=](int fpt, const string &fp) mutable {
         host.SetFingerprint(fpt, fp);
-        connected_host_id = host.Update(updatehost.prev_model, &host_db, &credential_db,
-                                        &settings_db);
+        host.Update(updatehost.prev_model, &host_db, &credential_db, &settings_db);
       });
   }
 
@@ -984,7 +982,7 @@ struct MyTerminalMenus {
     if (host.protocol == LTerminal::Protocol_SSH) {
       SSHClient::LoadIdentityCB identity_cb = host.cred.credtype != LTerminal::CredentialType_PEM ? SSHClient::LoadIdentityCB() :
         [=](shared_ptr<SSHClient::Identity> *out) { *out = LoadIdentity(host.cred); return true; };
-      auto ssh = GetActiveWindow()->AddTerminalTab()->UseSSHTerminalController
+      auto ssh = GetActiveWindow()->AddTerminalTab(host.host_id)->UseSSHTerminalController
         (SSHClient::Params{ host.Hostport(), host.username, host.settings.terminal_type,
          host.settings.startup_command.size() ? StrCat(host.settings.startup_command, "\r") : "",
          host.settings.compression, host.settings.agent_forwarding, host.settings.close_on_disconnect, true,
@@ -1001,11 +999,11 @@ struct MyTerminalMenus {
           return false;
         };
     } else if (host.protocol == LTerminal::Protocol_Telnet) {
-      GetActiveWindow()->AddTerminalTab()->UseTelnetTerminalController
+      GetActiveWindow()->AddTerminalTab(host.host_id)->UseTelnetTerminalController
         (host.Hostport(), false, host.settings.close_on_disconnect, (bool(cb) ? Callback([=](){ cb(0, ""); }) : Callback()));
       ApplyTerminalSettings(host.settings);
     } else if (host.protocol == LTerminal::Protocol_RFB) {
-      GetActiveWindow()->AddRFBTab(RFBClient::Params{host.Hostport()},
+      GetActiveWindow()->AddRFBTab(host.host_id, RFBClient::Params{host.Hostport()},
                                    host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "",
                                    (bool(cb) ? Callback([=](){ cb(0, ""); }) : Callback()));
     } else if (host.protocol == LTerminal::Protocol_LocalShell) {

@@ -25,7 +25,8 @@ struct TerminalTabInterface : public Dialog {
   Callback closed_cb;
   unique_ptr<Terminal::Controller> controller, last_controller;
   Shader *activeshader = &app->shaders->shader_default;
-  TerminalTabInterface(Window *W, float w, float h, int flag=0) : Dialog(W,w,h,flag) {}
+  int connected_host_id=0;
+  TerminalTabInterface(Window *W, float w, float h, int flag, int host_id) : Dialog(W,w,h,flag), connected_host_id(host_id) {}
 
   virtual int ReadAndUpdateTerminalFramebuffer() = 0;
   virtual bool ControllerReadableCB() { ReadAndUpdateTerminalFramebuffer(); return true; }
@@ -653,7 +654,7 @@ template <class TerminalType> struct TerminalTabT : public TerminalTabInterface 
   TerminalType *terminal;
   unique_ptr<FlatFile> record;
 
-  TerminalTabT(Window *W, TerminalType *t) : TerminalTabInterface(W, 1.0, 1.0), terminal(t) {
+  TerminalTabT(Window *W, TerminalType *t, int host_id) : TerminalTabInterface(W, 1.0, 1.0, 0, host_id), terminal(t) {
 #ifdef FUZZ_DEBUG
     for (int i=0; i<256; i++) {
       INFO("fuzz i = ", i);
@@ -707,7 +708,7 @@ template <class X> struct TerminalWindowInterface : public GUI {
   TerminalWindowInterface(Window *W) : GUI(W), tabs(this) {}
   virtual void UpdateTargetFPS() = 0;
 #ifdef LFL_RFB
-  virtual X *AddRFBTab(RFBClient::Params p, string, Callback savehost_cb=Callback()) = 0;
+  virtual X *AddRFBTab(int host_id, RFBClient::Params p, string, Callback savehost_cb=Callback()) = 0;
 #endif
 };
 

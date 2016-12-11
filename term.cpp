@@ -101,8 +101,8 @@ struct MyTerminalTab : public TerminalTab {
   bool add_reconnect_links = true;
 
   virtual ~MyTerminalTab() { root->DelGUI(terminal); }
-  MyTerminalTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P) :
-    TerminalTab(W, W->AddGUI(make_unique<Terminal>(nullptr, W, W->default_font, FLAGS_dim))), parent(P) {
+  MyTerminalTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P, int host_id) :
+    TerminalTab(W, W->AddGUI(make_unique<Terminal>(nullptr, W, W->default_font, FLAGS_dim)), host_id), parent(P) {
     terminal->new_link_cb      = bind(&MyTerminalTab::NewLinkCB,   this, _1);
     terminal->hover_control_cb = bind(&MyTerminalTab::HoverLinkCB, this, _1);
     if (terminal->bg_color) W->gd->clear_color = *terminal->bg_color;
@@ -148,7 +148,7 @@ struct MyTerminalTab : public TerminalTab {
     c->ssh_cb = [=](SSHClient::Params p){ UseSSHTerminalController(move(p), true); };
 #endif
 #ifdef LFL_RFB
-    c->vnc_cb = [=](RFBClient::Params p){ parent->AddRFBTab(move(p), ""); };
+    c->vnc_cb = [=](RFBClient::Params p){ parent->AddRFBTab(1, move(p), ""); };
 #endif
     ChangeController(move(c));
   }
@@ -308,8 +308,9 @@ struct MyRFBTab : public TerminalTabInterface {
   FrameBuffer fb;
   RFBTerminalController *rfb;
 
-  MyRFBTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P, RFBClient::Params a, string pw, Callback scb) :
-    TerminalTabInterface(W, 1.0, 1.0), parent(P), fb(root->gd) {
+  MyRFBTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P, int host_id,
+           RFBClient::Params a, string pw, Callback scb) :
+    TerminalTabInterface(W, 1.0, 1.0, 0, host_id), parent(P), fb(root->gd) {
     title = StrCat("VNC: ", a.hostport);
     auto c = make_unique<RFBTerminalController>(this, move(a), [=](){ closed_cb(); }, &fb);
     c->passphrase_alert = my_app->passphrase_alert.get();
@@ -369,8 +370,8 @@ struct MyTerminalWindow : public TerminalWindowInterface<TerminalTabInterface> {
   MyTerminalWindow(Window *W) : TerminalWindowInterface(W) {}
   virtual ~MyTerminalWindow() { for (auto t : tabs.tabs) delete t; }
 
-  MyTerminalTab *AddTerminalTab();
-  TerminalTabInterface *AddRFBTab(RFBClient::Params p, string, Callback savehost_cb=Callback());
+  MyTerminalTab *AddTerminalTab(int host_id);
+  TerminalTabInterface *AddRFBTab(int host_id, RFBClient::Params p, string, Callback savehost_cb=Callback());
   void InitTab(TerminalTabInterface*);
 
   void CloseActiveTab() {
@@ -425,8 +426,8 @@ struct MyTerminalMenus { int unused; };
 
 MyAppState::~MyAppState() {}
   
-MyTerminalTab *MyTerminalWindow::AddTerminalTab() {
-  auto t = new MyTerminalTab(root, this);
+MyTerminalTab *MyTerminalWindow::AddTerminalTab(int host_id) {
+  auto t = new MyTerminalTab(root, this, host_id);
 #ifdef LFL_TERMINAL_MENUS
   t->terminal->line_fb.align_top_or_bot = t->terminal->cmd_fb.align_top_or_bot = true;
   if (atoi(Application::GetSetting("record_session")))
@@ -436,9 +437,9 @@ MyTerminalTab *MyTerminalWindow::AddTerminalTab() {
   return t;
 }
 
-TerminalTabInterface *MyTerminalWindow::AddRFBTab(RFBClient::Params p, string pw, Callback savehost_cb) {
+TerminalTabInterface *MyTerminalWindow::AddRFBTab(int host_id, RFBClient::Params p, string pw, Callback savehost_cb) {
 #ifdef LFL_RFB
-  auto t = new MyRFBTab(root, this, move(p), move(pw), move(savehost_cb));
+  auto t = new MyRFBTab(root, this, host_id, move(p), move(pw), move(savehost_cb));
   InitTab(t);
   return t;
 #else
@@ -484,8 +485,8 @@ void MyWindowStart(Window *W) {
 #ifndef LFL_TERMINAL_MENUS
   TerminalTabInterface *t = nullptr;
   ONCE_ELSE({ if (FLAGS_vnc.size()) t = tw->AddRFBTab(RFBClient::Params{FLAGS_vnc}, "");
-              else { auto tt = tw->AddTerminalTab(); tt->UseInitialTerminalController(); t=tt; }
-              },   { auto tt = tw->AddTerminalTab(); tt->UseDefaultTerminalController(); t=tt; });
+              else { auto tt = tw->AddTerminalTab(0); tt->UseInitialTerminalController(); t=tt; }
+              },   { auto tt = tw->AddTerminalTab(0); tt->UseDefaultTerminalController(); t=tt; });
   if (FLAGS_resize_grid)
     if (auto tt = dynamic_cast<MyTerminalTab*>(t))
       W->SetResizeIncrements(tt->terminal->style.font->FixedWidth(),
@@ -495,7 +496,7 @@ void MyWindowStart(Window *W) {
 #ifndef WIN32
   binds->Add('n',       Key::Modifier::Cmd, Bind::CB(bind(&Application::CreateNewWindow, app)));
 #endif                  
-  binds->Add('t',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->AddTerminalTab()->UseDefaultTerminalController(); })));
+  binds->Add('t',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->AddTerminalTab(0)->UseDefaultTerminalController(); })));
   binds->Add('w',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->CloseActiveTab();      app->scheduler.Wakeup(W); })));
   binds->Add(']',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->tabs.SelectNextTab();  app->scheduler.Wakeup(W); })));
   binds->Add('[',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->tabs.SelectPrevTab();  app->scheduler.Wakeup(W); })));
