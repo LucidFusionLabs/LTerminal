@@ -36,6 +36,7 @@ struct TerminalTabInterface : public Dialog {
   virtual void UpdateTargetFPS() = 0;
   virtual MouseController *GetMouseTarget() = 0;
   virtual KeyboardController *GetKeyboardTarget() = 0;
+  virtual Box GetLastDrawBox() = 0;
   virtual void DrawBox(GraphicsDevice*, Box draw_box, bool check_resized) = 0;
   virtual void TakeFocus() { root->active_textbox = GetKeyboardTarget();     root->active_controller = GetMouseTarget(); }
   virtual void LoseFocus() { root->active_textbox = root->default_textbox(); root->active_controller = root->default_controller(); }
@@ -50,6 +51,7 @@ struct TerminalTabInterface : public Dialog {
   }
 
   virtual int PrepareEffects(Box *draw_box, int downscale_effects, int extra_height=0) {
+    if (root->gd->attached_framebuffer) return 0;
     if (!root->animating) { root->gd->DrawMode(DrawMode::_2D); return 0; }
     if (Effects() && downscale_effects > 1) {
       root->gd->RestoreViewport(DrawMode::_2D);
@@ -673,7 +675,8 @@ template <class TerminalType> struct TerminalTabT : public TerminalTabInterface 
   virtual void ScrollDown() { terminal->ScrollDown(); }
   virtual MouseController    *GetMouseTarget()    { return &terminal->mouse; }
   virtual KeyboardController *GetKeyboardTarget() { return terminal; }
-
+  virtual Box                 GetLastDrawBox()    { return Box(terminal->line_fb.w, terminal->term_height * terminal->style.font->Height()); }
+  
   void ChangeController(unique_ptr<Terminal::Controller> new_controller) {
     if (auto ic = dynamic_cast<InteractiveTerminalController*>(controller.get())) ic->done = true;
     controller.swap(last_controller);

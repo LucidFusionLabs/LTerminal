@@ -744,23 +744,23 @@ struct MyTerminalMenus {
   }
 
   void ShowSessionsMenu() {
-    int icon_pf = Pixel::RGB24;
+    Box iconb(128, 128);
+    int icon_pf = Pixel::RGB24, count = 0;
     GraphicsContext gc(app->focused->gd);
-    Box b(app->focused->width, app->focused->height), iconb(128, 128);
-    icon_fb.Resize(b.w, b.h, FrameBuffer::Flag::CreateGL | FrameBuffer::Flag::CreateTexture);
-    unique_ptr<VideoResamplerInterface> resampler(CreateVideoResampler());
-    resampler->Open(b.w, b.h, Texture::preferred_pf, iconb.w, iconb.h, icon_pf);
-
-    int count = 0;
     vector<TableItem> section;
+
     auto tw = GetActiveWindow();
     for (auto t : tw->tabs.tabs) {
+      Box b(t->GetLastDrawBox().Dimension());
+      icon_fb.Resize(b.w, b.h, FrameBuffer::Flag::CreateGL | FrameBuffer::Flag::CreateTexture);
       Texture screen_tex, icon_tex;
       gc.gd->Clear();
       t->DrawBox(gc.gd, b, false);
-      gc.gd->ScreenshotBox(&screen_tex, b, 0);
+      gc.gd->ScreenshotBox(&screen_tex, b, Texture::Flag::FlipY);
       icon_tex.Resize(iconb.w, iconb.h, icon_pf, Texture::Flag::CreateBuf);
-      resampler->Resample(screen_tex.buf, screen_tex.LineSize(), icon_tex.buf, icon_tex.LineSize(), 0, true);
+      unique_ptr<VideoResamplerInterface> resampler(CreateVideoResampler());
+      resampler->Open(b.w, b.h, Texture::preferred_pf, iconb.w, iconb.h, icon_pf);
+      resampler->Resample(screen_tex.buf, screen_tex.LineSize(), icon_tex.buf, icon_tex.LineSize(), 0);
 
       if (count == sessions_icon.size()) sessions_icon.push_back(app->LoadSystemImage(""));
       CHECK_LT(count, sessions_icon.size());
@@ -825,7 +825,7 @@ struct MyTerminalMenus {
   }
 
   void ShowInterfaceSettings() {
-    auto t = GetActiveTerminalTab();
+    auto t = GetActiveTab();
     if (t) t->ChangeShader("none");
     if (!t || !t->connected_host_id || interfacesettings_nav->shown) return;
     MyHostModel host_model(&host_db, &credential_db, &settings_db, t->connected_host_id);
@@ -924,7 +924,7 @@ struct MyTerminalMenus {
     }
     MenuConnect(host, SSHClient::FingerprintCB(), [=](int fpt, const string &fp) mutable {
       host.SetFingerprint(fpt, fp);           
-      GetActiveTerminalTab()->connected_host_id = host.SaveNew(&host_db, &credential_db, &settings_db);
+      GetActiveTab()->connected_host_id = host.SaveNew(&host_db, &credential_db, &settings_db);
     });
   }
 

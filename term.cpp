@@ -114,8 +114,7 @@ struct MyTerminalTab : public TerminalTab {
     int effects = PrepareEffects(&draw_box, my_app->downscale_effects, terminal->extra_height);
     if (check_resized) terminal->CheckResized(orig_draw_box);
     gd->DisableBlend();
-    terminal->Draw(draw_box, effects > 1 ? Terminal::DrawFlag::DrawCursor : Terminal::DrawFlag::Default,
-                   effects ? activeshader : NULL);
+    terminal->Draw(draw_box, Terminal::DrawFlag::DrawCursor, effects ? activeshader : NULL);
     if (effects) gd->UseShader(0);
   }
 
@@ -307,6 +306,7 @@ struct MyRFBTab : public TerminalTabInterface {
   TerminalWindowInterface<TerminalTabInterface> *parent;
   FrameBuffer fb;
   RFBTerminalController *rfb;
+  Box last_draw_box;
 
   MyRFBTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P, int host_id,
            RFBClient::Params a, string pw, Callback scb) :
@@ -322,6 +322,8 @@ struct MyRFBTab : public TerminalTabInterface {
 
   MouseController    *GetMouseTarget()    { return rfb; }
   KeyboardController *GetKeyboardTarget() { return rfb; }
+  Box                 GetLastDrawBox()    { return last_draw_box; }
+
   bool Animating() const { return (rfb && (rfb->scroll_count_x || rfb->scroll_count_y)) || Effects(); }
   void UpdateTargetFPS() { parent->UpdateTargetFPS(); }
   void SetFontSize(int) {}
@@ -349,7 +351,7 @@ struct MyRFBTab : public TerminalTabInterface {
                                  XY_or_Y(scale, draw_box.w), XY_or_Y(scale, draw_box.h));
     }
     fb.tex.Bind();
-    gc.DrawTexturedBox(draw_box, tex, 1);
+    gc.DrawTexturedBox((last_draw_box = draw_box), tex, 1);
     if (effects) gc.gd->UseShader(0);
   }
 
@@ -484,7 +486,7 @@ void MyWindowStart(Window *W) {
 
 #ifndef LFL_TERMINAL_MENUS
   TerminalTabInterface *t = nullptr;
-  ONCE_ELSE({ if (FLAGS_vnc.size()) t = tw->AddRFBTab(RFBClient::Params{FLAGS_vnc}, "");
+  ONCE_ELSE({ if (FLAGS_vnc.size()) t = tw->AddRFBTab(0, RFBClient::Params{FLAGS_vnc}, "");
               else { auto tt = tw->AddTerminalTab(0); tt->UseInitialTerminalController(); t=tt; }
               },   { auto tt = tw->AddTerminalTab(0); tt->UseDefaultTerminalController(); t=tt; });
   if (FLAGS_resize_grid)
@@ -531,7 +533,10 @@ extern "C" void MyAppCreate(int argc, const char* const* argv) {
                        Application::GetSetting("crash_report_name"),
                        Application::GetSetting("crash_report_email"));
   }
-  if (atoi(Application::GetSetting("write_log_file"))) FLAGS_logfile = "\x01";
+  if (atoi(Application::GetSetting("write_log_file"))) {
+    FLAGS_logfile = "\x01";
+    FLAGS_loglevel = 7;
+  }
 #endif
   FLAGS_enable_video = FLAGS_enable_input = 1;
   app = new Application(argc, argv);

@@ -24,16 +24,16 @@ struct MyAppState {
   
 struct MyTerminalWindow : public TerminalWindowInterface<TerminalTabInterface> {
   MyTerminalWindow(Window *W) : TerminalWindowInterface(W) {}
-  MyTerminalTab *AddTerminalTab() { return 0; }
-  TerminalTabInterface *AddRFBTab(RFBClient::Params p, string, Callback savehost_cb=Callback()) { return 0; }
+  MyTerminalTab *AddTerminalTab(int host_id) { return 0; }
+  TerminalTabInterface *AddRFBTab(int host_id, RFBClient::Params p, string, Callback savehost_cb=Callback()) { return 0; }
   void CloseActiveTab() {}
 };
 
 struct MyTerminalTab : public TerminalTab {
   TerminalWindowInterface<TerminalTabInterface> *parent;
   virtual ~MyTerminalTab() { root->DelGUI(terminal); }
-  MyTerminalTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P) :
-    TerminalTab(W, W->AddGUI(make_unique<Terminal>(nullptr, W, W->default_font, point(80,25)))), parent(P) {}
+  MyTerminalTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P, int host_id) :
+    TerminalTab(W, W->AddGUI(make_unique<Terminal>(nullptr, W, W->default_font, point(80,25))), host_id), parent(P) {}
 
   void ChangeColors(const string &colors_name, bool redraw=true) {}
   void UseShellTerminalController(const string &m) {}
