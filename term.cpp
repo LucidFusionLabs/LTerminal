@@ -114,8 +114,9 @@ struct MyTerminalTab : public TerminalTab {
     int effects = PrepareEffects(&draw_box, my_app->downscale_effects, terminal->extra_height);
     if (check_resized) terminal->CheckResized(orig_draw_box);
     gd->DisableBlend();
-    terminal->Draw(draw_box, Terminal::DrawFlag::DrawCursor, effects ? activeshader : NULL);
-    if (effects) gd->UseShader(0);
+    terminal->Draw(draw_box, effects ? 0 : Terminal::DrawFlag::DrawCursor, effects ? activeshader : NULL);
+    if (effects) { gd->UseShader(0); terminal->DrawCursor((orig_draw_box.Position() + terminal->GetCursorPosition()), activeshader); }
+    if (terminal->scrolled_lines) DrawScrollBar(draw_box);
   }
 
   void UpdateTargetFPS() { parent->UpdateTargetFPS(); }

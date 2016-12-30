@@ -654,9 +654,13 @@ struct ShellTerminalController : public InteractiveTerminalController {
 
 template <class TerminalType> struct TerminalTabT : public TerminalTabInterface {
   TerminalType *terminal;
+  GUI scrollbar_gui;
+  Widget::Slider scrollbar;
   unique_ptr<FlatFile> record;
 
-  TerminalTabT(Window *W, TerminalType *t, int host_id) : TerminalTabInterface(W, 1.0, 1.0, 0, host_id), terminal(t) {
+  TerminalTabT(Window *W, TerminalType *t, int host_id) :
+    TerminalTabInterface(W, 1.0, 1.0, 0, host_id), terminal(t), scrollbar_gui(W), scrollbar(&scrollbar_gui) {
+    scrollbar.arrows = false;
 #ifdef FUZZ_DEBUG
     for (int i=0; i<256; i++) {
       INFO("fuzz i = ", i);
@@ -702,6 +706,16 @@ template <class TerminalType> struct TerminalTabT : public TerminalTabInterface 
 #endif
     }
     return s.len;
+  }
+
+  void DrawScrollBar(const Box &draw_box) {
+    if (Changed(&scrollbar_gui.box, draw_box)) {
+      scrollbar_gui.ClearGUI();
+      scrollbar.LayoutAttached(draw_box.RelativeCoordinatesBox()); 
+    }
+    scrollbar.scrolled = 1.0 - terminal->v_scrolled;
+    scrollbar.Update(true);
+    scrollbar_gui.Draw();
   }
 };
 typedef TerminalTabT<Terminal> TerminalTab;

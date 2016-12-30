@@ -745,7 +745,7 @@ struct MyTerminalMenus {
 
   void ShowSessionsMenu() {
     Box iconb(128, 128);
-    int icon_pf = Pixel::RGB24, count = 0;
+    int icon_pf = Pixel::RGB24, count = 0, selected_row = -1;
     GraphicsContext gc(app->focused->gd);
     vector<TableItem> section;
 
@@ -762,6 +762,7 @@ struct MyTerminalMenus {
       resampler->Open(b.w, b.h, Texture::preferred_pf, iconb.w, iconb.h, icon_pf);
       resampler->Resample(screen_tex.buf, screen_tex.LineSize(), icon_tex.buf, icon_tex.LineSize(), 0);
 
+      if (t == tw->tabs.top) selected_row = count;
       if (count == sessions_icon.size()) sessions_icon.push_back(app->LoadSystemImage(""));
       CHECK_LT(count, sessions_icon.size());
       int icon = sessions_icon[count++];
@@ -775,6 +776,7 @@ struct MyTerminalMenus {
     icon_fb.Release();
     sessions.view->BeginUpdates();
     sessions.view->ReplaceSection(0, "", 0, 0, section);
+    sessions.view->SelectRow(0, selected_row);
     sessions.view->EndUpdates();
 
     hosts_nav->PopAll();
