@@ -587,7 +587,6 @@ struct MyTerminalMenus {
       { "\U000023EC", "",       bind(&MyTerminalMenus::PressKey,         this, "pgdown") }, 
       { "\U000023EA", "",       bind(&MyTerminalMenus::PressKey,         this, "home") },
       { "\U000023E9", "",       bind(&MyTerminalMenus::PressKey,         this, "end") }, 
-      { "\U00002328", "",       bind(&Application::ToggleTouchKeyboard, app) },
       { "\U000025F0", "",       bind(&MyTerminalMenus::ShowSessionsMenu, this) },
     });
 
@@ -783,6 +782,7 @@ struct MyTerminalMenus {
     hosts_nav->PushTableView(sessions.view.get());
     hosts_nav->Show(true);
     app->ShowSystemStatusBar(true);
+    app->CloseTouchKeyboard();
     keyboard_toolbar->Show(false);
   }
 
@@ -838,8 +838,9 @@ struct MyTerminalMenus {
       terminalinterfacesettings.UpdateViewFromModel(host_model.settings);
       interfacesettings_nav->PushTableView(terminalinterfacesettings.view.get());
     }
-    app->ShowSystemStatusBar(true);
     interfacesettings_nav->Show(true);
+    app->ShowSystemStatusBar(true);
+    app->CloseTouchKeyboard();
     keyboard_toolbar->Show(false);
   }
 

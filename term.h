@@ -123,6 +123,7 @@ struct InteractiveTerminalController : public TerminalControllerInterface {
   UnbackedTextBox cmd;
   string buf, prompt="> ", header;
   bool blocking=0, done=0;
+  char enter_char = '\r';
   unordered_map<string, Callback> escapes = {
     { "OA", bind([&] { cmd.HistUp();   WriteText(StrCat("\x0d", prompt, String::ToUTF8(cmd.cmd_line.Text16()), "\x1b[K")); }) },
     { "OB", bind([&] { cmd.HistDown(); WriteText(StrCat("\x0d", prompt, String::ToUTF8(cmd.cmd_line.Text16()), "\x1b[K")); }) },
@@ -154,9 +155,9 @@ struct InteractiveTerminalController : public TerminalControllerInterface {
     } else CHECK_EQ(1, l);
 
     bool cursor_last = cmd.cursor.i.x == cmd.cmd_line.Size();
-    if      (*b == '\r') { if (1) { cmd.Enter(); WriteText("\r\n" + ((!done && !blocking) ? prompt : "")); } }
-    else if (*b == 0x7f) { if (cmd.cursor.i.x) { WriteText((cursor_last ? "\b \b" : "\x08\x1b[1P"));        cmd.Erase();   } }
-    else                 { if (1)              { WriteText((cursor_last ? "" : "\x1b[1@") + string(1, *b)); cmd.Input(*b); } }
+    if      (*b == enter_char) { if (1) { cmd.Enter(); WriteText("\r\n" + ((!done && !blocking) ? prompt : "")); } }
+    else if (*b == 0x7f)       { if (cmd.cursor.i.x) { WriteText((cursor_last ? "\b \b" : "\x08\x1b[1P"));        cmd.Erase();   } }
+    else                       { if (1)              { WriteText((cursor_last ? "" : "\x1b[1@") + string(1, *b)); cmd.Input(*b); } }
     return l;
   }
 
@@ -649,6 +650,15 @@ struct ShellTerminalController : public InteractiveTerminalController {
     int ind = 0;
     for (; ind < arg.size() && arg[ind][0] == '-'; ind += 2) if (arg[ind] == "-l") *login = arg[ind+1];
     if (ind < arg.size()) *host = arg[ind];
+  }
+};
+
+struct BufferedShellTerminalController : public ShellTerminalController {
+  using ShellTerminalController::ShellTerminalController;
+  int Write(const StringPiece &text) {
+    for (const char *b = text.data(); !text.Done(b); ++b)
+      ShellTerminalController::Write(StringPiece(b, 1));
+    return text.size();
   }
 };
 
