@@ -587,8 +587,9 @@ struct ShellTerminalController : public InteractiveTerminalController {
 
   Socket Open(TextArea *ta) override {
     if (auto t = dynamic_cast<Terminal*>(ta)) {
-      t->SetScrollRegion(1, t->term_height);
-      if (discon_msg.size()) ta->Write(discon_msg);
+      t->last_fb = 0;
+      t->SetScrollRegion(1, t->term_height, true);
+      if (discon_msg.size()) t->Write(discon_msg);
       if (reconnect_cb) {
         Callback r_cb;
         swap(r_cb, reconnect_cb);

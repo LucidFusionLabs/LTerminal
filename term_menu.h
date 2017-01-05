@@ -778,12 +778,13 @@ struct MyTerminalMenus {
     sessions.view->SelectRow(0, selected_row);
     sessions.view->EndUpdates();
 
+    app->SetAppFrameEnabled(false);
+    app->CloseTouchKeyboard();
+    keyboard_toolbar->Show(false);
     hosts_nav->PopAll();
     hosts_nav->PushTableView(sessions.view.get());
     hosts_nav->Show(true);
     app->ShowSystemStatusBar(true);
-    app->CloseTouchKeyboard();
-    keyboard_toolbar->Show(false);
   }
 
   void ShowNewSessionMenu(const string &title, bool back) {
@@ -798,7 +799,7 @@ struct MyTerminalMenus {
     app->ShowSystemStatusBar(false);
     hosts_nav->Show(false);
     keyboard_toolbar->Show(true);
-    app->OpenTouchKeyboard();
+    app->OpenTouchKeyboard(true);
     app->scheduler.Wakeup(app->focused);
   }
 
@@ -822,7 +823,7 @@ struct MyTerminalMenus {
     keyboard_toolbar->Show(true);
     interfacesettings_nav->PopAll();
     interfacesettings_nav->Show(false);
-    app->OpenTouchKeyboard();
+    app->OpenTouchKeyboard(true);
     app->scheduler.Wakeup(app->focused);
   }
 
@@ -838,10 +839,11 @@ struct MyTerminalMenus {
       terminalinterfacesettings.UpdateViewFromModel(host_model.settings);
       interfacesettings_nav->PushTableView(terminalinterfacesettings.view.get());
     }
-    interfacesettings_nav->Show(true);
-    app->ShowSystemStatusBar(true);
+    app->SetAppFrameEnabled(false);
     app->CloseTouchKeyboard();
     keyboard_toolbar->Show(false);
+    interfacesettings_nav->Show(true);
+    app->ShowSystemStatusBar(true);
   }
 
   void ApplyTerminalSettings(const MyHostSettingsModel &settings) {
@@ -952,7 +954,7 @@ struct MyTerminalMenus {
     keyboard_toolbar->Show(true);
     app->ShowSystemStatusBar(false);
     app->CloseTouchKeyboardAfterReturn(false);
-    app->OpenTouchKeyboard();
+    app->OpenTouchKeyboard(true);
   }
 
   shared_ptr<SSHClient::Identity> LoadIdentity(const MyCredentialModel &cred) {
