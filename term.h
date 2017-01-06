@@ -431,13 +431,11 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
   string password;
   Callback savehost_cb;
   SystemAlertView *passphrase_alert=0;
-  float scroll_c = 1, scroll_vel_x = 0, scroll_vel_y = 0;
-  int inc_x=128, inc_y=128, scroll_frames=30, scroll_count_x=0, scroll_count_y=0;
+  bool zoom_x_dir=0, zoom_y_dir;
+  Box zoom_start_viewport;
+  v2 zoom_last;
   RFBTerminalController(TerminalTabInterface *p, RFBClient::Params a, const Callback &ccb, FrameBuffer *f) :
-    NetworkTerminalController(p, a.hostport, ccb), params(move(a)), fb(f) {
-    float v = 1;
-    for (int i=1; i<scroll_frames; ++i) scroll_c += (v *= .95);
-  }
+    NetworkTerminalController(p, a.hostport, ccb), params(move(a)), fb(f) {}
 
   template <class X> X MouseToFramebufferCoords(const X &p) const {
     return X(viewport.x +        float(p.x)                   / parent->root->width   * viewport.w,
@@ -471,12 +469,19 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
     return 1;
   }
 
+  bool AddViewportOffset(const point &d) {
+    bool ret = false;
+    viewport += d;
+    if      (viewport.x < 0)                           { ret = true; viewport.x = 0; }
+    else if (viewport.x + viewport.w > fb->tex.width)  { ret = true; viewport.x = fb->tex.width - viewport.w; }
+    if      (viewport.y < 0)                           { ret = true; viewport.y = 0; }
+    else if (viewport.y + viewport.h > fb->tex.height) { ret = true; viewport.y = fb->tex.height - viewport.h; }
+    return ret;
+  }
+
   int SendMouseEvent(InputEvent::Id id, const point &p, const point &d, int down, int flag) override {
     uint8_t buttons = app->input->MouseButton1Down() | app->input->MouseButton2Down()<<2;
-    if (down && id == Mouse::Event::Motion) {
-      if (d.x) { scroll_vel_x += d.x/scroll_c * -1; scroll_count_x = 1; }
-      if (d.y) { scroll_vel_y += d.y/scroll_c;      scroll_count_y = 1; }
-    }
+    if (down && id == Mouse::Event::Motion) AddViewportOffset(point(-d.x, d.y));
     if (conn && conn->state == Connection::Connected) {
       point fp = MouseToFramebufferCoords(p);
       RFBClient::SendPointerEvent(conn, fp.x, fp.y, buttons);
@@ -484,21 +489,25 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
     return 1;
   }
 
-  int SendWheelEvent(InputEvent::Id id, const v2 &p, const v2 &d) override {
-    if (id == Mouse::Event::Wheel) {
-      if      (p.x >  1e-6) { scroll_vel_x -= inc_x/scroll_c; scroll_count_x = 1; }
-      else if (p.x < -1e-6) { scroll_vel_x += inc_x/scroll_c; scroll_count_x = 1; }
-      if      (p.y >  1e-6) { scroll_vel_y += inc_x/scroll_c; scroll_count_y = 1; }
-      else if (p.y < -1e-6) { scroll_vel_y -= inc_x/scroll_c; scroll_count_y = 1; }
-      parent->UpdateTargetFPS();
-    } else if (id == Mouse::Event::Zoom) {
-      v2 fp = MouseToFramebufferCoords(p);
-      viewport.w = Clamp<float>(viewport.w * d.x, inc_x*2, fb->tex.width);
-      viewport.h = Clamp<float>(viewport.h * d.y, inc_y*2, fb->tex.height);
-      viewport.x = max(0.0f, fp.x - viewport.w/2);
-      viewport.y = max(0.0f, fp.y - viewport.h/2);
-      viewport.w = min(viewport.w, fb->tex.width  - viewport.x);
-      viewport.h = min(viewport.h, fb->tex.height - viewport.y);
+  int SendWheelEvent(InputEvent::Id id, const v2 &p, const v2 &d, bool begin) override {
+    if (id == Mouse::Event::Wheel) AddViewportOffset(point(-p.x, p.y));
+    else if (id == Mouse::Event::Zoom) {
+      if (begin) {
+        zoom_x_dir = d.x > 1;
+        zoom_y_dir = d.y > 1;
+        zoom_start_viewport = viewport;
+      } else {
+        if (zoom_x_dir) { if (d.x < zoom_last.x) return 0; }
+        else            { if (d.x > zoom_last.x) return 0; }
+        if (zoom_y_dir) { if (d.y < zoom_last.y) return 0; }
+        else            { if (d.y > zoom_last.y) return 0; }
+      }
+      viewport.w = Clamp<float>(zoom_start_viewport.w * d.x, 256, fb->tex.width);
+      viewport.h = Clamp<float>(zoom_start_viewport.h * d.y, 256, fb->tex.height);
+      viewport.x = p.x - viewport.w/2;
+      viewport.y = p.y - viewport.h/2;
+      zoom_last = d;
+      AddViewportOffset(point());
     }
     return 1;
   }
@@ -533,27 +542,6 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
     fb->gd->CopyTexSubImage2D(fb->tex.GLTexType(), 0, b.x, fb->tex.height - b.y - b.h,
                               copy_from.x, copy_from.y, b.w, b.h);
     fb->Release();
-  }
-
-  void Animate() {
-    bool update_fps = 0;
-    if (scroll_count_x) {
-      viewport.x += scroll_vel_x;
-      scroll_vel_x *= .95;
-      if      (Max(&viewport.x, 0))                          scroll_count_x = 0;
-      else if (Min(&viewport.x, fb->tex.width - viewport.w)) scroll_count_x = 0;
-      else if (++scroll_count_x >= scroll_frames)            scroll_count_x = 0;
-      if (!scroll_count_x) update_fps = true;
-    }
-    if (scroll_count_y) {
-      viewport.y += scroll_vel_y;
-      scroll_vel_y *= .95;
-      if      (Max(&viewport.y, 0))                           scroll_count_y = 0;
-      else if (Min(&viewport.y, fb->tex.height - viewport.h)) scroll_count_y = 0;
-      else if (++scroll_count_y >= scroll_frames)             scroll_count_y = 0;
-      if (!scroll_count_y) update_fps = true;
-    }
-    if (update_fps) parent->UpdateTargetFPS();
   }
 };
 #endif // LFL_RFB

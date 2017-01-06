@@ -325,7 +325,6 @@ struct MyRFBTab : public TerminalTabInterface {
   KeyboardController *GetKeyboardTarget() { return rfb; }
   Box                 GetLastDrawBox()    { return last_draw_box; }
 
-  bool Animating() const { return (rfb && (rfb->scroll_count_x || rfb->scroll_count_y)) || Effects(); }
   void UpdateTargetFPS() { parent->UpdateTargetFPS(); }
   void SetFontSize(int) {}
   void ScrollDown() {}
@@ -335,7 +334,6 @@ struct MyRFBTab : public TerminalTabInterface {
   void DrawBox(GraphicsDevice *gd, Box draw_box, bool check_resized) {
     float tex[4];
     int effects = PrepareEffects(&draw_box, my_app->downscale_effects, 0);
-    if (rfb) rfb->Animate();
     Texture::Coordinates(tex, rfb ? rfb->viewport : Box(), fb.tex.width, fb.tex.height);
     GraphicsContext gc(gd);
     gc.gd->DisableBlend();
