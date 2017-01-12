@@ -168,4 +168,4 @@ Size (px): 512 × 512
 Development Credits
 -------------------
 
-Marc Uscilka
+Marc Powell

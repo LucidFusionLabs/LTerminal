@@ -777,12 +777,25 @@ struct MyTerminalMenus {
     sessions.view->ReplaceSection(0, "", 0, 0, section);
     sessions.view->SelectRow(0, selected_row);
     sessions.view->EndUpdates();
+    LaunchSessionsMenu();
+  }
 
+  void LaunchSessionsMenu() {
     app->SetAppFrameEnabled(false);
     app->CloseTouchKeyboard();
     keyboard_toolbar->Show(false);
     hosts_nav->PopAll();
     hosts_nav->PushTableView(sessions.view.get());
+    hosts_nav->Show(true);
+    app->ShowSystemStatusBar(true);
+  }
+
+  void LaunchNewSessionMenu(const string &title, bool back) {
+    app->SetAppFrameEnabled(false);
+    app->CloseTouchKeyboard();
+    keyboard_toolbar->Show(false);
+    hosts_nav->PopAll();
+    ShowNewSessionMenu(title, back);
     hosts_nav->Show(true);
     app->ShowSystemStatusBar(true);
   }

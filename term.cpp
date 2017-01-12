@@ -452,11 +452,7 @@ void MyTerminalWindow::InitTab(TerminalTabInterface *t) {
 #ifdef LFL_TERMINAL_MENUS
   t->closed_cb = [=]() {
     t->deleted_cb();
-    if (!tabs.top) {
-      my_app->menus->keyboard_toolbar->Show(false);
-      my_app->menus->hosts.view->DelNavigationButton(HAlign::Left);
-      my_app->menus->hosts_nav->Show(true);
-    }
+    if (!tabs.top) my_app->menus->LaunchNewSessionMenu("LTerminal", false);
   };
 #else
   t->closed_cb = [](){ LFAppShutdown(); };

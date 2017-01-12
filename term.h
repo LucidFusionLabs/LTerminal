@@ -444,6 +444,7 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
 
   Socket Open(TextArea*) override {
     INFO("Connecting to vnc://", params.hostport);
+    params.background_services = background_services;
     app->RunInNetworkThread([=](){
       success_cb = bind(&RFBTerminalController::RFBLoginCB, this);
       conn = RFBClient::Open(params, bind(&RFBTerminalController::LoadPasswordCB, this, _1), 
