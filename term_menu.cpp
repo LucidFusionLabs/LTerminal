@@ -123,7 +123,7 @@ void MyKeysViewController::UpdateViewFromModel() {
 MyAboutViewController::MyAboutViewController(MyTerminalMenus *m) :
   view(make_unique<SystemTableView>("About", "", vector<TableItem>{})) {
   view->BeginUpdates();
-  view->ReplaceSection(0, "LTerminal", m->logo_icon, 0, TableItemVec{
+  view->ReplaceSection(0, "LTerminal", m->logo_image, 0, TableItemVec{
     TableItem("Version",                 TableItem::None,    "", app->GetVersion(), 0, 0, 0),
     TableItem("Credits",                 TableItem::Command, "", ">", 0, 0, 0, [=](){ if (!m->credits) m->credits = make_unique<SystemTextView>("Credits", Asset::FileContents("credits.txt")); m->hosts_nav->PushTextView(m->credits.get()); }),
     TableItem("LTerminal Web Page",      TableItem::Command, "", ">", 0, 0, 0, bind(&Application::OpenSystemBrowser, app, "http://www.lucidfusionlabs.com/terminal/")),
