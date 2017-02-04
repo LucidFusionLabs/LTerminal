@@ -487,6 +487,7 @@ struct MyTerminalMenus {
   vector<int> sessions_icon;
   FrameBuffer icon_fb;
   string pw_default = "\x01""Ask each time", pw_empty = "lfl_default";
+  PickerItem color_picker = PickerItem{ {{"VGA", "Solarized Dark", "Solarized Light"}}, {0} };
 
   unique_ptr<SystemNavigationView> hosts_nav, interfacesettings_nav;
   unique_ptr<SystemTextView>       credits;
@@ -513,8 +514,6 @@ struct MyTerminalMenus {
   MyHostsViewController            hosts, hostsfolder;
   MySessionsViewController         sessions;
   unique_ptr<SystemToolbarView>    keyboard_toolbar;
-
-  PickerItem color_picker = PickerItem{ {{"VGA", "Solarized Dark", "Solarized Light"}}, {0} };
 
   unordered_map<string, Callback> mobile_key_cmd = {
     { "left",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->CursorLeft();  if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
@@ -745,7 +744,7 @@ struct MyTerminalMenus {
 
   void ShowSessionsMenu() {
     Box iconb(128, 128);
-    int icon_pf = Pixel::RGB24, count = 0, selected_row = -1;
+    int icon_pf = Texture::updatesystemimage_pf, count = 0, selected_row = -1;
     GraphicsContext gc(app->focused->gd);
     vector<TableItem> section;
 
@@ -835,7 +834,6 @@ struct MyTerminalMenus {
   void HideInterfaceSettings() {
     app->ShowSystemStatusBar(false);
     keyboard_toolbar->Show(true);
-    interfacesettings_nav->PopAll();
     interfacesettings_nav->Show(false);
     app->OpenTouchKeyboard(true);
     app->scheduler.Wakeup(app->focused);
@@ -846,6 +844,7 @@ struct MyTerminalMenus {
     if (t) t->ChangeShader("none");
     if (!t || !t->connected_host_id || interfacesettings_nav->shown) return;
     MyHostModel host_model(&host_db, &credential_db, &settings_db, t->connected_host_id);
+    interfacesettings_nav->PopAll();
     if (host_model.protocol == LTerminal::Protocol_RFB) {
       rfbinterfacesettings.UpdateViewFromModel(host_model.settings);
       interfacesettings_nav->PushTableView(rfbinterfacesettings.view.get());

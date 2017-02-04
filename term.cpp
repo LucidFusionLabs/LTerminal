@@ -520,6 +520,10 @@ extern "C" void MyAppCreate(int argc, const char* const* argv) {
     StringPair("write_log_file",     "0"),
     StringPair("record_session",     "0"),
   });
+  if (atoi(Application::GetSetting("write_log_file"))) {
+    FLAGS_logfile = "\x01";
+    FLAGS_loglevel = 7;
+  }
 #endif
 #if defined(LFL_IOS) && !defined(LFL_IOS_SIM)
   if (atoi(Application::GetSetting("send_crash_reports"))) {
@@ -527,10 +531,6 @@ extern "C" void MyAppCreate(int argc, const char* const* argv) {
     InitCrashReporting("a594782b23094f22947179fb05892d64", // hockeyapp
                        Application::GetSetting("crash_report_name"),
                        Application::GetSetting("crash_report_email"));
-  }
-  if (atoi(Application::GetSetting("write_log_file"))) {
-    FLAGS_logfile = "\x01";
-    FLAGS_loglevel = 7;
   }
 #endif
   FLAGS_enable_video = FLAGS_enable_input = 1;
