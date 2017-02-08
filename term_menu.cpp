@@ -268,9 +268,10 @@ void MyTerminalInterfaceSettingsViewController::UpdateModelFromView(MyHostSettin
   string font="Font", fontchooser, colorchooser, beep="Beep", keyboard="Keyboard", toys;
   if (!view->GetSectionText(0, {&font, &fontchooser, &host_model->color_scheme, &colorchooser,
                             &beep, &keyboard, &toys})) return ERROR("parse runsettings1");
-  PickerItem *picker = view->GetPicker(0, 1);
-  host_model->font_name = picker->Picked(0);
-  host_model->font_size = atoi(picker->Picked(1));
+  if (PickerItem *picker = view->GetPicker(0, 1)) {
+    host_model->font_name = picker->Picked(0);
+    host_model->font_size = atoi(picker->Picked(1));
+  }
 }
 
 MyRFBInterfaceSettingsViewController::MyRFBInterfaceSettingsViewController(MyTerminalMenus *m) :
