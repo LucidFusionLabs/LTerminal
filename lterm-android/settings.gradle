@@ -1,4 +1,4 @@
 include 'LFLApp'
-include 'BaseGameUtils'
+include 'LFLBilling'
 project(':LFLApp').projectDir = new File('../../core/app/java/app')
-project(':BaseGameUtils').projectDir = new File('../../core/imports/java/BaseGameUtils')
+project(':LFLBilling').projectDir = new File('../../core/app/java/billing')

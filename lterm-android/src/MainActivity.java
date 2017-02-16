@@ -6,6 +6,8 @@ import com.crashlytics.android.ndk.CrashlyticsNdk;
 import io.fabric.sdk.android.Fabric;
 
 public class MainActivity extends com.lucidfusionlabs.app.MainActivity {
+    com.lucidfusionlabs.billing.PurchaseManager purchase_manager = null;
+
     public MainActivity() {
         preference_fragment = new com.lucidfusionlabs.app.PreferenceFragment(R.layout.preferences);
     }
@@ -22,5 +24,7 @@ public class MainActivity extends com.lucidfusionlabs.app.MainActivity {
                 if (crash_report_email.length() > 0) Crashlytics.setUserEmail(crash_report_email);
             }
         }
+
+        purchase_manager = new com.lucidfusionlabs.billing.PurchaseManager(this);
     }
 }

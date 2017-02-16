@@ -23,8 +23,8 @@ android {
     defaultConfig {
         minSdkVersion 19
         targetSdkVersion 23
-        versionCode 1004
-        versionName "1.04"
+        versionCode 1007
+        versionName "1.07"
     }
     signingConfigs {
         release {
@@ -60,6 +60,7 @@ android {
 
 dependencies {
     compile project(':LFLApp')
+    compile project(':LFLBilling')
     compile('com.crashlytics.sdk.android:crashlytics:2.6.6@aar') {
         transitive = true;
     }

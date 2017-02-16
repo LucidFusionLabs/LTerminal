@@ -676,4 +676,27 @@ MySessionsViewController::MySessionsViewController(MyTerminalMenus *m) :
                                       bind(&MyTerminalMenus::HideNewSessionMenu, m)));
 }
 
+MyUpgradeViewController::MyUpgradeViewController(MyTerminalMenus *m) :
+  view(make_unique<SystemTableView>("LTerminal Pro", "", GetSchema(m))) {
+  view->ReplaceSection(0, "Permanently unlock pro features with a one-time purchase:", m->logo_image, 0, TableItemVec(), Callback());
+}
+
+vector<TableItem> MyUpgradeViewController::GetSchema(MyTerminalMenus *m) {
+  vector<TableItem> ret{
+    TableItem("", TableItem::Separator),
+    TableItem{"Compression",      TableItem::Label, "Decrease latency and improve data usage with ZLib compression.", "", 0, m->check_icon},
+    TableItem("", TableItem::Separator),
+    TableItem{"Forwarding",       TableItem::Label, "Unlimited SSH Agent and TCP port forwarding", "", 0, m->check_icon},
+    TableItem("", TableItem::Separator),
+    TableItem{"Key Generation",   TableItem::Label, "Generate RSA, DSA, Elliptic Curve, and Ed25519 keys", "", 0, m->check_icon},
+    TableItem("", TableItem::Separator),
+    TableItem{"Local Encryption", TableItem::Label, "Protect your host database with SQLCipher encryption", "", 0, m->check_icon},
+    TableItem("", TableItem::Separator, "", "Restore Purchases"),
+    TableItem("Upgrade Now $4.99", TableItem::Button, "", "")
+  };
+  for (auto &i : ret) if (i.type == TableItem::Label) i.flags |= TableItem::Flag::SubText;
+  ret.back().flags |= TableItem::Flag::HighlightBackground;
+  return ret;
+}
+
 }; // namespace LFL

@@ -472,8 +472,14 @@ struct MySessionsViewController {
   void UpdateViewFromModel();
 };
 
+struct MyUpgradeViewController {
+  unique_ptr<SystemTableView> view;
+  MyUpgradeViewController(MyTerminalMenus*);
+  static vector<TableItem> GetSchema(MyTerminalMenus*);
+};
+
 struct MyTerminalMenus {
-  bool db_protected = false, db_opened = false;
+  bool pro_version = true, db_protected = false, db_opened = false;
   SQLite::Database db;
   MyHostDB host_db;
   MyCredentialDB credential_db;
@@ -483,7 +489,7 @@ struct MyTerminalMenus {
       audio_icon, eye_icon, recycle_icon, fingerprint_icon, info_icon, keyboard_icon, folder_icon, logo_image, logo_icon,
       plus_red_icon, plus_green_icon, vnc_icon, locked_icon, unlocked_icon, font_icon, toys_icon,
       arrowleft_icon, arrowright_icon, clipboard_upload_icon, clipboard_download_icon, keygen_icon,
-      user_icon, calendar_icon, none_icon;
+      user_icon, calendar_icon, check_icon, stacked_squares_icon, none_icon;
   vector<int> sessions_icon;
   FrameBuffer icon_fb;
   string pw_default = "\x01""Ask each time", pw_empty = "lfl_default";
@@ -491,6 +497,7 @@ struct MyTerminalMenus {
 
   unique_ptr<SystemNavigationView> hosts_nav, interfacesettings_nav;
   unique_ptr<SystemTextView>       credits;
+  unique_ptr<SystemPurchases>      purchases;
   MyKeyboardSettingsViewController keyboard;
   MyNewKeyViewController           newkey;
   MyGenKeyViewController           genkey;
@@ -513,7 +520,9 @@ struct MyTerminalMenus {
   MyUpdateHostViewController       updatehost;
   MyHostsViewController            hosts, hostsfolder;
   MySessionsViewController         sessions;
-  unique_ptr<SystemToolbarView>    keyboard_toolbar;
+  MyUpgradeViewController          upgrade;
+  unique_ptr<SystemToolbarView>    keyboard_toolbar, upgrade_toolbar;
+  unique_ptr<SystemAdvertisingView> advertising;
 
   unordered_map<string, Callback> mobile_key_cmd = {
     { "left",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->CursorLeft();  if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
@@ -564,6 +573,8 @@ struct MyTerminalMenus {
     keygen_icon            (CheckNotNull(app->LoadSystemImage("keygen"))),
     user_icon              (CheckNotNull(app->LoadSystemImage("user"))),
     calendar_icon          (CheckNotNull(app->LoadSystemImage("calendar"))),
+    check_icon             (CheckNotNull(app->LoadSystemImage("check"))),
+    stacked_squares_icon   (CheckNotNull(app->LoadSystemImage("stacked_squares_blue"))),
     none_icon              (CheckNotNull(app->LoadSystemImage("none"))),
     icon_fb(app->focused->gd),
     hosts_nav(make_unique<SystemNavigationView>()), interfacesettings_nav(make_unique<SystemNavigationView>()),
@@ -571,7 +582,7 @@ struct MyTerminalMenus {
     support(this), privacy(this), settings(this), terminalinterfacesettings(this), rfbinterfacesettings(this),
     sshfingerprint(this), sshportforward(this), sshsettings(this), telnetsettings(this), vncsettings(this),
     localshellsettings(this), protocol(this), newhost(this), updatehost(this), hosts(this, true),
-    hostsfolder(this, false), sessions(this) {
+    hostsfolder(this, false), sessions(this), upgrade(this) {
 
     keyboard_toolbar = make_unique<SystemToolbarView>(MenuItemVec{
       { "\U00002699", "",       bind(&MyTerminalMenus::ShowInterfaceSettings, this) },
@@ -587,8 +598,20 @@ struct MyTerminalMenus {
       { "\U000023EC", "",       bind(&MyTerminalMenus::PressKey,         this, "pgdown") }, 
       { "\U000023EA", "",       bind(&MyTerminalMenus::PressKey,         this, "home") },
       { "\U000023E9", "",       bind(&MyTerminalMenus::PressKey,         this, "end") }, 
-      { "\U000025F0", "",       bind(&MyTerminalMenus::ShowSessionsMenu, this) },
+      { /*"\U000025F0",*/ "","",bind(&MyTerminalMenus::ShowSessionsMenu, this), stacked_squares_icon },
     });
+
+#if defined(LFL_IOS) || defined(LFL_ANDROID)
+    INFO("Loading in-app purchases");
+    purchases = SystemPurchases::Create();
+    if (!(pro_version = purchases->HavePurchase("com.lucidfusionlabs.lterminal.paid", &pro_version))) {
+      if ((upgrade_toolbar = make_unique<SystemToolbarView>(MenuItemVec{
+        { "Upgrade to LTerminal Pro", "", [=](){ hosts_nav->PushTableView(upgrade.view.get()); } }
+      }))) hosts.view->AddToolbar(upgrade_toolbar.get());
+      if ((advertising = SystemAdvertisingView::Create(SystemAdvertisingView::Type::BANNER, VAlign::Bottom)))
+        advertising->Show(true);
+    }
+#endif
 
     if (UnlockEncryptedDatabase(pw_empty)) hosts.LoadUnlockedUI(&host_db);
     else if ((db_protected = true))        hosts.LoadLockedUI  (&host_db);

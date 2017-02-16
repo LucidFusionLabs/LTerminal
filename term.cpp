@@ -545,7 +545,7 @@ extern "C" void MyAppCreate(int argc, const char* const* argv) {
   app->window_init_cb(app->focused);
 #ifdef LFL_TERMINAL_MENUS
   my_app->downscale_effects = app->SetExtraScale(true);
-  app->SetTitleBar(false);
+  app->SetTitleBar(ANDROID);
   app->SetKeepScreenOn(false);
   app->SetAutoRotateOrientation(true);
 #endif

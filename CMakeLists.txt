@@ -6,6 +6,14 @@ else()
   set(CRASHREPORTING_LIB app_null_crashreporting)
 endif()
 
+if(LFL_MOBILE)
+  set(BILLING_LIB ${LFL_APP_BILLING})
+  set(ADVERTISING_LIB ${LFL_APP_ADVERTISING})
+else()
+  set(BILLING_LIB app_null_billing)
+  set(ADVERTISING_LIB app_null_advertising)
+endif()
+
 if(LFL_FLATBUFFERS)
   FLATBUFFERS_GENERATE_C_HEADERS(FLATBUFFERS_SRC term.fbs)
 endif()
@@ -56,7 +64,7 @@ lfl_add_package(lterm SOURCES term.cpp term.rc ${FLATBUFFERS_SRC_OUTPUTS}
                 app_null_audio app_null_camera app_null_matrix app_null_fft
                 app_simple_resampler app_simple_loader ${LFL_APP_CONVERT} app_libpng_png
                 app_null_jpeg app_null_gif app_null_ogg app_null_css ${LFL_APP_FONT}
-                ${LFL_APP_SSL} app_null_js app_null_tu
+                ${LFL_APP_SSL} app_null_js app_null_tu ${BILLING_LIB} ${ADVERTISING_LIB}
                 ${DB_LIB} ${CRYPTO_LIB} ${CRASHREPORTING_LIB} ${TERMINAL_TOOLKIT} ${LFL_APP_OS})
 set(LFL_APP_ASSET_FILES ${LFL_APP_ASSET_FILES} ${LFL_SOURCE_DIR}/core/app/shaders/shadertoy/*.frag
     ${LFL_SOURCE_DIR}/core/app/assets/VeraMoBd.*)
