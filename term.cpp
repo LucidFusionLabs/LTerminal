@@ -585,19 +585,19 @@ extern "C" int MyAppMain() {
 #endif
 
   my_app->image_browser = make_unique<Browser>();
-  my_app->info_alert = make_unique<SystemAlertView>(AlertItemVec{
+  my_app->info_alert = SystemAlertView::Create(AlertItemVec{
     { "style", "" }, { "", "" }, { "", "" }, { "Continue", "" } });
-  my_app->confirm_alert = make_unique<SystemAlertView>(AlertItemVec{
+  my_app->confirm_alert = SystemAlertView::Create(AlertItemVec{
     { "style", "" }, { "", "" }, { "Cancel", "" }, { "Continue", "" } });
-  my_app->passphrase_alert = make_unique<SystemAlertView>(AlertItemVec{
+  my_app->passphrase_alert = SystemAlertView::Create(AlertItemVec{
     { "style", "pwinput" }, { "Passphrase", "Passphrase" }, { "Cancel", "" }, { "Continue", "" } });
-  my_app->passphraseconfirm_alert = make_unique<SystemAlertView>(AlertItemVec{
+  my_app->passphraseconfirm_alert = SystemAlertView::Create(AlertItemVec{
     { "style", "pwinput" }, { "Passphrase", "Confirm Passphrase" }, { "Cancel", "" }, { "Continue", "" } });
-  my_app->passphrasefailed_alert = make_unique<SystemAlertView>(AlertItemVec{
+  my_app->passphrasefailed_alert = SystemAlertView::Create(AlertItemVec{
     { "style", "" }, { "Invalid passphrase", "Passphrase failed" }, { "", "" }, { "Continue", "" } });
 #ifndef LFL_TERMINAL_MENUS
   my_app->edit_menu = SystemMenuView::CreateEditMenu(vector<MenuItem>());
-  my_app->view_menu = make_unique<SystemMenuView>("View", MenuItemVec{
+  my_app->view_menu = SystemMenuView::Create("View", MenuItemVec{
 #ifdef __APPLE__
     MenuItem{ "=", "Zoom In" },
     MenuItem{ "-", "Zoom Out" },
@@ -611,7 +611,7 @@ extern "C" int MyAppMain() {
   if (FLAGS_term.empty()) FLAGS_term = BlankNull(getenv("TERM"));
 #endif
 
-  my_app->toys_menu = make_unique<SystemMenuView>("Toys", vector<MenuItem>{
+  my_app->toys_menu = SystemMenuView::Create("Toys", vector<MenuItem>{
     MenuItem{ "", "None",         [=](){ if (auto t = GetActiveTab()) t->ChangeShader("none");     } },
     MenuItem{ "", "Warper",       [=](){ if (auto t = GetActiveTab()) t->ChangeShader("warper");   } },
     MenuItem{ "", "Water",        [=](){ if (auto t = GetActiveTab()) t->ChangeShader("water");    } },

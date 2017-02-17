@@ -18,7 +18,7 @@
 
 namespace LFL {
 MyKeyboardSettingsViewController::MyKeyboardSettingsViewController(MyTerminalMenus *m) :
-  view(make_unique<SystemTableView>("Keyboard", "", vector<TableItem>{
+  view(SystemTableView::Create("Keyboard", "", vector<TableItem>{
     TableItem("Delete Sends ^H", TableItem::Toggle, "")
   })) {}
 
@@ -29,14 +29,14 @@ void MyKeyboardSettingsViewController::UpdateViewFromModel(const MyHostSettingsM
 }
 
 MyNewKeyViewController::MyNewKeyViewController(MyTerminalMenus *m) {
-  view = make_unique<SystemTableView>("New Key", "", vector<TableItem>{
+  view = SystemTableView::Create("New Key", "", vector<TableItem>{
     TableItem("Generate New Key",     TableItem::Command, "", "", 0, 0, 0, [=](){ m->hosts_nav->PushTableView(m->genkey.view.get()); }),
     TableItem("Paste from Clipboard", TableItem::Command, "", "", 0, 0, 0, bind(&MyTerminalMenus::PasteKey, m))
   });
 }
 
 MyGenKeyViewController::MyGenKeyViewController(MyTerminalMenus *m) {
-  view = make_unique<SystemTableView>("Generate New Key", "", vector<TableItem>{
+  view = SystemTableView::Create("Generate New Key", "", vector<TableItem>{
     TableItem("Name", TableItem::TextInput, "\x01Nickname"),
     TableItem("Passphrase", TableItem::PasswordInput, ""),
     TableItem("Type", TableItem::Separator, ""),
@@ -71,7 +71,7 @@ bool MyGenKeyViewController::UpdateModelFromView(MyGenKeyModel *model) const {
 }
 
 MyKeyInfoViewController::MyKeyInfoViewController(MyTerminalMenus *m) : menus(m),
-  view(make_unique<SystemTableView>("Info", "", TableItemVec{
+  view(SystemTableView::Create("Info", "", TableItemVec{
     TableItem("Name", TableItem::TextInput, "", "", 0, m->font_icon),
     TableItem("Type", TableItem::Label,     "", "", 0, m->key_icon),
     TableItem("Date", TableItem::Label,     "", "", 0, m->calendar_icon),
@@ -93,7 +93,7 @@ void MyKeyInfoViewController::UpdateViewFromModel(const MyCredentialModel &m) {
 }
 
 MyKeysViewController::MyKeysViewController(MyTerminalMenus *m, MyCredentialDB *mo) :
-  menus(m), model(mo), view(make_unique<SystemTableView>("Choose Key", "", vector<TableItem>{
+  menus(m), model(mo), view(SystemTableView::Create("Choose Key", "", vector<TableItem>{
     TableItem("None",                     TableItem::Command, "", ">", 0, m->none_icon,               0, bind(&MyTerminalMenus::ChooseKey, menus, 0)),
     TableItem("Paste Key From Clipboard", TableItem::Command, "", ">", 0, m->clipboard_download_icon, 0, bind(&MyTerminalMenus::PasteKey, m)),
     TableItem("Generate New Key",         TableItem::Command, "", ">", 0, m->keygen_icon,             0, [=](){ m->hosts_nav->PushTableView(m->genkey.view.get()); }),
@@ -114,18 +114,18 @@ void MyKeysViewController::UpdateViewFromModel() {
   }
   view->BeginUpdates();
   view->ReplaceSection(1, section.size() ? "Keys" : "", 0,
-                       section.size() ? (SystemTableView::EditButton | SystemTableView::EditableIfHasTag) : 0,
+                       section.size() ? (Table::Flag::EditButton | Table::Flag::EditableIfHasTag) : 0,
                        section);
   view->EndUpdates();
   view->changed = false;
 }
 
 MyAboutViewController::MyAboutViewController(MyTerminalMenus *m) :
-  view(make_unique<SystemTableView>("About", "", vector<TableItem>{})) {
+  view(SystemTableView::Create("About", "", vector<TableItem>{})) {
   view->BeginUpdates();
   view->ReplaceSection(0, "LTerminal", m->logo_image, 0, TableItemVec{
     TableItem("Version",                 TableItem::None,    "", app->GetVersion(), 0, 0, 0),
-    TableItem("Credits",                 TableItem::Command, "", ">", 0, 0, 0, [=](){ if (!m->credits) m->credits = make_unique<SystemTextView>("Credits", Asset::FileContents("credits.txt")); m->hosts_nav->PushTextView(m->credits.get()); }),
+    TableItem("Credits",                 TableItem::Command, "", ">", 0, 0, 0, [=](){ if (!m->credits) m->credits = SystemTextView::Create("Credits", Asset::FileContents("credits.txt")); m->hosts_nav->PushTextView(m->credits.get()); }),
     TableItem("LTerminal Web Page",      TableItem::Command, "", ">", 0, 0, 0, bind(&Application::OpenSystemBrowser, app, "http://www.lucidfusionlabs.com/terminal/")),
     TableItem("Lucid Fusion Labs, LLC.", TableItem::Command, "", ">", 0, 0, 0, bind(&Application::OpenSystemBrowser, app, "http://www.lucidfusionlabs.com/")),
   });
@@ -133,7 +133,7 @@ MyAboutViewController::MyAboutViewController(MyTerminalMenus *m) :
 }
 
 MySupportViewController::MySupportViewController(MyTerminalMenus *m) :
-  view(make_unique<SystemTableView>("Support", "", vector<TableItem>{
+  view(SystemTableView::Create("Support", "", vector<TableItem>{
     TableItem("Reference", TableItem::Separator, ""),
     TableItem("LTerminal", TableItem::Command, "", ">", 0, 0, 0, bind(&Application::OpenSystemBrowser, app, "http://www.lucidfusionlabs.com/terminal/")),
   })) {
@@ -146,7 +146,7 @@ MySupportViewController::MySupportViewController(MyTerminalMenus *m) :
 }
 
 MyPrivacyViewController::MyPrivacyViewController(MyTerminalMenus *m) :
-  view(make_unique<SystemTableView>("Privacy", "", vector<TableItem>{
+  view(SystemTableView::Create("Privacy", "", vector<TableItem>{
     TableItem("Send Crash Data and Statistics",      TableItem::Toggle,    "", "", 0, 0, 0),
     TableItem("Relaunch for changes to take effect", TableItem::Separator, ""),
     TableItem("Write log file",                      TableItem::Toggle,    ""),
@@ -181,7 +181,7 @@ MyPrivacyViewController::MyPrivacyViewController(MyTerminalMenus *m) :
 }
 
 MyAppSettingsViewController::MyAppSettingsViewController(MyTerminalMenus *m) :
-  view(make_unique<SystemTableView>("Global Settings", "", GetSchema(m))) {
+  view(SystemTableView::Create("Global Settings", "", GetSchema(m))) {
   view->show_cb = [=](){
     view->BeginUpdates();
     view->SetHidden(0, 0, !m->db_opened ||  m->db_protected); 
@@ -223,7 +223,7 @@ void MyAppSettingsViewController::UpdateModelFromView(MyAppSettingsModel *model)
 }
 
 MyTerminalInterfaceSettingsViewController::MyTerminalInterfaceSettingsViewController(MyTerminalMenus *m) :
-  view(make_unique<SystemTableView>("Interface Settings", "", GetSchema(m, m->interfacesettings_nav.get()))) {
+  view(SystemTableView::Create("Interface Settings", "", GetSchema(m, m->interfacesettings_nav.get()))) {
   view->AddNavigationButton(HAlign::Left,
                             TableItem("Back", TableItem::Button, "", "", 0, 0, 0,
                                       bind(&MyTerminalMenus::HideInterfaceSettings, m)));
@@ -275,7 +275,7 @@ void MyTerminalInterfaceSettingsViewController::UpdateModelFromView(MyHostSettin
 }
 
 MyRFBInterfaceSettingsViewController::MyRFBInterfaceSettingsViewController(MyTerminalMenus *m) :
-  view(make_unique<SystemTableView>("Interface Settings", "", GetSchema(m, m->interfacesettings_nav.get()))) {
+  view(SystemTableView::Create("Interface Settings", "", GetSchema(m, m->interfacesettings_nav.get()))) {
   view->AddNavigationButton(HAlign::Left,
                             TableItem("Back", TableItem::Button, "", "", 0, 0, 0,
                                       bind(&MyTerminalMenus::HideInterfaceSettings, m)));
@@ -297,7 +297,7 @@ void MyRFBInterfaceSettingsViewController::UpdateModelFromView(MyHostSettingsMod
 }
 
 MySSHFingerprintViewController::MySSHFingerprintViewController(MyTerminalMenus *m) :
-  view(make_unique<SystemTableView>("Fingerprint", "", TableItemVec{
+  view(SystemTableView::Create("Fingerprint", "", TableItemVec{
     TableItem("Type", TableItem::Label, ""), TableItem("MD5", TableItem::Label, ""),
     TableItem("SHA256", TableItem::Label, ""), TableItem("", TableItem::Separator, ""),
     TableItem("Clear", TableItem::Command, "", ">", 0, m->none_icon, 0, [=](){
@@ -315,7 +315,7 @@ void MySSHFingerprintViewController::UpdateViewFromModel(const MyHostModel &mode
 }
 
 MySSHPortForwardViewController::MySSHPortForwardViewController(MyTerminalMenus *m) :
-  view(make_unique<SystemTableView>("New Port Forward", "", TableItemVec{
+  view(SystemTableView::Create("New Port Forward", "", TableItemVec{
     TableItem("Type", TableItem::Selector, "Local,Remote", "", 0, 0, 0, Callback(), Callback(), {
               {"Local",  {{1,0,"\x01Port",0,0,0,0,"Local Port"},  {1,1,"\x01Hostname",0,0,0,0,"Target Host"}, {1,2,"\x01Port",0,0,0,0,"Target Port"} }},
               {"Remote", {{1,0,"\x01Port",0,0,0,0,"Remote Port"}, {1,1,"\x01Hostname",0,0,0,0,"Target Host"}, {1,2,"\x01Port",0,0,0,0,"Target Port"}  }}, }),
@@ -347,7 +347,7 @@ MySSHPortForwardViewController::MySSHPortForwardViewController(MyTerminalMenus *
 }
 
 MySSHSettingsViewController::MySSHSettingsViewController(MyTerminalMenus *m) : menus(m),
-  view(make_unique<SystemTableView>("SSH Settings", "", GetSchema(m))) {
+  view(SystemTableView::Create("SSH Settings", "", GetSchema(m))) {
   view->SetEditableSection(2, 1, [=](int, int){});
   view->SelectRow(-1, -1);
 }
@@ -381,7 +381,7 @@ void MySSHSettingsViewController::UpdateViewFromModel(const MyHostModel &model) 
     model.settings.compression ? "1" : "",
     model.settings.close_on_disconnect ? "1" : "",
     model.settings.startup_command.size() ? model.settings.startup_command : "\x01none" });
-  view->ReplaceSection(2, "Port Forwarding", 0, SystemTableView::EditButton, forwards);
+  view->ReplaceSection(2, "Port Forwarding", 0, Table::Flag::EditButton, forwards);
   view->EndUpdates();
 }
 
@@ -409,7 +409,7 @@ bool MySSHSettingsViewController::UpdateModelFromView(MyHostSettingsModel *model
 }
 
 MyTelnetSettingsViewController::MyTelnetSettingsViewController(MyTerminalMenus *m) : menus(m),
-  view(make_unique<SystemTableView>("Telnet Settings", "", GetSchema(m))) {
+  view(SystemTableView::Create("Telnet Settings", "", GetSchema(m))) {
   view->SelectRow(-1, -1);
 }
 
@@ -441,7 +441,7 @@ bool MyTelnetSettingsViewController::UpdateModelFromView(MyHostSettingsModel *mo
 }
 
 MyVNCSettingsViewController::MyVNCSettingsViewController(MyTerminalMenus *m) : menus(m),
-  view(make_unique<SystemTableView>("VNC Settings", "", GetSchema(m))) {
+  view(SystemTableView::Create("VNC Settings", "", GetSchema(m))) {
   view->SelectRow(-1, -1);
 }
 
@@ -467,7 +467,7 @@ bool MyVNCSettingsViewController::UpdateModelFromView(MyHostSettingsModel *model
 }
 
 MyLocalShellSettingsViewController::MyLocalShellSettingsViewController(MyTerminalMenus *m) : menus(m),
-  view(make_unique<SystemTableView>("Local Shell Settings", "", GetSchema(m))) {
+  view(SystemTableView::Create("Local Shell Settings", "", GetSchema(m))) {
   view->SelectRow(-1, -1);
 }
 
@@ -489,7 +489,7 @@ bool MyLocalShellSettingsViewController::UpdateModelFromView(MyHostSettingsModel
 }
 
 MyProtocolViewController::MyProtocolViewController(MyTerminalMenus *m) :
-  view(make_unique<SystemTableView>("Protocol", "", TableItemVec{
+  view(SystemTableView::Create("Protocol", "", TableItemVec{
   TableItem("SSH",         TableItem::Command, "", ">", 0, m->host_locked_icon, 0, bind(&MyTerminalMenus::ChooseProtocol, m, "SSH")),
   TableItem("Telnet",      TableItem::Command, "", ">", 0, m->host_icon,        0, bind(&MyTerminalMenus::ChooseProtocol, m, "Telnet")), 
   TableItem("VNC",         TableItem::Command, "", ">", 0, m->vnc_icon,         0, bind(&MyTerminalMenus::ChooseProtocol, m, "VNC")),
@@ -514,7 +514,7 @@ vector<TableItem> MyQuickConnectViewController::GetSchema(MyTerminalMenus *m) {
 }
 
 MyNewHostViewController::MyNewHostViewController(MyTerminalMenus *m) : menus(m),
-  view(make_unique<SystemTableView>("New Host", "", GetSchema(m))) { view->SelectRow(0, 1); }
+  view(SystemTableView::Create("New Host", "", GetSchema(m))) { view->SelectRow(0, 1); }
 
 vector<TableItem> MyNewHostViewController::GetSchema(MyTerminalMenus *m) {
   vector<TableItem> ret = MyQuickConnectViewController::GetSchema(m);
@@ -551,7 +551,7 @@ bool MyNewHostViewController::UpdateModelFromView(MyHostModel *model, MyCredenti
 }
 
 MyUpdateHostViewController::MyUpdateHostViewController(MyTerminalMenus *m) : menus(m),
-  view(make_unique<SystemTableView>("Update Host", "", GetSchema(m))) {}
+  view(SystemTableView::Create("Update Host", "", GetSchema(m))) {}
 
 vector<TableItem> MyUpdateHostViewController::GetSchema(MyTerminalMenus *m) {
   vector<TableItem> ret = MyNewHostViewController::GetSchema(m);
@@ -597,7 +597,7 @@ bool MyUpdateHostViewController::UpdateModelFromView(MyHostModel *model, MyCrede
 }
 
 MyHostsViewController::MyHostsViewController(MyTerminalMenus *m, bool me) :
-  menus(m), menu(me), view(make_unique<SystemTableView>("LTerminal", "indent", TableItemVec())) {}
+  menus(m), menu(me), view(SystemTableView::Create("LTerminal", "indent", TableItemVec())) {}
 
 vector<TableItem> MyHostsViewController::GetBaseSchema(MyTerminalMenus *m) { return TableItemVec{}; };
 void MyHostsViewController::LoadFolderUI(MyHostDB *model) {
@@ -657,16 +657,16 @@ void MyHostsViewController::UpdateViewFromModel(MyHostDB *model) {
                          bind(&MyTerminalMenus::HostInfo, menus, host.first));
   }
   view->BeginUpdates();
-  if (!menu) view->ReplaceSection(0, "", 0, SystemTableView::EditableIfHasTag, section);
+  if (!menu) view->ReplaceSection(0, "", 0, Table::Flag::EditableIfHasTag, section);
   else view->ReplaceSection
     (1, section.size() ? "Hosts" : "", 0,
-     (section.size() ? SystemTableView::EditButton : 0) | SystemTableView::EditableIfHasTag, section);
+     (section.size() ? Table::Flag::EditButton : 0) | Table::Flag::EditableIfHasTag, section);
   view->EndUpdates();
   view->changed = false;
 }
 
 MySessionsViewController::MySessionsViewController(MyTerminalMenus *m) :
-  menus(m), view(make_unique<SystemTableView>("Sessions", "big", TableItemVec{
+  menus(m), view(SystemTableView::Create("Sessions", "big", TableItemVec{
     TableItem("",              TableItem::Separator),
     TableItem{"Close Session", TableItem::Command, "", ">", 0, m->none_icon,       0, bind(&MyTerminalMenus::CloseActiveSession, m)},
     TableItem{"New",           TableItem::Command, "", ">", 0, m->plus_green_icon, 0, bind(&MyTerminalMenus::ShowNewSessionMenu, m, "New Session", true)},
@@ -677,25 +677,25 @@ MySessionsViewController::MySessionsViewController(MyTerminalMenus *m) :
 }
 
 MyUpgradeViewController::MyUpgradeViewController(MyTerminalMenus *m) :
-  view(make_unique<SystemTableView>("LTerminal Pro", "", GetSchema(m))) {
-  view->ReplaceSection(0, "Permanently unlock pro features with a one-time purchase:", m->logo_image, 0, TableItemVec(), Callback());
+  view(SystemTableView::Create("LTerminal Pro", "", GetSchema(m))) {
+  view->ReplaceSection(0, "Permanently unlock pro features with a one-time purchase:", m->logo_image, Table::Flag::SubText, TableItemVec(), Callback());
 }
 
 vector<TableItem> MyUpgradeViewController::GetSchema(MyTerminalMenus *m) {
   vector<TableItem> ret{
     TableItem("", TableItem::Separator),
-    TableItem{"Compression",      TableItem::Label, "Decrease latency and improve data usage with ZLib compression.", "", 0, m->check_icon},
+    TableItem{"Compression",      TableItem::Label, "Decrease latency and data usage using ZLib", "", 0, m->check_icon},
     TableItem("", TableItem::Separator),
     TableItem{"Forwarding",       TableItem::Label, "Unlimited SSH Agent and TCP port forwarding", "", 0, m->check_icon},
     TableItem("", TableItem::Separator),
-    TableItem{"Key Generation",   TableItem::Label, "Generate RSA, DSA, Elliptic Curve, and Ed25519 keys", "", 0, m->check_icon},
+    TableItem{"Key Generation",   TableItem::Label, "Generate RSA, DSA, EC, and Ed25519 keys", "", 0, m->check_icon},
     TableItem("", TableItem::Separator),
-    TableItem{"Local Encryption", TableItem::Label, "Protect your host database with SQLCipher encryption", "", 0, m->check_icon},
+    TableItem{"Local Encryption", TableItem::Label, "Protect your host database with SQLCipher", "", 0, m->check_icon},
     TableItem("", TableItem::Separator, "", "Restore Purchases"),
     TableItem("Upgrade Now $4.99", TableItem::Button, "", "")
   };
-  for (auto &i : ret) if (i.type == TableItem::Label) i.flags |= TableItem::Flag::SubText;
-  ret.back().flags |= TableItem::Flag::HighlightBackground;
+  for (auto &i : ret) /*if (i.type == TableItem::Label)*/ i.flags |= TableItem::Flag::SubText;
+  ret.back().flags = TableItem::Flag::HighlightBackground;
   return ret;
 }
 

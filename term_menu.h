@@ -577,14 +577,14 @@ struct MyTerminalMenus {
     stacked_squares_icon   (CheckNotNull(app->LoadSystemImage("stacked_squares_blue"))),
     none_icon              (CheckNotNull(app->LoadSystemImage("none"))),
     icon_fb(app->focused->gd),
-    hosts_nav(make_unique<SystemNavigationView>()), interfacesettings_nav(make_unique<SystemNavigationView>()),
+    hosts_nav(SystemNavigationView::Create()), interfacesettings_nav(SystemNavigationView::Create()),
     keyboard(this), newkey(this), genkey(this), keyinfo(this), keys(this, &credential_db), about(this),
     support(this), privacy(this), settings(this), terminalinterfacesettings(this), rfbinterfacesettings(this),
     sshfingerprint(this), sshportforward(this), sshsettings(this), telnetsettings(this), vncsettings(this),
     localshellsettings(this), protocol(this), newhost(this), updatehost(this), hosts(this, true),
     hostsfolder(this, false), sessions(this), upgrade(this) {
 
-    keyboard_toolbar = make_unique<SystemToolbarView>(MenuItemVec{
+    keyboard_toolbar = SystemToolbarView::Create(MenuItemVec{
       { "\U00002699", "",       bind(&MyTerminalMenus::ShowInterfaceSettings, this) },
       { "esc",        "",       bind(&MyTerminalMenus::PressKey,         this, "esc") },
       { "ctrl",       "toggle", bind(&MyTerminalMenus::ToggleKey,        this, "ctrl") },
@@ -605,11 +605,16 @@ struct MyTerminalMenus {
     INFO("Loading in-app purchases");
     purchases = SystemPurchases::Create();
     if (!(pro_version = purchases->HavePurchase("com.lucidfusionlabs.lterminal.paid", &pro_version))) {
-      if ((upgrade_toolbar = make_unique<SystemToolbarView>(MenuItemVec{
+      if ((upgrade_toolbar = SystemToolbarView::Create(MenuItemVec{
         { "Upgrade to LTerminal Pro", "", [=](){ hosts_nav->PushTableView(upgrade.view.get()); } }
       }))) hosts.view->AddToolbar(upgrade_toolbar.get());
-      if ((advertising = SystemAdvertisingView::Create(SystemAdvertisingView::Type::BANNER, VAlign::Bottom)))
-        advertising->Show(true);
+      if ((advertising = SystemAdvertisingView::Create(SystemAdvertisingView::Type::BANNER, VAlign::Bottom,
+#if defined(LFL_IOS)
+                                                       "ca-app-pub-4814825103153665/8426276832"
+#elif defined(LFL_ANDROID)
+                                                       "ca-app-pub-4814825103153665/3996077236"
+#endif
+                                                      ))) advertising->Show(true);
     }
 #endif
 
