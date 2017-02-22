@@ -505,10 +505,7 @@ void MyWindowStart(Window *W) {
 #endif
 }
 
-void MyWindowClosed(Window *W) {
-  delete GetTyped<MyTerminalWindow*>(W->user1);
-  delete W;
-}
+void MyWindowClosed(Window *W) { delete W; }
 
 }; // naemspace LFL
 using namespace LFL;
@@ -536,7 +533,7 @@ extern "C" void MyAppCreate(int argc, const char* const* argv) {
   FLAGS_enable_video = FLAGS_enable_input = 1;
   app = new Application(argc, argv);
   my_app = new MyAppState();
-  app->focused = new Window();
+  app->focused = Window::Create();
   app->name = "LTerminal";
   app->exit_cb = []() { delete my_app; };
   app->window_closed_cb = MyWindowClosed;

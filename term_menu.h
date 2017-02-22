@@ -473,9 +473,10 @@ struct MySessionsViewController {
 };
 
 struct MyUpgradeViewController {
+  bool loading_product=false;
+  unique_ptr<SystemProduct> product;
   unique_ptr<SystemTableView> view;
-  MyUpgradeViewController(MyTerminalMenus*);
-  static vector<TableItem> GetSchema(MyTerminalMenus*);
+  MyUpgradeViewController(MyTerminalMenus*, const string&);
 };
 
 struct MyTerminalMenus {
@@ -492,7 +493,7 @@ struct MyTerminalMenus {
       user_icon, calendar_icon, check_icon, stacked_squares_icon, none_icon;
   vector<int> sessions_icon;
   FrameBuffer icon_fb;
-  string pw_default = "\x01""Ask each time", pw_empty = "lfl_default";
+  string pw_default = "\x01""Ask each time", pw_empty = "lfl_default", pro_product_id = "com.lucidfusionlabs.lterminal.paid";
   PickerItem color_picker = PickerItem{ {{"VGA", "Solarized Dark", "Solarized Light"}}, {0} };
 
   unique_ptr<SystemNavigationView> hosts_nav, interfacesettings_nav;
@@ -520,9 +521,9 @@ struct MyTerminalMenus {
   MyUpdateHostViewController       updatehost;
   MyHostsViewController            hosts, hostsfolder;
   MySessionsViewController         sessions;
-  MyUpgradeViewController          upgrade;
-  unique_ptr<SystemToolbarView>    keyboard_toolbar, upgrade_toolbar;
-  unique_ptr<SystemAdvertisingView> advertising;
+  unique_ptr<MyUpgradeViewController> upgrade;
+  unique_ptr<SystemToolbarView>       keyboard_toolbar, upgrade_toolbar;
+  unique_ptr<SystemAdvertisingView>   advertising;
 
   unordered_map<string, Callback> mobile_key_cmd = {
     { "left",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->CursorLeft();  if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
@@ -582,7 +583,7 @@ struct MyTerminalMenus {
     support(this), privacy(this), settings(this), terminalinterfacesettings(this), rfbinterfacesettings(this),
     sshfingerprint(this), sshportforward(this), sshsettings(this), telnetsettings(this), vncsettings(this),
     localshellsettings(this), protocol(this), newhost(this), updatehost(this), hosts(this, true),
-    hostsfolder(this, false), sessions(this), upgrade(this) {
+    hostsfolder(this, false), sessions(this) {
 
     keyboard_toolbar = SystemToolbarView::Create(MenuItemVec{
       { "\U00002699", "",       bind(&MyTerminalMenus::ShowInterfaceSettings, this) },
@@ -604,17 +605,19 @@ struct MyTerminalMenus {
 #if defined(LFL_IOS) || defined(LFL_ANDROID)
     INFO("Loading in-app purchases");
     purchases = SystemPurchases::Create();
-    if (!(pro_version = purchases->HavePurchase("com.lucidfusionlabs.lterminal.paid", &pro_version))) {
+    if (!(pro_version = purchases->HavePurchase(pro_product_id))) {
+      upgrade = make_unique<MyUpgradeViewController>(this, pro_product_id);
       if ((upgrade_toolbar = SystemToolbarView::Create(MenuItemVec{
-        { "Upgrade to LTerminal Pro", "", [=](){ hosts_nav->PushTableView(upgrade.view.get()); } }
+        { "Upgrade to LTerminal Pro", "", [=](){ hosts_nav->PushTableView(upgrade->view.get()); } }
       }))) hosts.view->AddToolbar(upgrade_toolbar.get());
-      if ((advertising = SystemAdvertisingView::Create(SystemAdvertisingView::Type::BANNER, VAlign::Bottom,
+      if ((advertising = SystemAdvertisingView::Create
+           (SystemAdvertisingView::Type::BANNER, VAlign::Bottom,
 #if defined(LFL_IOS)
-                                                       "ca-app-pub-4814825103153665/8426276832"
+            "ca-app-pub-4814825103153665/8426276832", {"41a638aad263424dd2207fdef30f4c10"}
 #elif defined(LFL_ANDROID)
-                                                       "ca-app-pub-4814825103153665/3996077236"
+            "ca-app-pub-4814825103153665/3996077236", {}
 #endif
-                                                      ))) advertising->Show(true);
+           ))) advertising->Show(hosts.view.get(), true);
     }
 #endif
 
@@ -802,7 +805,7 @@ struct MyTerminalMenus {
     }
     icon_fb.Release();
     sessions.view->BeginUpdates();
-    sessions.view->ReplaceSection(0, "", 0, 0, section);
+    sessions.view->ReplaceSection(0, TableItem(), 0, section);
     sessions.view->SelectRow(0, selected_row);
     sessions.view->EndUpdates();
     LaunchSessionsMenu();

@@ -40,7 +40,7 @@ MyGenKeyViewController::MyGenKeyViewController(MyTerminalMenus *m) {
     TableItem("Name", TableItem::TextInput, "\x01Nickname"),
     TableItem("Passphrase", TableItem::PasswordInput, ""),
     TableItem("Type", TableItem::Separator, ""),
-    TableItem("Algo", TableItem::Selector, "RSA,Ed25519,ECDSA", "", 0, 0, 0, Callback(), Callback(),
+    TableItem("Algo", TableItem::Selector, "RSA,Ed25519,ECDSA", "", 0, 0, 0, Callback(), Callback(), 0,
               {{"RSA", {{2,0,"2048,4096"}}}, {"Ed25519", {{2,0,"256"}}}, {"ECDSA", {{2,0,"256,384,521"}}}}),
     TableItem("Size", TableItem::Separator, ""),
     TableItem("Bits", TableItem::Selector, "2048,4096"),
@@ -113,8 +113,8 @@ void MyKeysViewController::UpdateViewFromModel() {
                       Callback(bind(&MyTerminalMenus::KeyInfo,   menus, credential.first))});
   }
   view->BeginUpdates();
-  view->ReplaceSection(1, section.size() ? "Keys" : "", 0,
-                       section.size() ? (Table::Flag::EditButton | Table::Flag::EditableIfHasTag) : 0,
+  view->ReplaceSection(1, TableItem(section.size() ? "Keys" : ""),
+                       section.size() ? (TableSection::Flag::EditButton | TableSection::Flag::EditableIfHasTag) : 0,
                        section);
   view->EndUpdates();
   view->changed = false;
@@ -123,7 +123,7 @@ void MyKeysViewController::UpdateViewFromModel() {
 MyAboutViewController::MyAboutViewController(MyTerminalMenus *m) :
   view(SystemTableView::Create("About", "", vector<TableItem>{})) {
   view->BeginUpdates();
-  view->ReplaceSection(0, "LTerminal", m->logo_image, 0, TableItemVec{
+  view->ReplaceSection(0, TableItem("LTerminal", TableItem::Separator, "", "", 0, m->logo_image), 0, TableItemVec{
     TableItem("Version",                 TableItem::None,    "", app->GetVersion(), 0, 0, 0),
     TableItem("Credits",                 TableItem::Command, "", ">", 0, 0, 0, [=](){ if (!m->credits) m->credits = SystemTextView::Create("Credits", Asset::FileContents("credits.txt")); m->hosts_nav->PushTextView(m->credits.get()); }),
     TableItem("LTerminal Web Page",      TableItem::Command, "", ">", 0, 0, 0, bind(&Application::OpenSystemBrowser, app, "http://www.lucidfusionlabs.com/terminal/")),
@@ -138,7 +138,7 @@ MySupportViewController::MySupportViewController(MyTerminalMenus *m) :
     TableItem("LTerminal", TableItem::Command, "", ">", 0, 0, 0, bind(&Application::OpenSystemBrowser, app, "http://www.lucidfusionlabs.com/terminal/")),
   })) {
   view->BeginUpdates();
-  view->ReplaceSection(0, "Contact", 0, 0, TableItemVec{
+  view->ReplaceSection(0, TableItem("Contact"), 0, TableItemVec{
     TableItem("Email",   TableItem::Command, "", "support@lucidfusionlabs.com", 0, 0, 0, bind(&Application::OpenSystemBrowser, app, "mailto:info@lucidfusionlabs.com")),
     TableItem("Twitter", TableItem::Command, "", "@LucidFusionLabs",            0, 0, 0, bind(&Application::OpenSystemBrowser, app, "https://twitter.com/intent/tweet?text=@LucidFusionLabs"))
   });
@@ -241,9 +241,9 @@ MyTerminalInterfaceSettingsViewController::MyTerminalInterfaceSettingsViewContro
 vector<TableItem> MyTerminalInterfaceSettingsViewController::GetBaseSchema(MyTerminalMenus *m, SystemNavigationView *nav) {
   return vector<TableItem>{
     TableItem("Font",     TableItem::Label,      "", "",  0, m->font_icon,     0),
-    TableItem("",         TableItem::FontPicker, "", "",  0, 0,                0, Callback(), Callback(), TableItem::Depends(), true),
+    TableItem("",         TableItem::FontPicker, "", "",  0, 0,                0, Callback(), Callback(), 0, TableItem::Depends(), true),
     TableItem("Colors",   TableItem::Label,      "", "",  0, m->eye_icon,      0, [=](){}),
-    TableItem("",         TableItem::Picker,     "", "",  0, 0,                0, Callback(), Callback(), TableItem::Depends(), true, &m->color_picker),
+    TableItem("",         TableItem::Picker,     "", "",  0, 0,                0, Callback(), Callback(), 0, TableItem::Depends(), true, &m->color_picker),
     TableItem("Beep",     TableItem::Label,      "", "",  0, m->audio_icon,    0, [=](){}),
     TableItem("Keyboard", TableItem::Command,    "", ">", 0, m->keyboard_icon, 0, bind(&SystemNavigationView::PushTableView, nav, m->keyboard.view.get())),
     TableItem("Toys",     TableItem::Command,    "", ">", 0, m->toys_icon,     0, bind(&MyTerminalMenus::ShowToysMenu, m))
@@ -316,7 +316,7 @@ void MySSHFingerprintViewController::UpdateViewFromModel(const MyHostModel &mode
 
 MySSHPortForwardViewController::MySSHPortForwardViewController(MyTerminalMenus *m) :
   view(SystemTableView::Create("New Port Forward", "", TableItemVec{
-    TableItem("Type", TableItem::Selector, "Local,Remote", "", 0, 0, 0, Callback(), Callback(), {
+    TableItem("Type", TableItem::Selector, "Local,Remote", "", 0, 0, 0, Callback(), Callback(), 0, {
               {"Local",  {{1,0,"\x01Port",0,0,0,0,"Local Port"},  {1,1,"\x01Hostname",0,0,0,0,"Target Host"}, {1,2,"\x01Port",0,0,0,0,"Target Port"} }},
               {"Remote", {{1,0,"\x01Port",0,0,0,0,"Remote Port"}, {1,1,"\x01Hostname",0,0,0,0,"Target Host"}, {1,2,"\x01Port",0,0,0,0,"Target Port"}  }}, }),
     TableItem("", TableItem::Separator, ""),
@@ -381,7 +381,7 @@ void MySSHSettingsViewController::UpdateViewFromModel(const MyHostModel &model) 
     model.settings.compression ? "1" : "",
     model.settings.close_on_disconnect ? "1" : "",
     model.settings.startup_command.size() ? model.settings.startup_command : "\x01none" });
-  view->ReplaceSection(2, "Port Forwarding", 0, Table::Flag::EditButton, forwards);
+  view->ReplaceSection(2, TableItem("Port Forwarding"), TableSection::Flag::EditButton, forwards);
   view->EndUpdates();
 }
 
@@ -498,13 +498,13 @@ MyProtocolViewController::MyProtocolViewController(MyTerminalMenus *m) :
 
 vector<TableItem> MyQuickConnectViewController::GetSchema(MyTerminalMenus *m) {
   return vector<TableItem>{
-    TableItem("SSH", TableItem::TextInput, "\x01Host[:port]", "", 0, m->host_locked_icon, 0, bind(&SystemNavigationView::PushTableView, m->hosts_nav.get(), m->protocol.view.get()), Callback(), {
+    TableItem("SSH", TableItem::TextInput, "\x01Host[:port]", "", 0, m->host_locked_icon, 0, bind(&SystemNavigationView::PushTableView, m->hosts_nav.get(), m->protocol.view.get()), Callback(), 0, {
               {"SSH",         {{0,0,"\x01Host[:port]",false,m->host_locked_icon,0,TableItem::TextInput,"SSH"},         {0,1,"\x01Username"}, {0,2,m->pw_default,false,0,0,0,"",Callback(),0},                            {2,0,"",false,m->settings_gray_icon,0,0,"SSH Settings",        bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_SSH) } }},
               {"Telnet",      {{0,0,"\x01Host[:port]",false,m->host_icon,       0,TableItem::TextInput,"Telnet"},      {0,1,"",true},        {0,2,"",true,0,0},                                                          {2,0,"",false,m->settings_gray_icon,0,0,"Telnet Settings",     bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_Telnet) } }},
               {"VNC",         {{0,0,"\x01Host[:port]",false,m->vnc_icon,        0,TableItem::TextInput,"VNC"},         {0,1,"",true},        {0,2,m->pw_default,false,0,0,0,"",Callback(),TableItem::Flag::FixDropdown}, {2,0,"",false,m->settings_gray_icon,0,0,"VNC Settings",        bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_RFB) } }},
               {"Local Shell", {{0,0,"",               false,m->terminal_icon,   0,TableItem::None,     "Local Shell"}, {0,1,"",true},        {0,2,"",true,0,0},                                                          {2,0,"",false,m->settings_gray_icon,0,0,"Local Shell Settings",bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_LocalShell) }}} }, false, nullptr, "Protocol"),
     TableItem("Username", TableItem::TextInput, "\x01Username", "", 0, m->user_icon),
-    TableItem("Password", TableItem::PasswordInput, m->pw_default, "", 0, m->locked_icon, 0, bind(&SystemNavigationView::PushTableView, m->hosts_nav.get(), m->keys.view.get()), Callback(), {
+    TableItem("Password", TableItem::PasswordInput, m->pw_default, "", 0, m->locked_icon, 0, bind(&SystemNavigationView::PushTableView, m->hosts_nav.get(), m->keys.view.get()), Callback(), 0, {
               {"Password", {{0,2,m->pw_default,false,m->locked_icon,0,TableItem::PasswordInput,"Password"}}},
               {"Key",      {{0,2,"",           false,m->key_icon   ,0,TableItem::Label,        "Key"     }}} }, false, nullptr, "Credential"),
     TableItem("", TableItem::Separator, ""),
@@ -610,8 +610,8 @@ void MyHostsViewController::LoadFolderUI(MyHostDB *model) {
 void MyHostsViewController::LoadLockedUI(MyHostDB *model) {
   CHECK(menu);
   view->BeginUpdates();
-  view->ReplaceSection(1, "", 0, 0, TableItemVec{});
-  view->ReplaceSection(0, "", 0, 0, TableItemVec{
+  view->ReplaceSection(1, TableItem(), 0, TableItemVec{});
+  view->ReplaceSection(0, TableItem(), 0, TableItemVec{
     TableItem("Unlock", TableItem::Command, "", ">", 0, 0, 0, [=](){
       my_app->passphrase_alert->ShowCB("Unlock", "Passphrase", "", [=](const string &pw){
         if (menus->UnlockEncryptedDatabase(pw)) { LoadUnlockedUI(model); view->show_cb(); }
@@ -624,7 +624,7 @@ void MyHostsViewController::LoadLockedUI(MyHostDB *model) {
 void MyHostsViewController::LoadUnlockedUI(MyHostDB *model) {
   CHECK(menu);
   view->BeginUpdates();
-  view->ReplaceSection(0, "", 0, 0, VectorCat<TableItem>(GetBaseSchema(menus), TableItemVec{
+  view->ReplaceSection(0, TableItem(), 0, VectorCat<TableItem>(GetBaseSchema(menus), TableItemVec{
     TableItem("New",      TableItem::Command, "", ">", 0, menus->plus_red_icon,      0, bind(&MyTerminalMenus::ShowNewHost,     menus)),
     TableItem("Settings", TableItem::Command, "", ">", 0, menus->settings_gray_icon, 0, bind(&MyTerminalMenus::ShowAppSettings, menus))
   }));
@@ -657,10 +657,10 @@ void MyHostsViewController::UpdateViewFromModel(MyHostDB *model) {
                          bind(&MyTerminalMenus::HostInfo, menus, host.first));
   }
   view->BeginUpdates();
-  if (!menu) view->ReplaceSection(0, "", 0, Table::Flag::EditableIfHasTag, section);
+  if (!menu) view->ReplaceSection(0, TableItem(), TableSection::Flag::EditableIfHasTag, section);
   else view->ReplaceSection
-    (1, section.size() ? "Hosts" : "", 0,
-     (section.size() ? Table::Flag::EditButton : 0) | Table::Flag::EditableIfHasTag, section);
+    (1, TableItem(section.size() ? "Hosts" : ""),
+     (section.size() ? TableSection::Flag::EditButton : 0) | TableSection::Flag::EditableIfHasTag, section);
   view->EndUpdates();
   view->changed = false;
 }
@@ -676,13 +676,8 @@ MySessionsViewController::MySessionsViewController(MyTerminalMenus *m) :
                                       bind(&MyTerminalMenus::HideNewSessionMenu, m)));
 }
 
-MyUpgradeViewController::MyUpgradeViewController(MyTerminalMenus *m) :
-  view(SystemTableView::Create("LTerminal Pro", "", GetSchema(m))) {
-  view->ReplaceSection(0, "Permanently unlock pro features with a one-time purchase:", m->logo_image, Table::Flag::SubText, TableItemVec(), Callback());
-}
-
-vector<TableItem> MyUpgradeViewController::GetSchema(MyTerminalMenus *m) {
-  vector<TableItem> ret{
+MyUpgradeViewController::MyUpgradeViewController(MyTerminalMenus *m, const string &product_id) {
+  vector<TableItem> item{
     TableItem("", TableItem::Separator),
     TableItem{"Compression",      TableItem::Label, "Decrease latency and data usage using ZLib", "", 0, m->check_icon},
     TableItem("", TableItem::Separator),
@@ -691,12 +686,32 @@ vector<TableItem> MyUpgradeViewController::GetSchema(MyTerminalMenus *m) {
     TableItem{"Key Generation",   TableItem::Label, "Generate RSA, DSA, EC, and Ed25519 keys", "", 0, m->check_icon},
     TableItem("", TableItem::Separator),
     TableItem{"Local Encryption", TableItem::Label, "Protect your host database with SQLCipher", "", 0, m->check_icon},
-    TableItem("", TableItem::Separator, "", "Restore Purchases"),
-    TableItem("Upgrade Now $4.99", TableItem::Button, "", "")
+    TableItem("", TableItem::Separator, "", ""),
+    TableItem("Checking for upgrade", TableItem::Button, "", "", 0, 0, 0, Callback(), Callback(), TableItem::Flag::HighlightBackground),
+#ifdef LFL_IOS
+    TableItem("", TableItem::Separator, "", "Restore Purchases", 0, 0, 0, Callback(), [=](){ m->purchases->RestorePurchases(Callback()); }),
+#endif
   };
-  for (auto &i : ret) /*if (i.type == TableItem::Label)*/ i.flags |= TableItem::Flag::SubText;
-  ret.back().flags = TableItem::Flag::HighlightBackground;
-  return ret;
+  for (auto &i : item) if (i.type == TableItem::Label) i.flags |= TableItem::Flag::SubText;
+  view = SystemTableView::Create("LTerminal Pro", "", move(item));
+
+  TableItem header("Permanently unlock pro features with a one-time purchase:", TableItem::Separator, "", "", 0, m->logo_image);
+  header.flags = TableItem::Flag::SubText; 
+  view->ReplaceSection(0, move(header), 0, TableItemVec());
+  view->show_cb = [=](){
+    if (!loading_product && (loading_product = true)) {
+      if (!m->purchases->CanPurchase()) {
+        view->BeginUpdates();
+        view->ReplaceSection(5, TableItem(), 0, TableItemVec{ TableItem("Purchases not available", TableItem::Button) });
+        view->EndUpdates();
+      } else m->purchases->PreparePurchase(StringVec{product_id}, [=](){
+        view->BeginUpdates();
+        if (!product) view->ReplaceSection(5, TableItem(), 0, TableItemVec{ TableItem("Upgrade not available",                  TableItem::Button, "", "", 0, 0, 0, Callback(), Callback(), TableItem::Flag::HighlightBackground) });
+        else          view->ReplaceSection(5, TableItem(), 0, TableItemVec{ TableItem(StrCat("Upgrade Now ", product->Price()), TableItem::Button, "", "", 0, 0, 0, Callback(), Callback(), TableItem::Flag::HighlightBackground) });
+        view->EndUpdates();
+      }, [=](unique_ptr<SystemProduct> p) { if (p->id == product_id) product = move(p); });
+    }
+  };
 }
 
 }; // namespace LFL
