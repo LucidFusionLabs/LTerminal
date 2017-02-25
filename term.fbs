@@ -59,6 +59,7 @@ table AppSettings {
   version:               int;
   default_host_settings: HostSettings;
   keep_display_on:       bool;
+  theme:                 string;
 }
 
 table ColorScheme {

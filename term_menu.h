@@ -104,6 +104,11 @@ struct MyAppSettingsModel {
   static const int LatestVersion = 1;
   int version = LatestVersion;
   bool keep_display_on=0;
+#ifdef LFL_ANDROID
+  string theme = "Dark";
+#else
+  string theme = "Light";
+#endif
   MyHostSettingsModel default_host_settings;
 
   MyAppSettingsModel() {}
@@ -116,10 +121,12 @@ struct MyAppSettingsModel {
     version = s->version();
     default_host_settings.LoadProto(*s->default_host_settings());
     keep_display_on = s->keep_display_on();
+    theme = GetFlatBufferString(s->theme());
   }
 
   flatbuffers::Offset<LTerminal::AppSettings> SaveProto(FlatBufferBuilder &fb) const {
-    return LTerminal::CreateAppSettings(fb, version, default_host_settings.SaveProto(fb), keep_display_on);
+    return LTerminal::CreateAppSettings(fb, version, default_host_settings.SaveProto(fb), keep_display_on,
+                                        fb.CreateString(theme));
   }
 
   FlatBufferPiece SaveBlob() const {
@@ -302,65 +309,60 @@ struct MyGenKeyModel {
   int bits=0;
 };
 
-struct MyKeyboardSettingsViewController {
-  unique_ptr<SystemTableView> view;
+struct MyTableViewController : public SystemTableViewController {
+  MyTableViewController(MyTerminalMenus*, unique_ptr<SystemTableView> = unique_ptr<SystemTableView>());
+};
+
+struct MyKeyboardSettingsViewController : public MyTableViewController {
   MyKeyboardSettingsViewController(MyTerminalMenus*);
   void UpdateViewFromModel(const MyHostSettingsModel&);
 };
 
-struct MyNewKeyViewController {
-  unique_ptr<SystemTableView> view;
+struct MyNewKeyViewController : public MyTableViewController {
   MyNewKeyViewController(MyTerminalMenus*);
 };
 
-struct MyGenKeyViewController {
-  unique_ptr<SystemTableView> view;
+struct MyGenKeyViewController : public MyTableViewController {
+  TableSection::ChangeSet algo_deps;
   MyGenKeyViewController(MyTerminalMenus*);
   void UpdateViewFromModel();
   bool UpdateModelFromView(MyGenKeyModel *model) const;
+  void ApplyAlgoChangeSet(const string &n) { view->ApplyChangeSet(n, algo_deps); }
 };
 
-struct MyKeyInfoViewController {
+struct MyKeyInfoViewController : public MyTableViewController {
   MyTerminalMenus *menus;
   int cred_row_id=0;
-  unique_ptr<SystemTableView> view;
   MyKeyInfoViewController(MyTerminalMenus*);
   void UpdateViewFromModel(const MyCredentialModel&);
 };
 
-struct MyKeysViewController {
+struct MyKeysViewController : public MyTableViewController {
   MyTerminalMenus *menus;
   MyCredentialDB *model;
-  unique_ptr<SystemTableView> view;
   MyKeysViewController(MyTerminalMenus*, MyCredentialDB*);
   void UpdateViewFromModel();
 };
 
-struct MyAboutViewController {
-  unique_ptr<SystemTableView> view;
+struct MyAboutViewController : public MyTableViewController {
   MyAboutViewController(MyTerminalMenus*);
 };
 
-struct MySupportViewController {
-  unique_ptr<SystemTableView> view;
+struct MySupportViewController : public MyTableViewController {
   MySupportViewController(MyTerminalMenus*);
 };
 
-struct MyPrivacyViewController {
-  unique_ptr<SystemTableView> view;
+struct MyPrivacyViewController : public MyTableViewController {
   MyPrivacyViewController(MyTerminalMenus*);
 };
 
-struct MyAppSettingsViewController {
-  unique_ptr<SystemTableView> view;
+struct MyAppSettingsViewController : public MyTableViewController {
   MyAppSettingsViewController(MyTerminalMenus*);
-  static vector<TableItem> GetSchema(MyTerminalMenus*);
   void UpdateViewFromModel(const MyAppSettingsModel &model);
   void UpdateModelFromView(      MyAppSettingsModel *model);
 };
 
-struct MyTerminalInterfaceSettingsViewController {
-  unique_ptr<SystemTableView> view;
+struct MyTerminalInterfaceSettingsViewController : public MyTableViewController {
   MyTerminalInterfaceSettingsViewController(MyTerminalMenus*);
   static vector<TableItem> GetBaseSchema(MyTerminalMenus*, SystemNavigationView*);
   static vector<TableItem> GetSchema(MyTerminalMenus*, SystemNavigationView*);
@@ -368,8 +370,7 @@ struct MyTerminalInterfaceSettingsViewController {
   void UpdateModelFromView(MyHostSettingsModel *host_model) const;
 };
 
-struct MyRFBInterfaceSettingsViewController {
-  unique_ptr<SystemTableView> view;
+struct MyRFBInterfaceSettingsViewController : public MyTableViewController {
   MyRFBInterfaceSettingsViewController(MyTerminalMenus*);
   static vector<TableItem> GetBaseSchema(MyTerminalMenus*, SystemNavigationView*);
   static vector<TableItem> GetSchema(MyTerminalMenus*, SystemNavigationView*);
@@ -377,86 +378,81 @@ struct MyRFBInterfaceSettingsViewController {
   void UpdateModelFromView(MyHostSettingsModel *host_model) const;
 };
 
-struct MySSHFingerprintViewController {
-  unique_ptr<SystemTableView> view;
+struct MySSHFingerprintViewController : public MyTableViewController {
   MySSHFingerprintViewController(MyTerminalMenus*);
   void UpdateViewFromModel(const MyHostModel &model);
 };
 
-struct MySSHPortForwardViewController {
-  unique_ptr<SystemTableView> view;
+struct MySSHPortForwardViewController : public MyTableViewController {
+  TableSection::ChangeSet type_deps;
   MySSHPortForwardViewController(MyTerminalMenus*);
+  void ApplyTypeChangeSet(const string &n) { view->ApplyChangeSet(n, type_deps); }
 };
 
-struct MySSHSettingsViewController {
+struct MySSHSettingsViewController : public MyTableViewController {
   MyTerminalMenus *menus;
-  unique_ptr<SystemTableView> view;
   MySSHSettingsViewController(MyTerminalMenus *m);
   static vector<TableItem> GetSchema(MyTerminalMenus*);
   void UpdateViewFromModel(const MyHostModel &model);
   bool UpdateModelFromView(MyHostSettingsModel *model, string *folder) const;
 };
 
-struct MyTelnetSettingsViewController {
+struct MyTelnetSettingsViewController : public MyTableViewController {
   MyTerminalMenus *menus;
-  unique_ptr<SystemTableView> view;
   MyTelnetSettingsViewController(MyTerminalMenus *m);
   static vector<TableItem> GetSchema(MyTerminalMenus*);
   void UpdateViewFromModel(const MyHostModel &model);
   bool UpdateModelFromView(MyHostSettingsModel *model, string *folder) const;
 };
 
-struct MyVNCSettingsViewController {
+struct MyVNCSettingsViewController : public MyTableViewController {
   MyTerminalMenus *menus;
-  unique_ptr<SystemTableView> view;
   MyVNCSettingsViewController(MyTerminalMenus *m);
   static vector<TableItem> GetSchema(MyTerminalMenus*);
   void UpdateViewFromModel(const MyHostModel &model);
   bool UpdateModelFromView(MyHostSettingsModel *model, string *folder) const;
 };
 
-struct MyLocalShellSettingsViewController {
+struct MyLocalShellSettingsViewController : public MyTableViewController {
   MyTerminalMenus *menus;
-  unique_ptr<SystemTableView> view;
   MyLocalShellSettingsViewController(MyTerminalMenus *m);
   static vector<TableItem> GetSchema(MyTerminalMenus*);
   void UpdateViewFromModel(const MyHostModel &model);
   bool UpdateModelFromView(MyHostSettingsModel *model, string *folder) const;
 };
 
-struct MyProtocolViewController {
-  unique_ptr<SystemTableView> view;
+struct MyProtocolViewController : public MyTableViewController {
   MyProtocolViewController(MyTerminalMenus*);
 };
 
 struct MyQuickConnectViewController {
   static vector<TableItem> GetSchema(MyTerminalMenus*);
+  static TableSection::ChangeSet GetProtoDepends(MyTerminalMenus*);
+  static TableSection::ChangeSet GetAuthDepends(MyTerminalMenus*);
 };
 
-struct MyNewHostViewController {
+struct MyNewHostViewController : public MyTableViewController {
   MyTerminalMenus *menus;
-  unique_ptr<SystemTableView> view;
+  TableSection::ChangeSet proto_deps, auth_deps;
   MyNewHostViewController(MyTerminalMenus*);
   static vector<TableItem> GetSchema(MyTerminalMenus*);
   void UpdateViewFromModel();
   bool UpdateModelFromView(MyHostModel *model, MyCredentialDB *cred_db) const;
 };
 
-struct MyUpdateHostViewController {
+struct MyUpdateHostViewController : public MyTableViewController {
   MyTerminalMenus *menus;
   MyHostModel prev_model;
-  unique_ptr<SystemTableView> view;
   MyUpdateHostViewController(MyTerminalMenus*);
   static vector<TableItem> GetSchema(MyTerminalMenus*);
   void UpdateViewFromModel(const MyHostModel &host);
   bool UpdateModelFromView(MyHostModel *model, MyCredentialDB *cred_db) const;
 };
 
-struct MyHostsViewController {
+struct MyHostsViewController : public MyTableViewController {
   MyTerminalMenus *menus;
   bool menu;
   string folder;
-  unique_ptr<SystemTableView> view;
   MyHostsViewController(MyTerminalMenus*, bool menu);
   static vector<TableItem> GetBaseSchema(MyTerminalMenus*);
   void LoadFolderUI(MyHostDB *model);
@@ -465,17 +461,15 @@ struct MyHostsViewController {
   void UpdateViewFromModel(MyHostDB *model);
 };
 
-struct MySessionsViewController {
+struct MySessionsViewController : public MyTableViewController {
   MyTerminalMenus *menus;
-  unique_ptr<SystemTableView> view;
   MySessionsViewController(MyTerminalMenus*);
   void UpdateViewFromModel();
 };
 
-struct MyUpgradeViewController {
+struct MyUpgradeViewController : public MyTableViewController {
   bool loading_product=false;
   unique_ptr<SystemProduct> product;
-  unique_ptr<SystemTableView> view;
   MyUpgradeViewController(MyTerminalMenus*, const string&);
 };
 
@@ -485,6 +479,7 @@ struct MyTerminalMenus {
   MyHostDB host_db;
   MyCredentialDB credential_db;
   MySettingsDB settings_db;
+  vector<MyTableViewController*> tableviews;
   unordered_map<int, shared_ptr<SSHClient::Identity>> identity_loaded;
   int key_icon, host_icon, host_locked_icon, bolt_icon, terminal_icon, settings_blue_icon, settings_gray_icon,
       audio_icon, eye_icon, recycle_icon, fingerprint_icon, info_icon, keyboard_icon, folder_icon, logo_image, logo_icon,
@@ -493,8 +488,9 @@ struct MyTerminalMenus {
       user_icon, calendar_icon, check_icon, stacked_squares_icon, none_icon;
   vector<int> sessions_icon;
   FrameBuffer icon_fb;
-  string pw_default = "\x01""Ask each time", pw_empty = "lfl_default", pro_product_id = "com.lucidfusionlabs.lterminal.paid";
+  string pw_default = "\x01""Ask each time", pw_empty = "lfl_default", pro_product_id = "com.lucidfusionlabs.lterminal.paid", theme;
   PickerItem color_picker = PickerItem{ {{"VGA", "Solarized Dark", "Solarized Light"}}, {0} };
+  Color green;
 
   unique_ptr<SystemNavigationView> hosts_nav, interfacesettings_nav;
   unique_ptr<SystemTextView>       credits;
@@ -577,7 +573,7 @@ struct MyTerminalMenus {
     check_icon             (CheckNotNull(app->LoadSystemImage("check"))),
     stacked_squares_icon   (CheckNotNull(app->LoadSystemImage("stacked_squares_blue"))),
     none_icon              (CheckNotNull(app->LoadSystemImage("none"))),
-    icon_fb(app->focused->gd),
+    icon_fb(app->focused->gd), green(76, 217, 100),
     hosts_nav(SystemNavigationView::Create()), interfacesettings_nav(SystemNavigationView::Create()),
     keyboard(this), newkey(this), genkey(this), keyinfo(this), keys(this, &credential_db), about(this),
     support(this), privacy(this), settings(this), terminalinterfacesettings(this), rfbinterfacesettings(this),
@@ -754,11 +750,11 @@ struct MyTerminalMenus {
     host_menu->BeginUpdates();
     if (cred_row_id) {
       MyCredentialModel cred(&credential_db, cred_row_id);
-      host_menu->SetKey(0, key_row, "Key");
+      host_menu->ApplyChangeSet("Key", newhost.auth_deps);
       host_menu->SetTag(0, key_row, cred.cred_id);
       host_menu->SetValue(0, key_row, cred.name);
     } else {
-      host_menu->SetKey(0, key_row, "Password");
+      host_menu->ApplyChangeSet("Password", newhost.auth_deps);
       host_menu->SetValue(0, key_row, pw_default);
     }
     host_menu->EndUpdates();
@@ -769,7 +765,7 @@ struct MyTerminalMenus {
     SystemTableView *host_menu = hosts_nav->Back();
     int host_row = (host_menu->GetKey(0, 0) == "Nickname");
     host_menu->BeginUpdates();
-    host_menu->SetKey(0, host_row, n);
+    host_menu->ApplyChangeSet(n, newhost.proto_deps);
     host_menu->EndUpdates();
   }
 
