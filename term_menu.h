@@ -468,9 +468,13 @@ struct MySessionsViewController : public MyTableViewController {
 };
 
 struct MyUpgradeViewController : public MyTableViewController {
-  bool loading_product=false;
+  MyTerminalMenus *menus;
   unique_ptr<SystemProduct> product;
+  bool loading_product=false, purchasing_product=false;
   MyUpgradeViewController(MyTerminalMenus*, const string&);
+  void PurchaseUpgrade();
+  void RestorePurchases();
+  void HandleSuccessfulUpgrade();
 };
 
 struct MyTerminalMenus {
@@ -605,7 +609,7 @@ struct MyTerminalMenus {
       upgrade = make_unique<MyUpgradeViewController>(this, pro_product_id);
       if ((upgrade_toolbar = SystemToolbarView::Create(MenuItemVec{
         { "Upgrade to LTerminal Pro", "", [=](){ hosts_nav->PushTableView(upgrade->view.get()); } }
-      }))) hosts.view->AddToolbar(upgrade_toolbar.get());
+      }))) hosts.view->SetToolbar(upgrade_toolbar.get());
       if ((advertising = SystemAdvertisingView::Create
            (SystemAdvertisingView::Type::BANNER, VAlign::Bottom,
 #if defined(LFL_IOS)
@@ -614,12 +618,16 @@ struct MyTerminalMenus {
             "ca-app-pub-4814825103153665/3996077236", {}
 #endif
            ))) advertising->Show(hosts.view.get(), true);
+    } else {
+      hosts.view->SetTitle("LTerminal Pro");
+      about.view->SetHeader(0, TableItem("LTerminal Pro", TableItem::Separator, "", "", 0, logo_image));
     }
 #endif
 
     if (UnlockEncryptedDatabase(pw_empty)) hosts.LoadUnlockedUI(&host_db);
     else if ((db_protected = true))        hosts.LoadLockedUI  (&host_db);
     hostsfolder.LoadFolderUI(&host_db);
+    keyboard_toolbar->Show(true);
   }
 
   void PressKey (const string &key) { FindAndDispatch(mobile_key_cmd,       key); }
@@ -810,8 +818,6 @@ struct MyTerminalMenus {
   void LaunchSessionsMenu() {
     app->SetAppFrameEnabled(false);
     app->CloseTouchKeyboard();
-    keyboard_toolbar->Show(false);
-    hosts_nav->PopAll();
     hosts_nav->PushTableView(sessions.view.get());
     hosts_nav->Show(true);
     app->ShowSystemStatusBar(true);
@@ -820,8 +826,6 @@ struct MyTerminalMenus {
   void LaunchNewSessionMenu(const string &title, bool back) {
     app->SetAppFrameEnabled(false);
     app->CloseTouchKeyboard();
-    keyboard_toolbar->Show(false);
-    hosts_nav->PopAll();
     ShowNewSessionMenu(title, back);
     hosts_nav->Show(true);
     app->ShowSystemStatusBar(true);
@@ -837,8 +841,8 @@ struct MyTerminalMenus {
 
   void HideNewSessionMenu() {
     app->ShowSystemStatusBar(false);
+    hosts_nav->PopAll();
     hosts_nav->Show(false);
-    keyboard_toolbar->Show(true);
     app->OpenTouchKeyboard(true);
     app->scheduler.Wakeup(app->focused);
   }
@@ -847,10 +851,7 @@ struct MyTerminalMenus {
     auto tw = GetActiveWindow();
     tw->CloseActiveTab();
     if (tw->tabs.top) HideNewSessionMenu();
-    else {
-      hosts_nav->PopAll();
-      ShowNewSessionMenu("LTerminal", false);
-    }
+    else ShowNewSessionMenu(pro_version ? "LTerminal Pro" : "LTerminal", false);
   }
 
   void ShowToysMenu() {
@@ -860,7 +861,7 @@ struct MyTerminalMenus {
 
   void HideInterfaceSettings() {
     app->ShowSystemStatusBar(false);
-    keyboard_toolbar->Show(true);
+    interfacesettings_nav->PopAll();
     interfacesettings_nav->Show(false);
     app->OpenTouchKeyboard(true);
     app->scheduler.Wakeup(app->focused);
@@ -871,7 +872,6 @@ struct MyTerminalMenus {
     if (t) t->ChangeShader("none");
     if (!t || !t->connected_host_id || interfacesettings_nav->shown) return;
     MyHostModel host_model(&host_db, &credential_db, &settings_db, t->connected_host_id);
-    interfacesettings_nav->PopAll();
     if (host_model.protocol == LTerminal::Protocol_RFB) {
       rfbinterfacesettings.UpdateViewFromModel(host_model.settings);
       interfacesettings_nav->PushTableView(rfbinterfacesettings.view.get());
@@ -881,7 +881,6 @@ struct MyTerminalMenus {
     }
     app->SetAppFrameEnabled(false);
     app->CloseTouchKeyboard();
-    keyboard_toolbar->Show(false);
     interfacesettings_nav->Show(true);
     app->ShowSystemStatusBar(true);
   }
@@ -990,8 +989,8 @@ struct MyTerminalMenus {
   }
 
   void MenuStartSession() {
+    hosts_nav->PopAll();
     hosts_nav->Show(false);
-    keyboard_toolbar->Show(true);
     app->ShowSystemStatusBar(false);
     app->CloseTouchKeyboardAfterReturn(false);
     app->OpenTouchKeyboard(true);
@@ -1032,8 +1031,9 @@ struct MyTerminalMenus {
          host.settings.startup_command.size() ? StrCat(host.settings.startup_command, "\r") : "",
          host.settings.compression, host.settings.agent_forwarding, host.settings.close_on_disconnect, true,
          host.settings.local_forward, host.settings.remote_forward }, false,
-         host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "", identity_cb,
-         bind(&SystemToolbarView::ToggleButton, keyboard_toolbar.get(), _1), move(cb), move(fingerprint_cb));
+         host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "",
+         bind(&SystemToolbarView::ToggleButton, keyboard_toolbar.get(), _1),
+         identity_cb, move(cb), move(fingerprint_cb));
       ApplyTerminalSettings(host.settings);
       if (host.cred.credtype == LTerminal::CredentialType_PEM)
         ssh->identity_cb = [=](shared_ptr<SSHClient::Identity> *out) { 
@@ -1045,7 +1045,9 @@ struct MyTerminalMenus {
         };
     } else if (host.protocol == LTerminal::Protocol_Telnet) {
       GetActiveWindow()->AddTerminalTab(host.host_id)->UseTelnetTerminalController
-        (host.Hostport(), false, host.settings.close_on_disconnect, (bool(cb) ? Callback([=](){ cb(0, ""); }) : Callback()));
+        (host.Hostport(), false, host.settings.close_on_disconnect,
+         bind(&SystemToolbarView::ToggleButton, keyboard_toolbar.get(), _1),
+         (bool(cb) ? Callback([=](){ cb(0, ""); }) : Callback()));
       ApplyTerminalSettings(host.settings);
     } else if (host.protocol == LTerminal::Protocol_RFB) {
       GetActiveWindow()->AddRFBTab(host.host_id, RFBClient::Params{host.Hostport()},

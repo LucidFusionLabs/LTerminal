@@ -695,7 +695,7 @@ MySessionsViewController::MySessionsViewController(MyTerminalMenus *m) :
                                       bind(&MyTerminalMenus::HideNewSessionMenu, m)));
 }
 
-MyUpgradeViewController::MyUpgradeViewController(MyTerminalMenus *m, const string &product_id) : MyTableViewController(m) {
+MyUpgradeViewController::MyUpgradeViewController(MyTerminalMenus *m, const string &product_id) : MyTableViewController(m), menus(m) {
   vector<TableItem> item{
     TableItem("", TableItem::Separator),
     TableItem{"Compression",      TableItem::Label, "Decrease latency and data usage using ZLib", "", 0, m->check_icon},
@@ -708,7 +708,7 @@ MyUpgradeViewController::MyUpgradeViewController(MyTerminalMenus *m, const strin
     TableItem("", TableItem::Separator, "", ""),
     TableItem("Checking for upgrade", TableItem::Button),
 #ifdef LFL_IOS
-    TableItem("", TableItem::Separator, "", "Restore Purchases", 0, 0, 0, Callback(), [=](const string&){ m->purchases->RestorePurchases(Callback()); }, 0, 0, 0, "", Color::clear, m->green),
+    TableItem("", TableItem::Separator, "", "Restore Purchases", 0, 0, 0, Callback(), bind(&MyUpgradeViewController::RestorePurchases, this), 0, 0, 0, "", Color::clear, m->green),
 #endif
   };
   for (auto &i : item) if (i.type == TableItem::Label) i.flags |= TableItem::Flag::SubText;
@@ -725,12 +725,40 @@ MyUpgradeViewController::MyUpgradeViewController(MyTerminalMenus *m, const strin
         view->EndUpdates();
       } else m->purchases->PreparePurchase(StringVec{product_id}, [=](){
         view->BeginUpdates();
-        if (!product) view->ReplaceSection(5, TableItem(), 0, TableItemVec{ TableItem("Upgrade not available",                  TableItem::Button, "", "", 0, 0, 0, Callback(), StringCB(), 0, 0, 0, "", Color::clear, m->green) });
-        else          view->ReplaceSection(5, TableItem(), 0, TableItemVec{ TableItem(StrCat("Upgrade Now ", product->Price()), TableItem::Button, "", "", 0, 0, 0, Callback(), StringCB(), 0, 0, 0, "", Color::clear, m->green) });
+        if (!product) view->ReplaceSection(5, TableItem(), 0, TableItemVec{ TableItem("Upgrade not available",                  TableItem::Button, "", "", 0, 0, 0, Callback(),                                            StringCB(), 0, 0, 0, "", Color::clear, m->green) });
+        else          view->ReplaceSection(5, TableItem(), 0, TableItemVec{ TableItem(StrCat("Upgrade Now ", product->Price()), TableItem::Button, "", "", 0, 0, 0, bind(&MyUpgradeViewController::PurchaseUpgrade, this), StringCB(), 0, 0, 0, "", Color::clear, m->green) });
         view->EndUpdates();
       }, [=](unique_ptr<SystemProduct> p) { if (p->id == product_id) product = move(p); });
     }
   };
+}
+
+void MyUpgradeViewController::PurchaseUpgrade() {
+  if (!product || purchasing_product) return;
+  purchasing_product = menus->purchases->MakePurchase(product.get(), [=](int success) {
+    if (success) HandleSuccessfulUpgrade();
+    purchasing_product = false;
+  });
+}
+
+void MyUpgradeViewController::RestorePurchases() {
+  menus->purchases->RestorePurchases([=](){
+    menus->purchases->LoadPurchases();
+    if (menus->purchases->HavePurchase(menus->pro_product_id)) HandleSuccessfulUpgrade();
+  });
+}
+
+void MyUpgradeViewController::HandleSuccessfulUpgrade() {
+  menus->pro_version = true;
+  menus->hosts.view->SetToolbar(nullptr);
+  menus->advertising->Show(menus->hosts.view.get(), false);
+  menus->hosts.view->SetTitle("LTerminal Pro");
+  menus->about.view->BeginUpdates();
+  menus->about.view->SetHeader(0, TableItem("LTerminal Pro", TableItem::Separator, "", "", 0, menus->logo_image));
+  menus->about.view->EndUpdates();
+  view->BeginUpdates();
+  view->ReplaceSection(5, TableItem(), 0, TableItemVec{ TableItem("Upgrade Complete", TableItem::Button, "", "", 0, 0, 0, Callback(), StringCB(), 0, 0, 0, "", Color::clear, menus->green) });
+  view->EndUpdates();
 }
 
 }; // namespace LFL

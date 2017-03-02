@@ -65,7 +65,19 @@ struct TerminalTabInterface : public Dialog {
 
 struct TerminalControllerInterface : public Terminal::Controller {
   TerminalTabInterface *parent;
+  StringCB metakey_cb;
   TerminalControllerInterface(TerminalTabInterface *P) : parent(P) {}
+
+#ifndef LFL_TERMINAL_MENUS
+  StringPiece GetMetaModified(const StringPiece &b, char*) { return b; }
+#else
+  StringPiece GetMetaModified(const StringPiece &b, char *buf) {
+    if (b.size() == 1 && ctrl_down && !(ctrl_down = false)) {
+      if (metakey_cb) metakey_cb("ctrl");
+      return StringPiece(&(buf[0] = Key::CtrlModified(*MakeUnsigned(b.data()))), 1);
+    } else return b;
+  }
+#endif
 };
   
 struct NetworkTerminalController : public TerminalControllerInterface {
@@ -111,8 +123,10 @@ struct NetworkTerminalController : public TerminalControllerInterface {
     return ret_buf;
   }
 
-  virtual int Write(const StringPiece &b) {
+  virtual int Write(const StringPiece &in) {
+    char buf[1];
     if (!conn || conn->state != Connection::Connected) return -1;
+    StringPiece b = GetMetaModified(in, buf);
     return conn->WriteFlush(b.data(), b.size());
   }
 };
@@ -240,7 +254,6 @@ struct PTYTerminalController : public TerminalControllerInterface {
 struct SSHTerminalController : public NetworkTerminalController {
   typedef function<void(int, const string&)> SavehostCB;
   SSHClient::Params params;
-  StringCB metakey_cb;
   SavehostCB savehost_cb;
   Connection::CB remote_forward_detach_cb;
   SSHClient::FingerprintCB fingerprint_cb;
@@ -313,15 +326,9 @@ struct SSHTerminalController : public NetworkTerminalController {
   }
 
   int Write(const StringPiece &in) {
-    StringPiece b = in;
-#ifdef LFL_TERMINAL_MENUS
     char buf[1];
-    if (b.size() == 1 && ctrl_down && !(ctrl_down = false)) {
-      if (metakey_cb) metakey_cb("ctrl");
-      b = StringPiece(&(buf[0] = Key::CtrlModified(*MakeUnsigned(b.data()))), 1);
-    }
-#endif
     if (!conn || conn->state != Connection::Connected) return -1;
+    StringPiece b = GetMetaModified(in, buf);
     return SSHClient::WriteChannelData(conn, b);
   }
 
