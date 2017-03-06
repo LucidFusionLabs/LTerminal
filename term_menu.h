@@ -652,7 +652,7 @@ struct MyTerminalMenus {
   }
 
   void EnableLocalEncryption(const string &pw, const string &confirm_pw) {
-    if (pw != confirm_pw) return my_app->passphrasefailed_alert->Show("");
+    if (pw != confirm_pw) return my_app->info_alert->ShowCB("Invalid passphrase", "Passphrase failed", "", StringCB());
     SQLite::ChangePassphrase(db, pw);
     db_protected = true;
     settings.view->show_cb();
@@ -786,6 +786,8 @@ struct MyTerminalMenus {
     auto tw = GetActiveWindow();
     for (auto t : tw->tabs.tabs) {
       Box b(t->GetLastDrawBox().Dimension());
+      if (!b.w || !b.h) continue;
+
       icon_fb.Resize(b.w, b.h, FrameBuffer::Flag::CreateGL | FrameBuffer::Flag::CreateTexture);
       Texture screen_tex, icon_tex;
       gc.gd->Clear();
@@ -833,9 +835,11 @@ struct MyTerminalMenus {
 
   void ShowNewSessionMenu(const string &title, bool back) {
     hosts.view->SetTitle(title); 
+#if 0
     if (!back) hosts.view->DelNavigationButton(HAlign::Left);
     else       hosts.view->AddNavigationButton
       (HAlign::Left, TableItem("Back", TableItem::Button, "", "", 0, 0, 0, bind(&MyTerminalMenus::HideNewSessionMenu, this)));
+#endif
     hosts_nav->PushTableView(my_app->menus->hosts.view.get());
   }
 
@@ -989,11 +993,12 @@ struct MyTerminalMenus {
   }
 
   void MenuStartSession() {
+    app->ShowSystemStatusBar(false);
     hosts_nav->PopAll();
     hosts_nav->Show(false);
-    app->ShowSystemStatusBar(false);
     app->CloseTouchKeyboardAfterReturn(false);
     app->OpenTouchKeyboard(true);
+    app->scheduler.Wakeup(app->focused);
   }
 
   shared_ptr<SSHClient::Identity> LoadIdentity(const MyCredentialModel &cred) {

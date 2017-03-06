@@ -37,13 +37,13 @@ struct MyTerminalTab : public TerminalTab {
 
   void ChangeColors(const string &colors_name, bool redraw=true) {}
   void UseShellTerminalController(const string &m) {}
-  void UseTelnetTerminalController(const string &hostport, bool from_shell=false,
-                                   bool close_on_disconn=false, Callback savehost_cb=Callback()) {}
+  void UseTelnetTerminalController(const string &hostport, bool from_shell=false, bool close_on_disconn=false,
+                                   StringCB metakey_cb=StringCB(), Callback savehost_cb=Callback()) {}
 
   SSHTerminalController*
   UseSSHTerminalController(SSHClient::Params params, bool from_shell=false, const string &pw="",
-                           SSHClient::LoadIdentityCB identity_cb=SSHClient::LoadIdentityCB(),
                            StringCB metakey_cb=StringCB(),
+                           SSHClient::LoadIdentityCB identity_cb=SSHClient::LoadIdentityCB(),
                            SSHTerminalController::SavehostCB savehost_cb=SSHTerminalController::SavehostCB(),
                            SSHClient::FingerprintCB fingerprint_cb=SSHClient::FingerprintCB()) { return nullptr; }
 };

@@ -38,8 +38,12 @@ struct TerminalTabInterface : public Dialog {
   virtual KeyboardController *GetKeyboardTarget() = 0;
   virtual Box GetLastDrawBox() = 0;
   virtual void DrawBox(GraphicsDevice*, Box draw_box, bool check_resized) = 0;
-  virtual void TakeFocus() { root->active_textbox = GetKeyboardTarget();     root->active_controller = GetMouseTarget(); }
   virtual void LoseFocus() { root->active_textbox = root->default_textbox(); root->active_controller = root->default_controller(); }
+  virtual void TakeFocus() { root->active_textbox = GetKeyboardTarget();     root->active_controller = GetMouseTarget(); UpdateControllerWait(); }
+  virtual void UpdateControllerWait() {
+    if (controller && controller->frame_on_keyboard_input) app->scheduler.AddMainWaitKeyboard(root);
+    else                                                   app->scheduler.DelMainWaitKeyboard(root);
+  }
 
   virtual bool Animating() const { return Effects(); }
   virtual bool Effects() const { return activeshader != &app->shaders->shader_default; }
@@ -584,7 +588,7 @@ struct ShellTerminalController : public InteractiveTerminalController {
   Socket Open(TextArea *ta) override {
     if (auto t = dynamic_cast<Terminal*>(ta)) {
       t->last_fb = 0;
-      t->SetScrollRegion(1, t->term_height, true);
+      if (t->line_fb.w && t->line_fb.h) t->SetScrollRegion(1, t->term_height, true);
       if (discon_msg.size()) t->Write(discon_msg);
       if (reconnect_cb) {
         Callback r_cb;
@@ -696,8 +700,7 @@ template <class TerminalType> struct TerminalTabT : public TerminalTabInterface 
     Socket fd = controller ? controller->Open(terminal) : InvalidSocket;
     app->scheduler.AddMainWaitSocket
       (root, fd, SocketSet::READABLE, bind(&TerminalTabInterface::ControllerReadableCB, this));
-    if (controller && controller->frame_on_keyboard_input) app->scheduler.AddMainWaitKeyboard(root);
-    else                                                   app->scheduler.DelMainWaitKeyboard(root);
+    UpdateControllerWait();
     if (controller) OpenedController();
   }
 

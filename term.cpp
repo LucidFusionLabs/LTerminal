@@ -79,7 +79,8 @@ inline MyTerminalWindow *GetActiveWindow() {
 struct MyAppState {
   unordered_map<string, Shader> shader_map;
   unique_ptr<Browser> image_browser;
-  unique_ptr<SystemAlertView> info_alert, confirm_alert, passphrase_alert, passphraseconfirm_alert, passphrasefailed_alert;
+  unique_ptr<SystemTimer> flash_timer;
+  unique_ptr<SystemAlertView> flash_alert, info_alert, confirm_alert, passphrase_alert, passphraseconfirm_alert;
   unique_ptr<SystemMenuView> edit_menu, view_menu, toys_menu;
   unique_ptr<MyTerminalMenus> menus;
   int new_win_width = FLAGS_dim.x*Fonts::InitFontWidth(), new_win_height = FLAGS_dim.y*Fonts::InitFontHeight();
@@ -94,21 +95,44 @@ struct MyAppState {
   }
 } *my_app = nullptr;
 
+struct FrameWakeupTimer {
+  Window *root;
+  bool needs_frame=false;
+  unique_ptr<SystemTimer> timer;
+  FrameWakeupTimer(Window *w) : root(w), timer(SystemTimer::Create([=](){
+    needs_frame=1; app->scheduler.Wakeup(root, FrameScheduler::WakeupFlag::InMainThread);
+  })) {}
+
+  void ClearWakeupIn() { needs_frame=false; timer->Clear(); }
+  bool WakeupIn(Time interval) {
+    if (needs_frame && !(needs_frame=0)) { timer->Clear();       return false; }
+    else                                 { timer->Run(interval); return true;  }
+  }
+};
+
 struct MyTerminalTab : public TerminalTab {
   TerminalWindowInterface<TerminalTabInterface> *parent;
   Time join_read_interval = Time(100), refresh_interval = Time(33);
   int join_read_pending = 0;
   bool add_reconnect_links = true;
+  FrameWakeupTimer timer;
+  v2 zoom_val = v2(100, 100);
 
   virtual ~MyTerminalTab() { root->DelGUI(terminal); }
   MyTerminalTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P, int host_id) :
-    TerminalTab(W, W->AddGUI(make_unique<Terminal>(nullptr, W, W->default_font, FLAGS_dim)), host_id), parent(P) {
+    TerminalTab(W, W->AddGUI(make_unique<Terminal>(nullptr, W, W->default_font, FLAGS_dim)), host_id), parent(P), timer(W) {
     terminal->new_link_cb      = bind(&MyTerminalTab::NewLinkCB,   this, _1);
     terminal->hover_control_cb = bind(&MyTerminalTab::HoverLinkCB, this, _1);
     if (terminal->bg_color) W->gd->clear_color = *terminal->bg_color;
   }
 
-  void Draw() { DrawBox(root->gd, root->Box(), true); }
+  void Draw() {
+#ifdef LFL_TERMINAL_JOIN_READS
+    timer.ClearWakeupIn();
+#endif
+    DrawBox(root->gd, root->Box(), true);
+  }
+
   void DrawBox(GraphicsDevice *gd, Box draw_box, bool check_resized) {
     Box orig_draw_box = draw_box;
     int effects = PrepareEffects(&draw_box, my_app->downscale_effects, terminal->extra_height);
@@ -129,7 +153,7 @@ struct MyTerminalTab : public TerminalTab {
     int font_height = terminal->style.font->Height(),     new_height = font_height * terminal->term_height;
     if (FLAGS_resize_grid) root->SetResizeIncrements(font_width, font_height);
     if (new_width != root->width || new_height != root->height) drew = root->Reshape(new_width, new_height);
-    if (!drew) terminal->Redraw(true, true);
+    if (!drew && terminal->line_fb.w && terminal->line_fb.h) terminal->Redraw(true, true);
     INFO("Font: ", app->fonts->DefaultFontEngine()->DebugString(terminal->style.font));
   }
 
@@ -242,8 +266,8 @@ struct MyTerminalTab : public TerminalTab {
       if (read_size) {
         int *pending = &join_read_pending;
         bool join_read = read_size > 255;
-        if (join_read) { if (1            && ++(*pending)) { if (app->scheduler.WakeupIn(parent->root, join_read_interval)) return false; } }
-        else           { if ((*pending)<1 && ++(*pending)) { if (app->scheduler.WakeupIn(parent->root, refresh_interval))   return false; } }
+        if (join_read) { if (1            && ++(*pending)) { if (timer.WakeupIn(join_read_interval)) return false; } }
+        else           { if ((*pending)<1 && ++(*pending)) { if (timer.WakeupIn(refresh_interval))   return false; } }
         *pending = 0;
       }
 #endif
@@ -384,9 +408,6 @@ struct MyTerminalWindow : public TerminalWindowInterface<TerminalTabInterface> {
   }
 
   int Frame(Window *W, unsigned clicks, int flag) {
-#ifdef LFL_TERMINAL_JOIN_READS
-    app->scheduler.ClearWakeupIn(root);
-#endif
     if (tabs.top) tabs.top->Draw();
     W->DrawDialogs();
     if (FLAGS_draw_fps) W->default_font->Draw(StringPrintf("FPS = %.2f", app->focused->fps.FPS()), point(W->width*.85, 0));
@@ -435,6 +456,18 @@ MyTerminalTab *MyTerminalWindow::AddTerminalTab(int host_id) {
   t->terminal->line_fb.align_top_or_bot = t->terminal->cmd_fb.align_top_or_bot = true;
   if (atoi(Application::GetSetting("record_session")))
     t->record = make_unique<FlatFile>(StrCat(app->savedir, "session_", logfiletime(Now()), ".data"));
+  t->terminal->resize_gui_ind.push_back(t->terminal->mouse.AddZoomBox(Box(), MouseController::CoordCB([=](int button, point p, point d, int down) {
+    t->zoom_val = t->zoom_val * v2(d.x/100.0, d.y/100.0);
+    int font_size = root->default_font.desc.size, delta=0;
+    if      ((t->zoom_val.x > 110 || t->zoom_val.y > 110))                  delta =  1;
+    else if ((t->zoom_val.x <  90 || t->zoom_val.y <  90) && font_size > 5) delta = -1;
+    if (delta) {
+      t->zoom_val = v2(100,100); 
+      t->SetFontSize(font_size + delta);
+      my_app->flash_alert->ShowCB(StrCat("Font size ", font_size + delta), "", "", StringCB());
+      my_app->flash_timer->Run(FSeconds(2/3.0), true);
+    }
+  })));
 #endif
   InitTab(t);
   return t;
@@ -584,6 +617,9 @@ extern "C" int MyAppMain() {
 #endif
 
   my_app->image_browser = make_unique<Browser>();
+  my_app->flash_timer = SystemTimer::Create([=](){ my_app->flash_alert->Hide(); });
+  my_app->flash_alert = SystemAlertView::Create(AlertItemVec{
+    { "style", "" }, { "", "" }, { "", "" }, { "", "" } });
   my_app->info_alert = SystemAlertView::Create(AlertItemVec{
     { "style", "" }, { "", "" }, { "", "" }, { "Continue", "" } });
   my_app->confirm_alert = SystemAlertView::Create(AlertItemVec{
@@ -592,8 +628,6 @@ extern "C" int MyAppMain() {
     { "style", "pwinput" }, { "Passphrase", "Passphrase" }, { "Cancel", "" }, { "Continue", "" } });
   my_app->passphraseconfirm_alert = SystemAlertView::Create(AlertItemVec{
     { "style", "pwinput" }, { "Passphrase", "Confirm Passphrase" }, { "Cancel", "" }, { "Continue", "" } });
-  my_app->passphrasefailed_alert = SystemAlertView::Create(AlertItemVec{
-    { "style", "" }, { "Invalid passphrase", "Passphrase failed" }, { "", "" }, { "Continue", "" } });
 #ifndef LFL_TERMINAL_MENUS
   my_app->edit_menu = SystemMenuView::CreateEditMenu(vector<MenuItem>());
   my_app->view_menu = SystemMenuView::Create("View", MenuItemVec{
