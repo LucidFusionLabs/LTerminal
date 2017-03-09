@@ -689,7 +689,8 @@ MySessionsViewController::MySessionsViewController(MyTerminalMenus *m) :
     TableItem("",              TableItem::Separator),
     TableItem{"Close Session", TableItem::Command, "", ">", 0, m->none_icon,       0, bind(&MyTerminalMenus::CloseActiveSession, m)},
     TableItem{"New",           TableItem::Command, "", ">", 0, m->plus_green_icon, 0, bind(&MyTerminalMenus::ShowNewSessionMenu, m, "New Session", true)},
-  })), menus(m) {
+    })), menus(m) {
+  view->hide_cb = bind(&SystemTimer::Clear, m->sessions_update_timer.get());
   view->AddNavigationButton(HAlign::Left,
                             TableItem("Back", TableItem::Button, "", "", 0, 0, 0,
                                       bind(&MyTerminalMenus::HideNewSessionMenu, m)));

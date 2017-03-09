@@ -15,7 +15,7 @@ struct MyTerminalTab;
 struct MyTerminalMenus;
 
 struct MyAppState {
-  unique_ptr<SystemAlertView> info_alert, confirm_alert, passphrase_alert, passphraseconfirm_alert, passphrasefailed_alert;
+  unique_ptr<SystemAlertView> info_alert, confirm_alert, text_alert, passphrase_alert, passphraseconfirm_alert, passphrasefailed_alert;
   unique_ptr<SystemMenuView> toys_menu;
   unique_ptr<MyTerminalMenus> menus;
   virtual ~MyAppState() {}

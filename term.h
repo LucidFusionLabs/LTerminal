@@ -25,7 +25,9 @@ struct TerminalTabInterface : public Dialog {
   Callback closed_cb;
   unique_ptr<Terminal::Controller> controller, last_controller;
   Shader *activeshader = &app->shaders->shader_default;
+  Time connected = Time::zero();
   int connected_host_id=0;
+  bool networked=0;
   TerminalTabInterface(Window *W, float w, float h, int flag, int host_id) : Dialog(W,w,h,flag), connected_host_id(host_id) {}
 
   virtual int ReadAndUpdateTerminalFramebuffer() = 0;
@@ -113,6 +115,7 @@ struct NetworkTerminalController : public TerminalControllerInterface {
   }
 
   virtual void ConnectedCB() {
+    parent->connected = Now();
     conn->AddToMainWait(parent->root, bind(&TerminalTabInterface::ControllerReadableCB, parent));
     if (success_on_connect && success_cb) success_cb();
   }
@@ -282,7 +285,7 @@ struct SSHTerminalController : public NetworkTerminalController {
 
   Socket Open(TextArea *t) {
     Terminal *term = dynamic_cast<Terminal*>(t);
-    SSHReadCB(0, StrCat("Connecting to ", params.user, "@", params.hostport, "\r\n"));
+    SSHReadCB(0, StrCat("Connecting to ", params.user, params.user.size() ? "@" : "", params.hostport, "\r\n"));
     params.background_services = background_services;
     app->RunInNetworkThread([=](){
       success_cb = bind(&SSHTerminalController::SSHLoginCB, this, term);

@@ -496,6 +496,7 @@ struct MyTerminalMenus {
   PickerItem color_picker = PickerItem{ {{"VGA", "Solarized Dark", "Solarized Light"}}, {0} };
   Color green;
 
+  unique_ptr<SystemTimer>          sessions_update_timer;
   unique_ptr<SystemNavigationView> hosts_nav, interfacesettings_nav;
   unique_ptr<SystemTextView>       credits;
   unique_ptr<SystemPurchases>      purchases;
@@ -521,9 +522,10 @@ struct MyTerminalMenus {
   MyUpdateHostViewController       updatehost;
   MyHostsViewController            hosts, hostsfolder;
   MySessionsViewController         sessions;
-  unique_ptr<MyUpgradeViewController> upgrade;
   unique_ptr<SystemToolbarView>       keyboard_toolbar, upgrade_toolbar;
+  unique_ptr<MyUpgradeViewController> upgrade;
   unique_ptr<SystemAdvertisingView>   advertising;
+  int sessions_update_len = 0;
 
   unordered_map<string, Callback> mobile_key_cmd = {
     { "left",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->CursorLeft();  if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
@@ -578,7 +580,8 @@ struct MyTerminalMenus {
     stacked_squares_icon   (CheckNotNull(app->LoadSystemImage("stacked_squares_blue"))),
     none_icon              (CheckNotNull(app->LoadSystemImage("none"))),
     icon_fb(app->focused->gd), green(76, 217, 100),
-    hosts_nav(SystemNavigationView::Create()), interfacesettings_nav(SystemNavigationView::Create()),
+    sessions_update_timer(SystemTimer::Create(bind(&MyTerminalMenus::UpdateSessionsTimer, this))),
+    hosts_nav(SystemNavigationView::Create("")), interfacesettings_nav(SystemNavigationView::Create("")),
     keyboard(this), newkey(this), genkey(this), keyinfo(this), keys(this, &credential_db), about(this),
     support(this), privacy(this), settings(this), terminalinterfacesettings(this), rfbinterfacesettings(this),
     sshfingerprint(this), sshportforward(this), sshsettings(this), telnetsettings(this), vncsettings(this),
@@ -628,6 +631,26 @@ struct MyTerminalMenus {
     else if ((db_protected = true))        hosts.LoadLockedUI  (&host_db);
     hostsfolder.LoadFolderUI(&host_db);
     keyboard_toolbar->Show(true);
+
+    app->open_url_cb = [=](const string &url){
+      app->RunInMainThread([=]{
+        MyHostModel host;
+        string prot, hosttext, port, path;
+        if (!HTTP::ParseURL(url.c_str(), &prot, &hosttext, &port, &path)) return;
+        if      (prot == "ssh"    || prot == "lterm-ssh")    host.SetProtocol("SSH");
+        else if (prot == "vnc"    || prot == "lterm-vnc")    host.SetProtocol("VNC");
+        else if (prot == "telnet" || prot == "lterm-telnet") host.SetProtocol("Telnet");
+        else return ERROR("unknown url protocol ", prot);
+        host.SetPort(0);
+        auto userhost = Split(hosttext, '@');
+        if      (userhost.size() == 1) { host.hostname = userhost[0]; }
+        else if (userhost.size() == 2) { host.username = userhost[0]; host.hostname = userhost[1]; }
+        else return ERROR("unknown url hosttext ", hosttext);
+        INFO("open ", host.username , " @ ", host.hostname);
+        host.cred.Load(CredentialType_Password, "");
+        NewHostConnectTo(host);
+      });
+    };
   }
 
   void PressKey (const string &key) { FindAndDispatch(mobile_key_cmd,       key); }
@@ -778,6 +801,7 @@ struct MyTerminalMenus {
   }
 
   void ShowSessionsMenu() {
+    Time now = Now();
     Box iconb(128, 128);
     int icon_pf = Texture::updatesystemimage_pf, count = 0, selected_row = -1;
     GraphicsContext gc(app->focused->gd);
@@ -803,31 +827,51 @@ struct MyTerminalMenus {
       CHECK_LT(count, sessions_icon.size());
       int icon = sessions_icon[count++];
       app->UpdateSystemImage(icon, icon_tex);
-      section.push_back({t->title, TableItem::Command, "", ">", 0, icon, 0, [=](){
+      section.emplace_back
+        (t->title, TableItem::Command,
+         t->networked ? (t->connected != Time::zero() ? StrCat("Connected ", intervalminutes(now - t->connected)) : "Disconnected") : "", ">", 0, icon, 0, [=](){
         HideNewSessionMenu();
         tw->tabs.SelectTab(t);
         app->scheduler.Wakeup(tw->root);
-      }});
+        }, StringCB(), TableItem::Flag::SubText | TableItem::Flag::ColoredSubText);
+      if (t->networked) section.back().SetFGColor(t->connected != Time::zero() ? Color(0,255,0) : Color(255,0,0));
     }
     icon_fb.Release();
+    sessions_update_len = section.size();
     sessions.view->BeginUpdates();
-    sessions.view->ReplaceSection(0, TableItem(), 0, section);
+    sessions.view->ReplaceSection(0, TableItem(), 0, move(section));
     sessions.view->SelectRow(0, selected_row);
     sessions.view->EndUpdates();
     LaunchSessionsMenu();
   }
 
+  void UpdateSessionsTimer() {
+    StringVec val;
+    Time now = Now();
+    auto tw = GetActiveWindow();
+    for (auto t : tw->tabs.tabs) {
+      Box b(t->GetLastDrawBox().Dimension());
+      if (!b.w || !b.h) continue;
+      val.emplace_back(t->networked ? (t->connected != Time::zero() ? StrCat("Connected ", intervalminutes(now - t->connected)) : "Disconnected") : "");
+    }
+    if (sessions_update_len != val.size()) return;
+    sessions.view->BeginUpdates();
+    sessions.view->SetSectionValues(0, val);
+    sessions.view->EndUpdates();
+    sessions_update_timer->Run(Seconds(1), true);
+  }
+
   void LaunchSessionsMenu() {
-    app->SetAppFrameEnabled(false);
     app->CloseTouchKeyboard();
     hosts_nav->PushTableView(sessions.view.get());
     hosts_nav->Show(true);
     app->ShowSystemStatusBar(true);
+    sessions_update_timer->Run(Seconds(1), true);
   }
 
   void LaunchNewSessionMenu(const string &title, bool back) {
-    app->SetAppFrameEnabled(false);
     app->CloseTouchKeyboard();
+    hosts_nav->PopAll();
     ShowNewSessionMenu(title, back);
     hosts_nav->Show(true);
     app->ShowSystemStatusBar(true);
@@ -835,19 +879,17 @@ struct MyTerminalMenus {
 
   void ShowNewSessionMenu(const string &title, bool back) {
     hosts.view->SetTitle(title); 
-#if 0
     if (!back) hosts.view->DelNavigationButton(HAlign::Left);
     else       hosts.view->AddNavigationButton
       (HAlign::Left, TableItem("Back", TableItem::Button, "", "", 0, 0, 0, bind(&MyTerminalMenus::HideNewSessionMenu, this)));
-#endif
     hosts_nav->PushTableView(my_app->menus->hosts.view.get());
   }
 
   void HideNewSessionMenu() {
     app->ShowSystemStatusBar(false);
+    app->OpenTouchKeyboard();
     hosts_nav->PopAll();
     hosts_nav->Show(false);
-    app->OpenTouchKeyboard(true);
     app->scheduler.Wakeup(app->focused);
   }
 
@@ -855,7 +897,10 @@ struct MyTerminalMenus {
     auto tw = GetActiveWindow();
     tw->CloseActiveTab();
     if (tw->tabs.top) HideNewSessionMenu();
-    else ShowNewSessionMenu(pro_version ? "LTerminal Pro" : "LTerminal", false);
+    else {
+      hosts_nav->PopAll();
+      ShowNewSessionMenu(pro_version ? "LTerminal Pro" : "LTerminal", false);
+    }
   }
 
   void ShowToysMenu() {
@@ -865,9 +910,9 @@ struct MyTerminalMenus {
 
   void HideInterfaceSettings() {
     app->ShowSystemStatusBar(false);
+    app->OpenTouchKeyboard();
     interfacesettings_nav->PopAll();
     interfacesettings_nav->Show(false);
-    app->OpenTouchKeyboard(true);
     app->scheduler.Wakeup(app->focused);
   }
 
@@ -883,7 +928,6 @@ struct MyTerminalMenus {
       terminalinterfacesettings.UpdateViewFromModel(host_model.settings);
       interfacesettings_nav->PushTableView(terminalinterfacesettings.view.get());
     }
-    app->SetAppFrameEnabled(false);
     app->CloseTouchKeyboard();
     interfacesettings_nav->Show(true);
     app->ShowSystemStatusBar(true);
@@ -965,6 +1009,10 @@ struct MyTerminalMenus {
     newhost.UpdateModelFromView(&host, &credential_db);
     UpdateModelFromSettingsView(host.protocol, &host.settings, &host.folder);
     newhost.UpdateViewFromModel();
+    NewHostConnectTo(host);
+  }
+
+  void NewHostConnectTo(MyHostModel &host) {
     if (host.displayname.empty()) {
       if (host.protocol == LTerminal::Protocol_LocalShell) host.displayname = "Local Shell";
       else host.displayname = StrCat(host.username.size() ? StrCat(host.username, "@") : "", host.hostname,
@@ -994,10 +1042,10 @@ struct MyTerminalMenus {
 
   void MenuStartSession() {
     app->ShowSystemStatusBar(false);
+    app->CloseTouchKeyboardAfterReturn(false);
+    app->OpenTouchKeyboard();
     hosts_nav->PopAll();
     hosts_nav->Show(false);
-    app->CloseTouchKeyboardAfterReturn(false);
-    app->OpenTouchKeyboard(true);
     app->scheduler.Wakeup(app->focused);
   }
 
@@ -1029,8 +1077,11 @@ struct MyTerminalMenus {
                    SSHClient::FingerprintCB fingerprint_cb=SSHClient::FingerprintCB(),
                    SSHTerminalController::SavehostCB cb=SSHTerminalController::SavehostCB()) {
     if (host.protocol == LTerminal::Protocol_SSH) {
-      SSHClient::LoadIdentityCB identity_cb = host.cred.credtype != LTerminal::CredentialType_PEM ? SSHClient::LoadIdentityCB() :
-        [=](shared_ptr<SSHClient::Identity> *out) { *out = LoadIdentity(host.cred); return true; };
+      SSHClient::LoadIdentityCB reconnect_identity_cb;
+      if (host.username.empty()) reconnect_identity_cb = [=](shared_ptr<SSHClient::Identity>*) { return false; };
+      else if (host.cred.credtype == LTerminal::CredentialType_PEM)
+        reconnect_identity_cb = [=](shared_ptr<SSHClient::Identity> *out)
+          { *out = LoadIdentity(host.cred); return true; };
       auto ssh = GetActiveWindow()->AddTerminalTab(host.host_id)->UseSSHTerminalController
         (SSHClient::Params{ host.Hostport(), host.username, host.settings.terminal_type,
          host.settings.startup_command.size() ? StrCat(host.settings.startup_command, "\r") : "",
@@ -1038,9 +1089,17 @@ struct MyTerminalMenus {
          host.settings.local_forward, host.settings.remote_forward }, false,
          host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "",
          bind(&SystemToolbarView::ToggleButton, keyboard_toolbar.get(), _1),
-         identity_cb, move(cb), move(fingerprint_cb));
+         move(reconnect_identity_cb), move(cb), move(fingerprint_cb));
       ApplyTerminalSettings(host.settings);
-      if (host.cred.credtype == LTerminal::CredentialType_PEM)
+      if (host.username.empty()) {
+        ssh->identity_cb = [=](shared_ptr<SSHClient::Identity> *out) { 
+          my_app->text_alert->ShowCB
+            ("Login", "Username", "", [=](const string &v) {
+              SSHClient::SendAuthenticationRequest(ssh->conn, shared_ptr<SSHClient::Identity>(), &v);
+            });
+          return false;
+        };
+      } else if (host.cred.credtype == LTerminal::CredentialType_PEM) {
         ssh->identity_cb = [=](shared_ptr<SSHClient::Identity> *out) { 
           if ((*out = LoadIdentity(host.cred))) return true;
           LoadNewIdentity(host.cred, [=](shared_ptr<SSHClient::Identity> identity){
@@ -1048,6 +1107,7 @@ struct MyTerminalMenus {
           });
           return false;
         };
+      }
     } else if (host.protocol == LTerminal::Protocol_Telnet) {
       GetActiveWindow()->AddTerminalTab(host.host_id)->UseTelnetTerminalController
         (host.Hostport(), false, host.settings.close_on_disconnect,

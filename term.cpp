@@ -80,7 +80,7 @@ struct MyAppState {
   unordered_map<string, Shader> shader_map;
   unique_ptr<Browser> image_browser;
   unique_ptr<SystemTimer> flash_timer;
-  unique_ptr<SystemAlertView> flash_alert, info_alert, confirm_alert, passphrase_alert, passphraseconfirm_alert;
+  unique_ptr<SystemAlertView> flash_alert, info_alert, confirm_alert, text_alert, passphrase_alert, passphraseconfirm_alert;
   unique_ptr<SystemMenuView> edit_menu, view_menu, toys_menu;
   unique_ptr<MyTerminalMenus> menus;
   int new_win_width = FLAGS_dim.x*Fonts::InitFontWidth(), new_win_height = FLAGS_dim.y*Fonts::InitFontHeight();
@@ -158,13 +158,18 @@ struct MyTerminalTab : public TerminalTab {
   }
 
   void UsePlaybackTerminalController(unique_ptr<FlatFile> f) {
+    networked = false;
     title = "Playback";
     ChangeController(make_unique<PlaybackTerminalController>(this, move(f)));
   }
 
   void UseShellTerminalController(const string &m, bool commands=true,
                                   StringCB metakey_cb=StringCB(), Callback reconnect_cb=Callback()) {
-    title = "Interactive Shell";
+    if (m.size()) connected = Time::zero();
+    else {
+      networked = false;
+      title = "Interactive Shell";
+    }
     auto c = make_unique<ShellTerminalController>
       (this, m, [=](const string &h){ UseTelnetTerminalController(h, true); },
        [=](const StringVec&) { closed_cb(); }, move(reconnect_cb), commands);
@@ -185,6 +190,7 @@ struct MyTerminalTab : public TerminalTab {
                            SSHClient::LoadIdentityCB identity_cb=SSHClient::LoadIdentityCB(),
                            SSHTerminalController::SavehostCB savehost_cb=SSHTerminalController::SavehostCB(),
                            SSHClient::FingerprintCB fingerprint_cb=SSHClient::FingerprintCB()) {
+    networked = true;
     title = StrCat("SSH ", params.user, "@", params.hostport);
     bool close_on_disconn = params.close_on_disconnect;
     Callback reconnect_cb = (!add_reconnect_links || close_on_disconn) ? Callback() : [=](){
@@ -208,6 +214,7 @@ struct MyTerminalTab : public TerminalTab {
 
   void UseTelnetTerminalController(const string &hostport, bool from_shell=false, bool close_on_disconn=false,
                                    StringCB metakey_cb=StringCB(), Callback savehost_cb=Callback()) {
+    networked = true;
     title = StrCat("Telnet ", hostport);
     Callback reconnect_cb = (!add_reconnect_links || close_on_disconn) ? Callback() : [=](){
       if (dynamic_cast<InteractiveTerminalController*>(controller.get()))
@@ -338,6 +345,7 @@ struct MyRFBTab : public TerminalTabInterface {
   MyRFBTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P, int host_id,
            RFBClient::Params a, string pw, Callback scb) :
     TerminalTabInterface(W, 1.0, 1.0, 0, host_id), parent(P), fb(root->gd) {
+    networked = true;
     title = StrCat("VNC: ", a.hostport);
     auto c = make_unique<RFBTerminalController>(this, move(a), [=](){ closed_cb(); }, &fb);
     c->passphrase_alert = my_app->passphrase_alert.get();
@@ -487,7 +495,8 @@ void MyTerminalWindow::InitTab(TerminalTabInterface *t) {
 #ifdef LFL_TERMINAL_MENUS
   t->closed_cb = [=]() {
     t->deleted_cb();
-    if (!tabs.top) my_app->menus->LaunchNewSessionMenu("LTerminal", false);
+    if (!tabs.top) my_app->menus->LaunchNewSessionMenu
+      (my_app->menus->pro_version ? "LTerminal Pro" : "LTerminal", false);
   };
 #else
   t->closed_cb = [](){ LFAppShutdown(); };
@@ -581,6 +590,9 @@ extern "C" void MyAppCreate(int argc, const char* const* argv) {
   app->SetKeepScreenOn(false);
   app->SetAutoRotateOrientation(true);
 #endif
+#ifdef LFL_IOS
+  app->SetExtendedBackgroundTask([=](){ MSleep(180*1000); });
+#endif
 }
 
 extern "C" int MyAppMain() {
@@ -624,6 +636,8 @@ extern "C" int MyAppMain() {
     { "style", "" }, { "", "" }, { "", "" }, { "Continue", "" } });
   my_app->confirm_alert = SystemAlertView::Create(AlertItemVec{
     { "style", "" }, { "", "" }, { "Cancel", "" }, { "Continue", "" } });
+  my_app->text_alert = SystemAlertView::Create(AlertItemVec{
+    { "style", "textinput" }, { "", "" }, { "Cancel", "" }, { "Continue", "" } });
   my_app->passphrase_alert = SystemAlertView::Create(AlertItemVec{
     { "style", "pwinput" }, { "Passphrase", "Passphrase" }, { "Cancel", "" }, { "Continue", "" } });
   my_app->passphraseconfirm_alert = SystemAlertView::Create(AlertItemVec{
