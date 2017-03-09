@@ -102,13 +102,8 @@ struct MyHostSettingsModel {
 
 struct MyAppSettingsModel {
   static const int LatestVersion = 1;
-  int version = LatestVersion;
+  int version = LatestVersion, background_timeout = 180;
   bool keep_display_on=0;
-#ifdef LFL_ANDROID
-  string theme = "Dark";
-#else
-  string theme = "Light";
-#endif
   MyHostSettingsModel default_host_settings;
 
   MyAppSettingsModel() {}
@@ -121,12 +116,12 @@ struct MyAppSettingsModel {
     version = s->version();
     default_host_settings.LoadProto(*s->default_host_settings());
     keep_display_on = s->keep_display_on();
-    theme = GetFlatBufferString(s->theme());
+    background_timeout = s->background_timeout();
   }
 
   flatbuffers::Offset<LTerminal::AppSettings> SaveProto(FlatBufferBuilder &fb) const {
     return LTerminal::CreateAppSettings(fb, version, default_host_settings.SaveProto(fb), keep_display_on,
-                                        fb.CreateString(theme));
+                                        background_timeout);
   }
 
   FlatBufferPiece SaveBlob() const {
@@ -195,6 +190,9 @@ struct MyHostModel {
 
   MyHostModel() { Load(); }
   MyHostModel(MyHostDB *host_db, MyCredentialDB *cred_db, MySettingsDB *settings_db, int id) { Load(host_db, cred_db, settings_db, id); }
+  MyHostModel(int id, const LTerminal::Host *host) : host_id(id), fingerprint_type(0) { LoadTarget(host); }
+
+  bool TargetEqual(const MyHostModel &h) const { return hostname==h.hostname && port == h.port && username==h.username; }
 
   string Hostport() const {
     string ret = hostname;
@@ -235,9 +233,20 @@ struct MyHostModel {
 
   void Load(MyHostDB *host_db, MyCredentialDB *cred_db, MySettingsDB *settings_db, int id) {
     auto host = flatbuffers::GetRoot<LTerminal::Host>(FindRefOrDie(host_db->data, (host_id = id)).data());
-    protocol = host->protocol();
+    LoadTarget(host);
+    displayname = GetFlatBufferString(host->displayname());
+    folder      = GetFlatBufferString(host->folder()); 
+    fingerprint = GetFlatBufferString(host->fingerprint());
     fingerprint_type = host->fingerprint_type();
+    CHECK(host->settings_id());
+    settings.Load(settings_db, host->settings_id());
 
+    if (!host->credential() || host->credential()->db() != LTerminal::CredentialDBType_Table) cred.Load();
+    else cred.Load(cred_db, host->credential()->id());
+  }
+
+  void LoadTarget(const LTerminal::Host *host) {
+    protocol = host->protocol();
     if (host->hostport()) {
       hostname = host->hostport()->data();
       size_t colon = hostname.find(":");
@@ -247,16 +256,7 @@ struct MyHostModel {
       hostname = "";
       SetPort(0);
     }
-
-    username    = GetFlatBufferString(host->username());
-    displayname = GetFlatBufferString(host->displayname());
-    fingerprint = GetFlatBufferString(host->fingerprint());
-    folder      = GetFlatBufferString(host->folder()); 
-    CHECK(host->settings_id());
-    settings.Load(settings_db, host->settings_id());
-
-    if (!host->credential() || host->credential()->db() != LTerminal::CredentialDBType_Table) cred.Load();
-    else cred.Load(cred_db, host->credential()->id());
+    username = GetFlatBufferString(host->username());
   }
 
   flatbuffers::Offset<LTerminal::Host>
@@ -579,9 +579,9 @@ struct MyTerminalMenus {
     check_icon             (CheckNotNull(app->LoadSystemImage("check"))),
     stacked_squares_icon   (CheckNotNull(app->LoadSystemImage("stacked_squares_blue"))),
     none_icon              (CheckNotNull(app->LoadSystemImage("none"))),
-    icon_fb(app->focused->gd), green(76, 217, 100),
+    icon_fb(app->focused->gd), theme(Application::GetSetting("theme")), green(76, 217, 100),
     sessions_update_timer(SystemTimer::Create(bind(&MyTerminalMenus::UpdateSessionsTimer, this))),
-    hosts_nav(SystemNavigationView::Create("")), interfacesettings_nav(SystemNavigationView::Create("")),
+    hosts_nav(SystemNavigationView::Create("", theme)), interfacesettings_nav(SystemNavigationView::Create("", theme)),
     keyboard(this), newkey(this), genkey(this), keyinfo(this), keys(this, &credential_db), about(this),
     support(this), privacy(this), settings(this), terminalinterfacesettings(this), rfbinterfacesettings(this),
     sshfingerprint(this), sshportforward(this), sshsettings(this), telnetsettings(this), vncsettings(this),
@@ -641,15 +641,24 @@ struct MyTerminalMenus {
         else if (prot == "vnc"    || prot == "lterm-vnc")    host.SetProtocol("VNC");
         else if (prot == "telnet" || prot == "lterm-telnet") host.SetProtocol("Telnet");
         else return ERROR("unknown url protocol ", prot);
-        host.SetPort(0);
         auto userhost = Split(hosttext, '@');
         if      (userhost.size() == 1) { host.hostname = userhost[0]; }
         else if (userhost.size() == 2) { host.username = userhost[0]; host.hostname = userhost[1]; }
         else return ERROR("unknown url hosttext ", hosttext);
-        INFO("open ", host.username , " @ ", host.hostname);
+        auto hostport = Split(host.hostname, ':');
+        if (hostport.size() == 2) host.hostname = hostport[0];
+        host.SetPort(hostport.size() == 2 ? atoi(hostport[1]) : 0);
+        for (auto &hi : host_db.data) {
+          if (hi.first == 1) continue;
+          MyHostModel h(hi.first, flatbuffers::GetRoot<LTerminal::Host>(hi.second.data()));
+          if (h.TargetEqual(host)) return ConnectHost(hi.first);
+        }
         host.cred.Load(CredentialType_Password, "");
         NewHostConnectTo(host);
       });
+      if (hosts_nav->shown) hosts_nav->Show(false);
+      if (interfacesettings_nav->shown) interfacesettings_nav->Show(false);
+      app->scheduler.Wakeup(app->focused);
     };
   }
 
@@ -665,6 +674,7 @@ struct MyTerminalMenus {
       CHECK_EQ(1, settings_db.Insert(MyAppSettingsModel().SaveBlob()));
       CHECK_EQ(1, MyHostModel().SaveNew(&host_db, &credential_db, &settings_db));
     }
+    ApplyGlobalSettings();
     return true;
   }
   
@@ -679,6 +689,20 @@ struct MyTerminalMenus {
     SQLite::ChangePassphrase(db, pw);
     db_protected = true;
     settings.view->show_cb();
+  }
+
+  void ApplyGlobalSettings() {
+    MyAppSettingsModel global_settings(&settings_db);
+    my_app->background_timeout = global_settings.background_timeout;
+    app->SetKeepScreenOn(global_settings.keep_display_on);
+  }
+
+  void ChangeTheme(const string &v) {
+    theme = v;
+    hosts_nav->SetTheme(v);
+    interfacesettings_nav->SetTheme(v);
+    for (auto &i : tableviews) i->view->SetTheme(v); 
+    Application::SaveSettings(StringPairVec{ StringPair("theme", v) });
   }
 
   void ResetSettingsView() {

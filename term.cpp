@@ -84,7 +84,7 @@ struct MyAppState {
   unique_ptr<SystemMenuView> edit_menu, view_menu, toys_menu;
   unique_ptr<MyTerminalMenus> menus;
   int new_win_width = FLAGS_dim.x*Fonts::InitFontWidth(), new_win_height = FLAGS_dim.y*Fonts::InitFontHeight();
-  int downscale_effects = 1;
+  int downscale_effects = 1, background_timeout = 180;
   virtual ~MyAppState();
 
   Shader *GetShader(const string &shader_name) { 
@@ -560,6 +560,7 @@ extern "C" void MyAppCreate(int argc, const char* const* argv) {
     StringPair("send_crash_reports", "1"),
     StringPair("write_log_file",     "0"),
     StringPair("record_session",     "0"),
+    StringPair("theme",              ANDROID ? "Dark" : "Light"),
   });
   if (atoi(Application::GetSetting("write_log_file"))) {
     FLAGS_logfile = "\x01";
@@ -591,7 +592,7 @@ extern "C" void MyAppCreate(int argc, const char* const* argv) {
   app->SetAutoRotateOrientation(true);
 #endif
 #ifdef LFL_IOS
-  app->SetExtendedBackgroundTask([=](){ MSleep(180*1000); });
+  app->SetExtendedBackgroundTask([=](){ MSleep(my_app->background_timeout * 1000); });
 #endif
 }
 
