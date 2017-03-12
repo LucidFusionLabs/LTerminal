@@ -110,7 +110,7 @@ MyKeysViewController::MyKeysViewController(MyTerminalMenus *m, MyCredentialDB *m
 void MyKeysViewController::UpdateViewFromModel() {
   vector<TableItem> section;
   for (auto credential : model->data) {
-    auto c = flatbuffers::GetRoot<LTerminal::Credential>(credential.second.data());
+    auto c = flatbuffers::GetRoot<LTerminal::Credential>(credential.second.blob.data());
     if (c->type() != CredentialType_PEM) continue;
     string name = c->displayname() ? c->displayname()->data() : "";
     section.emplace_back(name, TableItem::Command, "", "", credential.first, menus->key_icon, menus->settings_gray_icon,
@@ -152,13 +152,13 @@ MySupportViewController::MySupportViewController(MyTerminalMenus *m) :
 
 MyPrivacyViewController::MyPrivacyViewController(MyTerminalMenus *m) :
   MyTableViewController(m, SystemTableView::Create("Privacy", "", m->theme, vector<TableItem>{
-    TableItem("Send Crash Data and Statistics",      TableItem::Toggle,    "", "", 0, 0, 0),
-    TableItem("Relaunch for changes to take effect", TableItem::Separator, ""),
-    TableItem("Write log file",                      TableItem::Toggle,    ""),
-    TableItem("Record session",                      TableItem::Toggle,    ""),
-    TableItem("Crash Log Identifiers",               TableItem::Separator, ""),
-    TableItem("Name",                                TableItem::TextInput, "", "", 0, 0, 0),
-    TableItem("Email",                               TableItem::TextInput, "", "", 0, 0, 0),
+    TableItem("Send Crash Data and Statistics",      TableItem::Toggle,    "", "", 0, 0, 0, Callback(), bind(&Application::SaveSetting, "send_crash_reports", _1)),
+    TableItem("Relaunch for changes to take effect", TableItem::Separator),
+    TableItem("Write log file",                      TableItem::Toggle,    "", "", 0, 0, 0, Callback(), bind(&Application::SaveSetting, "write_log_file", _1)),
+    TableItem("Record session",                      TableItem::Toggle,    "", "", 0, 0, 0, Callback(), bind(&Application::SaveSetting, "record_session", _1)),
+    TableItem("Crash Log Identifiers",               TableItem::Separator),
+    TableItem("Name",                                TableItem::TextInput, "", "", 0, 0, 0, Callback(), bind(&Application::SaveSetting, "crash_report_name", _1)),
+    TableItem("Email",                               TableItem::TextInput, "", "", 0, 0, 0, Callback(), bind(&Application::SaveSetting, "crash_report_email", _1)),
   })) {
   view->show_cb = [=](){
     view->BeginUpdates();
@@ -169,19 +169,6 @@ MyPrivacyViewController::MyPrivacyViewController(MyTerminalMenus *m) :
                                          Application::GetSetting("crash_report_email") });
     view->EndUpdates();
     view->changed = false;
-  };
-  view->hide_cb = [=](){
-    if (view->changed) {
-      StringPairVec s0 = view->GetSectionText(0), s1 = view->GetSectionText(1), s2 = view->GetSectionText(2);
-      CHECK_EQ(1, s0.size());
-      CHECK_EQ(2, s1.size());
-      CHECK_EQ(2, s2.size());
-      Application::SaveSettings(StringPairVec{ 
-        StringPair("send_crash_reports", s0[0].second), StringPair("write_log_file", s1[0].second),
-        StringPair("record_session", s1[1].second), StringPair("crash_report_name", s2[0].second),
-        StringPair("crash_report_email", s2[1].second)
-      });
-    }
   };
 }
 
@@ -203,6 +190,7 @@ MyAppSettingsViewController::MyAppSettingsViewController(MyTerminalMenus *m) :
     view->SetHidden(0, 1, !m->db_opened || !m->db_protected);
     view->SetSelected(0, 2, m->theme == "Dark");
     view->EndUpdates();
+    view->changed = false;
   };
   view->hide_cb = [=](){
     if (view->changed) {
@@ -231,6 +219,7 @@ MyTerminalInterfaceSettingsViewController::MyTerminalInterfaceSettingsViewContro
   view->AddNavigationButton(HAlign::Left,
                             TableItem("Back", TableItem::Button, "", "", 0, 0, 0,
                                       bind(&MyTerminalMenus::HideInterfaceSettings, m)));
+  view->show_cb = Callback();
   view->hide_cb = [=](){
     auto t = GetActiveTerminalTab();
     if (view->changed && t && t->connected_host_id) {
@@ -259,12 +248,12 @@ vector<TableItem> MyTerminalInterfaceSettingsViewController::GetSchema(MyTermina
 }
 
 void MyTerminalInterfaceSettingsViewController::UpdateViewFromModel(const MyHostSettingsModel &host_model) {
+  int font_size = app->focused->default_font.desc.size;
   view->BeginUpdates();
-  view->SetSectionValues(0, vector<string>{ 
-    StrCat(app->focused->default_font.desc.name, " ", app->focused->default_font.desc.size), "",
+  view->SetSectionValues(0, vector<string>{ StrCat(app->focused->default_font.desc.name, " ", font_size), "",
     host_model.color_scheme, "", "None", "", "" });
   view->EndUpdates();
-  view->changed = false;
+  view->changed = host_model.font_size != font_size;
 }
 
 void MyTerminalInterfaceSettingsViewController::UpdateModelFromView(MyHostSettingsModel *host_model) const {
@@ -655,11 +644,17 @@ void MyHostsViewController::LoadUnlockedUI(MyHostDB *model) {
 }
 
 void MyHostsViewController::UpdateViewFromModel(MyHostDB *model) {
+  vector<SQLiteIdValueStore::EntryPointer> sorted;
+  for (auto &host : model->data)
+    if (host.first != 1) sorted.push_back({ host.first, &host.second.blob, host.second.date });
+  sort(sorted.begin(), sorted.end(),
+       MemberGreaterThanCompare<SQLiteIdValueStore::EntryPointer, Time, &SQLiteIdValueStore::EntryPointer::date>());
+
   vector<TableItem> section;
   unordered_set<string> seen_folders;
-  for (auto &host : model->data) {
-    if (host.first == 1) continue;
-    const LTerminal::Host *h = flatbuffers::GetRoot<LTerminal::Host>(host.second.data());
+  for (auto &host : sorted) {
+    Time connected(host.date);
+    const LTerminal::Host *h = flatbuffers::GetRoot<LTerminal::Host>(host.blob->data());
     string displayname = GetFlatBufferString(h->displayname()), host_folder = GetFlatBufferString(h->folder());
     if (folder.size()) { if (host_folder != folder) continue; }
     else if (host_folder.size()) {
@@ -669,13 +664,17 @@ void MyHostsViewController::UpdateViewFromModel(MyHostDB *model) {
           menus->hosts_nav->PushTableView(menus->hostsfolder.view.get()); });
       continue;
     }
+    bool timestamp = true;
     int host_icon = menus->host_icon;
-    if      (h->protocol() == LTerminal::Protocol_SSH)        host_icon = menus->host_locked_icon;
-    else if (h->protocol() == LTerminal::Protocol_RFB)        host_icon = menus->vnc_icon;
-    else if (h->protocol() == LTerminal::Protocol_LocalShell) host_icon = menus->terminal_icon;
-    section.emplace_back(displayname, TableItem::Command, "", "", host.first, host_icon, 
-                         menus->settings_blue_icon, bind(&MyTerminalMenus::ConnectHost, menus, host.first),
-                         bind(&MyTerminalMenus::HostInfo, menus, host.first));
+    if      (h->protocol() == LTerminal::Protocol_SSH)        { host_icon = menus->host_locked_icon; }
+    else if (h->protocol() == LTerminal::Protocol_RFB)        { host_icon = menus->vnc_icon; }
+    else if (h->protocol() == LTerminal::Protocol_LocalShell) { host_icon = menus->terminal_icon; timestamp = false; }
+
+    section.emplace_back(displayname, TableItem::Command,
+                         timestamp ? StrCat("Connected ", localhttptime(connected)) : "",
+                         "", host.id, host_icon, menus->settings_blue_icon,
+                         bind(&MyTerminalMenus::ConnectHost, menus, host.id),
+                         bind(&MyTerminalMenus::HostInfo, menus, host.id), TableItem::Flag::SubText);
   }
   view->BeginUpdates();
   if (!menu) view->ReplaceSection(0, TableItem(), TableSection::Flag::EditableIfHasTag, section);

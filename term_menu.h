@@ -63,7 +63,7 @@ struct MyHostSettingsModel {
 
   void Load(MySettingsDB *settings_db, int id) {
     LoadProto(*flatbuffers::GetRoot<LTerminal::HostSettings>
-              (FindRefOrDie(settings_db->data, (settings_id = id)).data()));
+              (FindRefOrDie(settings_db->data, (settings_id = id)).blob.data()));
   }
   
   void LoadProto(const LTerminal::HostSettings &r) {
@@ -111,7 +111,7 @@ struct MyAppSettingsModel {
 
   void Load() { *this = MyAppSettingsModel(); }
   void Load(MySettingsDB *settings_db) {
-    auto s = flatbuffers::GetRoot<LTerminal::AppSettings>(FindRefOrDie(settings_db->data, 1).data());
+    auto s = flatbuffers::GetRoot<LTerminal::AppSettings>(FindRefOrDie(settings_db->data, 1).blob.data());
     CHECK(s->default_host_settings());
     version = s->version();
     default_host_settings.LoadProto(*s->default_host_settings());
@@ -149,7 +149,7 @@ struct MyCredentialModel {
   void Load(MyCredentialDB *cred_db, int id) {
     auto it = cred_db->data.find((cred_id = id));
     if (it != cred_db->data.end()) {
-      auto cred = flatbuffers::GetRoot<LTerminal::Credential>(it->second.data());
+      auto cred = flatbuffers::GetRoot<LTerminal::Credential>(it->second.blob.data());
       credtype = cred->type();
       creddata = GetFlatBufferString(cred->data());
       name = GetFlatBufferString(cred->displayname());
@@ -232,7 +232,7 @@ struct MyHostModel {
   }
 
   void Load(MyHostDB *host_db, MyCredentialDB *cred_db, MySettingsDB *settings_db, int id) {
-    auto host = flatbuffers::GetRoot<LTerminal::Host>(FindRefOrDie(host_db->data, (host_id = id)).data());
+    auto host = flatbuffers::GetRoot<LTerminal::Host>(FindRefOrDie(host_db->data, (host_id = id)).blob.data());
     LoadTarget(host);
     displayname = GetFlatBufferString(host->displayname());
     folder      = GetFlatBufferString(host->folder()); 
@@ -273,9 +273,9 @@ struct MyHostModel {
       (bind(&MyHostModel::SaveProto, this, _1, credref, settings_row_id));
   }
 
-  int Save(MyHostDB *host_db, const LTerminal::CredentialRef &credref, int settings_row_id, int row_id=0) const {
+  int Save(MyHostDB *host_db, const LTerminal::CredentialRef &credref, int settings_row_id, int row_id=0, bool update_date=0) const {
     if (!row_id) row_id = host_db->Insert(        SaveBlob(credref, settings_row_id));
-    else                  host_db->Update(row_id, SaveBlob(credref, settings_row_id));
+    else                  host_db->Update(row_id, SaveBlob(credref, settings_row_id), update_date);
     return row_id;
   }
 
@@ -289,7 +289,7 @@ struct MyHostModel {
   }
 
   int Update(const MyHostModel &prevhost,
-             MyHostDB *host_db, MyCredentialDB *cred_db, MySettingsDB *settings_db) const {
+             MyHostDB *host_db, MyCredentialDB *cred_db, MySettingsDB *settings_db, bool update_date=0) const {
     int cred_row_id = prevhost.cred.cred_id;
     if (prevhost.cred.credtype == CredentialType_Password) {
       if (cred.credtype != CredentialType_Password) cred_db->Erase(cred_row_id);
@@ -300,7 +300,7 @@ struct MyHostModel {
     LTerminal::CredentialRef credref
       (cred.credtype == CredentialType_Ask ? CredentialDBType_Null : CredentialDBType_Table, cred_row_id);
     settings_db->Update(prevhost.settings.settings_id, settings.SaveBlob());
-    return Save(host_db, credref, prevhost.settings.settings_id, prevhost.host_id);
+    return Save(host_db, credref, prevhost.settings.settings_id, prevhost.host_id, update_date);
   }
 };
 
@@ -588,7 +588,7 @@ struct MyTerminalMenus {
     localshellsettings(this), protocol(this), newhost(this), updatehost(this), hosts(this, true),
     hostsfolder(this, false), sessions(this) {
 
-    keyboard_toolbar = SystemToolbarView::Create(MenuItemVec{
+    keyboard_toolbar = SystemToolbarView::Create(theme, MenuItemVec{
       { "\U00002699", "",       bind(&MyTerminalMenus::ShowInterfaceSettings, this) },
       { "esc",        "",       bind(&MyTerminalMenus::PressKey,         this, "esc") },
       { "ctrl",       "toggle", bind(&MyTerminalMenus::ToggleKey,        this, "ctrl") },
@@ -610,7 +610,7 @@ struct MyTerminalMenus {
     purchases = SystemPurchases::Create();
     if (!(pro_version = purchases->HavePurchase(pro_product_id))) {
       upgrade = make_unique<MyUpgradeViewController>(this, pro_product_id);
-      if ((upgrade_toolbar = SystemToolbarView::Create(MenuItemVec{
+      if ((upgrade_toolbar = SystemToolbarView::Create(theme, MenuItemVec{
         { "Upgrade to LTerminal Pro", "", [=](){ hosts_nav->PushTableView(upgrade->view.get()); } }
       }))) hosts.view->SetToolbar(upgrade_toolbar.get());
       if ((advertising = SystemAdvertisingView::Create
@@ -650,7 +650,7 @@ struct MyTerminalMenus {
         host.SetPort(hostport.size() == 2 ? atoi(hostport[1]) : 0);
         for (auto &hi : host_db.data) {
           if (hi.first == 1) continue;
-          MyHostModel h(hi.first, flatbuffers::GetRoot<LTerminal::Host>(hi.second.data()));
+          MyHostModel h(hi.first, flatbuffers::GetRoot<LTerminal::Host>(hi.second.blob.data()));
           if (h.TargetEqual(host)) return ConnectHost(hi.first);
         }
         host.cred.Load(CredentialType_Password, "");
@@ -701,6 +701,8 @@ struct MyTerminalMenus {
     theme = v;
     hosts_nav->SetTheme(v);
     interfacesettings_nav->SetTheme(v);
+    keyboard_toolbar->SetTheme(v);
+    if (upgrade_toolbar) upgrade_toolbar->SetTheme(v);
     for (auto &i : tableviews) i->view->SetTheme(v); 
     Application::SaveSettings(StringPairVec{ StringPair("theme", v) });
   }
@@ -990,19 +992,13 @@ struct MyTerminalMenus {
     hosts_nav->PushTableView(newhost.view.get());
   }
 
-  void StartShell() {
-    GetActiveWindow()->AddTerminalTab(1)->UseShellTerminalController("");
-    MenuStartSession();
-    app->scheduler.Wakeup(app->focused);
-  }
-
   void ConnectHost(int host_id) {
     MyHostModel host(&host_db, &credential_db, &settings_db, host_id);
     MenuConnect(host, [=](int fpt, const StringPiece &fpb) -> bool {
       string fp = fpb.str();
       return host.FingerprintMatch(fpt, fp) ? true : ShowAcceptFingerprintAlert(fp);
     }, [=](int fpt, const string &fp) mutable {
-      if (host.FingerprintMatch(fpt, fp)) return;
+      if (host.FingerprintMatch(fpt, fp)) { host_db.UpdateDate(host_id, Now()); return; }
       host.SetFingerprint(fpt, fp);
       host.Update(host, &host_db, &credential_db, &settings_db);
     });
@@ -1060,7 +1056,7 @@ struct MyTerminalMenus {
         return updatehost.prev_model.FingerprintMatch(fpt, fp) ? true : ShowAcceptFingerprintAlert(fp);
       }, [=](int fpt, const string &fp) mutable {
         host.SetFingerprint(fpt, fp);
-        host.Update(updatehost.prev_model, &host_db, &credential_db, &settings_db);
+        host.Update(updatehost.prev_model, &host_db, &credential_db, &settings_db, true);
       });
   }
 
@@ -1143,7 +1139,7 @@ struct MyTerminalMenus {
                                    host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "",
                                    (bool(cb) ? Callback([=](){ cb(0, ""); }) : Callback()));
     } else if (host.protocol == LTerminal::Protocol_LocalShell) {
-      StartShell();
+      GetActiveWindow()->AddTerminalTab(1)->UseShellTerminalController("");
       if (cb) cb(0, "");
       ApplyTerminalSettings(host.settings);
     }
