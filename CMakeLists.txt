@@ -57,7 +57,7 @@ if(NOT LFL_MOBILE)
   lfl_post_build_copy_bin(lterm-render-sandbox lterm-render-sandbox LTerminal)
 endif()
 
-lfl_project(lterm)
+lfl_project(lterm com.lucidfusionlabs.LTerminal)
 lfl_add_package(lterm SOURCES term.cpp term.rc ${FLATBUFFERS_SRC_OUTPUTS}
                 COMPILE_DEFINITIONS ${CRYPTO_DEF} ${MENUS_DEF} ${PTY_DEF}
                 LINK_LIBRARIES ${LFL_APP_LIB} ${TERMINAL_FRAMEWORK} ${TERMINAL_GRAPHICS}

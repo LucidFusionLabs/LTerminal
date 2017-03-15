@@ -95,21 +95,6 @@ struct MyAppState {
   }
 } *my_app = nullptr;
 
-struct FrameWakeupTimer {
-  Window *root;
-  bool needs_frame=false;
-  unique_ptr<SystemTimer> timer;
-  FrameWakeupTimer(Window *w) : root(w), timer(SystemTimer::Create([=](){
-    needs_frame=1; app->scheduler.Wakeup(root, FrameScheduler::WakeupFlag::InMainThread);
-  })) {}
-
-  void ClearWakeupIn() { needs_frame=false; timer->Clear(); }
-  bool WakeupIn(Time interval) {
-    if (needs_frame && !(needs_frame=0)) { timer->Clear();       return false; }
-    else                                 { timer->Run(interval); return true;  }
-  }
-};
-
 struct MyTerminalTab : public TerminalTab {
   TerminalWindowInterface<TerminalTabInterface> *parent;
   Time join_read_interval = Time(100), refresh_interval = Time(33);
