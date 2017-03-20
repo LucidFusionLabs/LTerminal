@@ -9,7 +9,7 @@
 	<key>CFBundleDisplayName</key>
 	<string>LTerminal</string>
 	<key>CFBundleExecutable</key>
-	<string>lterm</string>
+	<string>LTerminal</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.lucidfusionlabs.LTerminal</string>
 	<key>CFBundleInfoDictionaryVersion</key>
