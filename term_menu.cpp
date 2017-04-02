@@ -180,6 +180,9 @@ MyAppSettingsViewController::MyAppSettingsViewController(MyTerminalMenus *m) :
     TableItem("SQLCipher", TableItem::Command, "", "Enabled >", 0, m->locked_icon, 0, bind(&MyTerminalMenus::DisableLocalEncryption, m)),
     TableItem("Theme",           TableItem::Selector, "Light,Dark", "", 0, 0, 0, Callback(), [=](const string &n){ view->SetSelected(0, 2, n == "Dark"); m->ChangeTheme(n); }),
     TableItem("Keep Display On", TableItem::Toggle,  ""),
+#ifdef LFL_IOS
+    TableItem("Background Timeout", TableItem::NumberInput, ""),
+#endif
     TableItem("",                TableItem::Separator, ""),
     TableItem("About",           TableItem::Command, "", ">", 0, 0, 0, bind(&SystemNavigationView::PushTableView, m->hosts_nav.get(), m->about.view.get())),
     TableItem("Support",         TableItem::Command, "", ">", 0, 0, 0, bind(&SystemNavigationView::PushTableView, m->hosts_nav.get(), m->support.view.get())),
@@ -189,6 +192,9 @@ MyAppSettingsViewController::MyAppSettingsViewController(MyTerminalMenus *m) :
     view->SetHidden(0, 0, !m->db_opened ||  m->db_protected); 
     view->SetHidden(0, 1, !m->db_opened || !m->db_protected);
     view->SetSelected(0, 2, m->theme == "Dark");
+#ifdef LFL_IOS
+    view->SetValue(0, 4, StrCat(my_app->background_timeout));
+#endif
     view->EndUpdates();
     view->changed = false;
   };
@@ -209,9 +215,16 @@ void MyAppSettingsViewController::UpdateViewFromModel(const MyAppSettingsModel &
 }
 
 void MyAppSettingsViewController::UpdateModelFromView(MyAppSettingsModel *model) {
-  string a="", b="", theme="Theme", keepdisplayon="Keep Display On";
-  if (!view->GetSectionText(0, {&a, &b, &theme, &keepdisplayon})) return ERROR("parse appsettings0");
+  string a="", b="", theme="Theme", keepdisplayon="Keep Display On", background_timeout="Background Timeout";
+  if (!view->GetSectionText(0, {&a, &b, &theme, &keepdisplayon
+#ifdef LFL_IOS
+                            , &background_timeout
+#endif
+                            })) return ERROR("parse appsettings0");
   model->keep_display_on = keepdisplayon == "1";
+#ifdef LFL_IOS
+  model->background_timeout = Clamp(atoi(background_timeout), 0, 180);
+#endif
 }
 
 MyTerminalInterfaceSettingsViewController::MyTerminalInterfaceSettingsViewController(MyTerminalMenus *m) :
@@ -620,13 +633,14 @@ void MyHostsViewController::LoadFolderUI(MyHostDB *model) {
 void MyHostsViewController::LoadLockedUI(MyHostDB *model) {
   CHECK(menu);
   view->BeginUpdates();
-  view->ReplaceSection(1, TableItem(), 0, TableItemVec{});
   view->ReplaceSection(0, TableItem(), 0, TableItemVec{
-    TableItem("Unlock", TableItem::Command, "", ">", 0, 0, 0, [=](){
+    TableItem("Unlock", TableItem::Command, "", ">", 0, menus->unlocked_icon, 0, [=](){
       my_app->passphrase_alert->ShowCB("Unlock", "Passphrase", "", [=](const string &pw){
         if (menus->UnlockEncryptedDatabase(pw)) { LoadUnlockedUI(model); view->show_cb(); }
       }); })
   });
+  view->ReplaceSection(1, TableItem(), 0, TableItemVec{});
+  view->ReplaceSection(2, TableItem(), 0, TableItemVec{});
   view->EndUpdates();
   view->changed = false;
 }
@@ -634,13 +648,16 @@ void MyHostsViewController::LoadLockedUI(MyHostDB *model) {
 void MyHostsViewController::LoadUnlockedUI(MyHostDB *model) {
   CHECK(menu);
   view->BeginUpdates();
-  view->ReplaceSection(0, TableItem(), 0, VectorCat<TableItem>(GetBaseSchema(menus), TableItemVec{
+  view->ReplaceSection(0, TableItem(), 0, TableItemVec{});
+  view->ReplaceSection(1, TableItem(), 0, TableItemVec{});
+  view->ReplaceSection(2, TableItem(), 0, VectorCat<TableItem>(GetBaseSchema(menus), TableItemVec{
     TableItem("New",      TableItem::Command, "", ">", 0, menus->plus_red_icon,      0, bind(&MyTerminalMenus::ShowNewHost,     menus)),
     TableItem("Settings", TableItem::Command, "", ">", 0, menus->settings_gray_icon, 0, bind(&MyTerminalMenus::ShowAppSettings, menus))
   }));
   view->EndUpdates();
   view->SetEditableSection(menu, 0, bind(&MyTerminalMenus::DeleteHost, menus, _1, _2));
   view->show_cb = bind(&MyHostsViewController::UpdateViewFromModel, this, model);
+  view->hide_cb = bind(&SystemTimer::Clear, menus->sessions_update_timer.get());
 }
 
 void MyHostsViewController::UpdateViewFromModel(MyHostDB *model) {
@@ -683,18 +700,6 @@ void MyHostsViewController::UpdateViewFromModel(MyHostDB *model) {
      (section.size() ? TableSection::Flag::EditButton : 0) | TableSection::Flag::EditableIfHasTag, section);
   view->EndUpdates();
   view->changed = false;
-}
-
-MySessionsViewController::MySessionsViewController(MyTerminalMenus *m) :
-  MyTableViewController(m, SystemTableView::Create("Sessions", "big", m->theme, TableItemVec{
-    TableItem("",              TableItem::Separator),
-    TableItem{"Close Session", TableItem::Command, "", ">", 0, m->none_icon,       0, bind(&MyTerminalMenus::CloseActiveSession, m)},
-    TableItem{"New",           TableItem::Command, "", ">", 0, m->plus_green_icon, 0, bind(&MyTerminalMenus::ShowNewSessionMenu, m, "New Session", true)},
-    })), menus(m) {
-  view->hide_cb = bind(&SystemTimer::Clear, m->sessions_update_timer.get());
-  view->AddNavigationButton(HAlign::Left,
-                            TableItem("Back", TableItem::Button, "", "", 0, 0, 0,
-                                      bind(&MyTerminalMenus::HideNewSessionMenu, m)));
 }
 
 MyUpgradeViewController::MyUpgradeViewController(MyTerminalMenus *m, const string &product_id) : MyTableViewController(m), menus(m) {

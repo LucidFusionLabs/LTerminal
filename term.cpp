@@ -545,7 +545,7 @@ extern "C" void MyAppCreate(int argc, const char* const* argv) {
     StringPair("send_crash_reports", "1"),
     StringPair("write_log_file",     "0"),
     StringPair("record_session",     "0"),
-    StringPair("theme",              ANDROID ? "Dark" : "Light"),
+    StringPair("theme",              "Dark"),
   });
   if (atoi(Application::GetSetting("write_log_file"))) {
     FLAGS_logfile = "\x01";

@@ -461,12 +461,6 @@ struct MyHostsViewController : public MyTableViewController {
   void UpdateViewFromModel(MyHostDB *model);
 };
 
-struct MySessionsViewController : public MyTableViewController {
-  MyTerminalMenus *menus;
-  MySessionsViewController(MyTerminalMenus*);
-  void UpdateViewFromModel();
-};
-
 struct MyUpgradeViewController : public MyTableViewController {
   MyTerminalMenus *menus;
   unique_ptr<SystemProduct> product;
@@ -489,7 +483,7 @@ struct MyTerminalMenus {
       audio_icon, eye_icon, recycle_icon, fingerprint_icon, info_icon, keyboard_icon, folder_icon, logo_image, logo_icon,
       plus_red_icon, plus_green_icon, vnc_icon, locked_icon, unlocked_icon, font_icon, toys_icon,
       arrowleft_icon, arrowright_icon, clipboard_upload_icon, clipboard_download_icon, keygen_icon,
-      user_icon, calendar_icon, check_icon, stacked_squares_icon, none_icon;
+      user_icon, calendar_icon, check_icon, stacked_squares_icon, ex_icon, none_icon;
   vector<int> sessions_icon;
   FrameBuffer icon_fb;
   string pw_default = "\x01""Ask each time", pw_empty = "lfl_default", pro_product_id = "com.lucidfusionlabs.lterminal.paid", theme;
@@ -521,7 +515,6 @@ struct MyTerminalMenus {
   MyNewHostViewController          newhost;
   MyUpdateHostViewController       updatehost;
   MyHostsViewController            hosts, hostsfolder;
-  MySessionsViewController         sessions;
   unique_ptr<SystemToolbarView>       keyboard_toolbar, upgrade_toolbar;
   unique_ptr<MyUpgradeViewController> upgrade;
   unique_ptr<SystemAdvertisingView>   advertising;
@@ -578,6 +571,7 @@ struct MyTerminalMenus {
     calendar_icon          (CheckNotNull(app->LoadSystemImage("calendar"))),
     check_icon             (CheckNotNull(app->LoadSystemImage("check"))),
     stacked_squares_icon   (CheckNotNull(app->LoadSystemImage("stacked_squares_blue"))),
+    ex_icon                (CheckNotNull(app->LoadSystemImage("ex"))),
     none_icon              (CheckNotNull(app->LoadSystemImage("none"))),
     icon_fb(app->focused->gd), theme(Application::GetSetting("theme")), green(76, 217, 100),
     sessions_update_timer(SystemTimer::Create(bind(&MyTerminalMenus::UpdateSessionsTimer, this))),
@@ -586,7 +580,7 @@ struct MyTerminalMenus {
     support(this), privacy(this), settings(this), terminalinterfacesettings(this), rfbinterfacesettings(this),
     sshfingerprint(this), sshportforward(this), sshsettings(this), telnetsettings(this), vncsettings(this),
     localshellsettings(this), protocol(this), newhost(this), updatehost(this), hosts(this, true),
-    hostsfolder(this, false), sessions(this) {
+    hostsfolder(this, false) {
 
     keyboard_toolbar = SystemToolbarView::Create(theme, MenuItemVec{
       { "\U00002699", "",       bind(&MyTerminalMenus::ShowInterfaceSettings, this) },
@@ -855,19 +849,26 @@ struct MyTerminalMenus {
       app->UpdateSystemImage(icon, icon_tex);
       section.emplace_back
         (t->title, TableItem::Command,
-         t->networked ? (t->connected != Time::zero() ? StrCat("Connected ", intervalminutes(now - t->connected)) : "Disconnected") : "", ">", 0, icon, 0, [=](){
-        HideNewSessionMenu();
-        tw->tabs.SelectTab(t);
-        app->scheduler.Wakeup(tw->root);
-        }, StringCB(), TableItem::Flag::SubText | TableItem::Flag::ColoredSubText);
+         t->networked ? (t->connected != Time::zero() ? StrCat("Connected ", intervalminutes(now - t->connected)) : "Disconnected") : "", "", 0, icon, ex_icon, [=](){
+           HideNewSessionMenu();
+           tw->tabs.SelectTab(t);
+           app->scheduler.Wakeup(tw->root);
+         }, [=](const string&){
+           t->deleted_cb();
+           hosts.view->BeginUpdates();
+           hosts.view->SetHidden(0, section.size(), true);
+           hosts.view->EndUpdates();
+         }, TableItem::Flag::SubText | TableItem::Flag::ColoredSubText);
       if (t->networked) section.back().SetFGColor(t->connected != Time::zero() ? Color(0,255,0) : Color(255,0,0));
     }
     icon_fb.Release();
     sessions_update_len = section.size();
-    sessions.view->BeginUpdates();
-    sessions.view->ReplaceSection(0, TableItem(), 0, move(section));
-    sessions.view->SelectRow(0, selected_row);
-    sessions.view->EndUpdates();
+    hosts.view->BeginUpdates();
+    hosts.view->ReplaceSection
+      (0, TableItem("Sessions"), TableSection::Flag::DoubleRowHeight |
+       TableSection::Flag::HighlightSelectedRow | TableSection::Flag::DeleteRowsWhenAllHidden, move(section));
+    hosts.view->SelectRow(0, selected_row);
+    hosts.view->EndUpdates();
     LaunchSessionsMenu();
   }
 
@@ -881,15 +882,15 @@ struct MyTerminalMenus {
       val.emplace_back(t->networked ? (t->connected != Time::zero() ? StrCat("Connected ", intervalminutes(now - t->connected)) : "Disconnected") : "");
     }
     if (sessions_update_len != val.size()) return;
-    sessions.view->BeginUpdates();
-    sessions.view->SetSectionValues(0, val);
-    sessions.view->EndUpdates();
+    hosts.view->BeginUpdates();
+    hosts.view->SetSectionValues(0, val);
+    hosts.view->EndUpdates();
     sessions_update_timer->Run(Seconds(1), true);
   }
 
   void LaunchSessionsMenu() {
     app->CloseTouchKeyboard();
-    hosts_nav->PushTableView(sessions.view.get());
+    hosts_nav->PushTableView(hosts.view.get());
     hosts_nav->Show(true);
     app->ShowSystemStatusBar(true);
     sessions_update_timer->Run(Seconds(1), true);
@@ -917,16 +918,6 @@ struct MyTerminalMenus {
     hosts_nav->PopAll();
     hosts_nav->Show(false);
     app->scheduler.Wakeup(app->focused);
-  }
-
-  void CloseActiveSession() {
-    auto tw = GetActiveWindow();
-    tw->CloseActiveTab();
-    if (tw->tabs.top) HideNewSessionMenu();
-    else {
-      hosts_nav->PopAll();
-      ShowNewSessionMenu(pro_version ? "LTerminal Pro" : "LTerminal", false);
-    }
   }
 
   void ShowToysMenu() {

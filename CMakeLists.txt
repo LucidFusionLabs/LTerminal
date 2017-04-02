@@ -101,4 +101,5 @@ if(NOT LFL_MOBILE)
                  app_null_png app_null_jpeg app_null_gif app_null_ogg app_null_css ${LFL_APP_FONT}
                  app_null_ssl app_null_js app_null_tu
 								 ${TERMINAL_DB_LIB} ${TERMINAL_CRYPTO_LIB} app_null_toolkit ${LFL_APP_OS} ${LFL_APP_FRAMEWORK_OS_LIB})
+  add_dependencies(term_tests LTerminal)
 endif()
