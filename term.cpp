@@ -72,16 +72,16 @@ struct MyTerminalMenus;
 struct MyTerminalTab;
 struct MyTerminalWindow;
 inline MyTerminalWindow *GetActiveWindow() {
-  if (auto w = app->focused) return w->GetOwnGUI<MyTerminalWindow>(0);
+  if (auto w = app->focused) return w->GetOwnView<MyTerminalWindow>(0);
   else                       return nullptr;
 }
 
 struct MyAppState {
   unordered_map<string, Shader> shader_map;
   unique_ptr<Browser> image_browser;
-  unique_ptr<SystemTimer> flash_timer;
-  unique_ptr<SystemAlertView> flash_alert, info_alert, confirm_alert, text_alert, passphrase_alert, passphraseconfirm_alert;
-  unique_ptr<SystemMenuView> edit_menu, view_menu, toys_menu;
+  unique_ptr<TimerInterface> flash_timer;
+  unique_ptr<AlertViewInterface> flash_alert, info_alert, confirm_alert, text_alert, passphrase_alert, passphraseconfirm_alert;
+  unique_ptr<MenuViewInterface> edit_menu, view_menu, toys_menu;
   unique_ptr<MyTerminalMenus> menus;
   int new_win_width = FLAGS_dim.x*Fonts::InitFontWidth(), new_win_height = FLAGS_dim.y*Fonts::InitFontHeight();
   int downscale_effects = 1, background_timeout = 180;
@@ -103,9 +103,9 @@ struct MyTerminalTab : public TerminalTab {
   FrameWakeupTimer timer;
   v2 zoom_val = v2(100, 100);
 
-  virtual ~MyTerminalTab() { root->DelGUI(terminal); }
+  virtual ~MyTerminalTab() { root->DelView(terminal); }
   MyTerminalTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P, int host_id) :
-    TerminalTab(W, W->AddGUI(make_unique<Terminal>(nullptr, W, W->default_font, FLAGS_dim)), host_id), parent(P), timer(W) {
+    TerminalTab(W, W->AddView(make_unique<Terminal>(nullptr, W, W->default_font, FLAGS_dim)), host_id), parent(P), timer(W) {
     terminal->new_link_cb      = bind(&MyTerminalTab::NewLinkCB,   this, _1);
     terminal->hover_control_cb = bind(&MyTerminalTab::HoverLinkCB, this, _1);
     if (terminal->bg_color) W->gd->clear_color = *terminal->bg_color;
@@ -480,8 +480,7 @@ void MyTerminalWindow::InitTab(TerminalTabInterface *t) {
 #ifdef LFL_TERMINAL_MENUS
   t->closed_cb = [=]() {
     t->deleted_cb();
-    if (!tabs.top) my_app->menus->LaunchNewSessionMenu
-      (my_app->menus->pro_version ? "LTerminal Pro" : "LTerminal", false);
+    my_app->menus->ShowMainMenu(false);
   };
 #else
   t->closed_cb = [](){ LFAppShutdown(); };
@@ -498,8 +497,8 @@ void MyWindowInit(Window *W) {
 
 void MyWindowStart(Window *W) {
   CHECK(W->gd->have_framebuffer);
-  CHECK_EQ(0, W->NewGUI());
-  auto tw = W->ReplaceGUI(0, make_unique<MyTerminalWindow>(W));
+  CHECK_EQ(0, W->NewView());
+  auto tw = W->ReplaceView(0, make_unique<MyTerminalWindow>(W));
   if (FLAGS_console) W->InitConsole(bind(&MyTerminalWindow::ConsoleAnimatingCB, tw));
   W->frame_cb = bind(&MyTerminalWindow::Frame, tw, _1, _2, _3);
   W->default_controller = [=]() -> MouseController* { if (auto t = GetActiveTab()) return t->GetMouseTarget();    return nullptr; };
@@ -615,22 +614,22 @@ extern "C" int MyAppMain() {
 #endif
 
   my_app->image_browser = make_unique<Browser>();
-  my_app->flash_timer = SystemTimer::Create([=](){ my_app->flash_alert->Hide(); });
-  my_app->flash_alert = SystemAlertView::Create(AlertItemVec{
+  my_app->flash_timer = SystemToolkit::CreateTimer([=](){ my_app->flash_alert->Hide(); });
+  my_app->flash_alert = SystemToolkit::CreateAlert(AlertItemVec{
     { "style", "" }, { "", "" }, { "", "" }, { "", "" } });
-  my_app->info_alert = SystemAlertView::Create(AlertItemVec{
+  my_app->info_alert = SystemToolkit::CreateAlert(AlertItemVec{
     { "style", "" }, { "", "" }, { "", "" }, { "Continue", "" } });
-  my_app->confirm_alert = SystemAlertView::Create(AlertItemVec{
+  my_app->confirm_alert = SystemToolkit::CreateAlert(AlertItemVec{
     { "style", "" }, { "", "" }, { "Cancel", "" }, { "Continue", "" } });
-  my_app->text_alert = SystemAlertView::Create(AlertItemVec{
+  my_app->text_alert = SystemToolkit::CreateAlert(AlertItemVec{
     { "style", "textinput" }, { "", "" }, { "Cancel", "" }, { "Continue", "" } });
-  my_app->passphrase_alert = SystemAlertView::Create(AlertItemVec{
+  my_app->passphrase_alert = SystemToolkit::CreateAlert(AlertItemVec{
     { "style", "pwinput" }, { "Passphrase", "Passphrase" }, { "Cancel", "" }, { "Continue", "" } });
-  my_app->passphraseconfirm_alert = SystemAlertView::Create(AlertItemVec{
+  my_app->passphraseconfirm_alert = SystemToolkit::CreateAlert(AlertItemVec{
     { "style", "pwinput" }, { "Passphrase", "Confirm Passphrase" }, { "Cancel", "" }, { "Continue", "" } });
 #ifndef LFL_TERMINAL_MENUS
-  my_app->edit_menu = SystemMenuView::CreateEditMenu(vector<MenuItem>());
-  my_app->view_menu = SystemMenuView::Create("View", MenuItemVec{
+  my_app->edit_menu = SystemToolkit::CreateEditMenu(vector<MenuItem>());
+  my_app->view_menu = SystemToolkit::CreateMenu("View", MenuItemVec{
 #ifdef __APPLE__
     MenuItem{ "=", "Zoom In" },
     MenuItem{ "-", "Zoom Out" },
@@ -644,7 +643,7 @@ extern "C" int MyAppMain() {
   if (FLAGS_term.empty()) FLAGS_term = BlankNull(getenv("TERM"));
 #endif
 
-  my_app->toys_menu = SystemMenuView::Create("Toys", vector<MenuItem>{
+  my_app->toys_menu = SystemToolkit::CreateMenu("Toys", vector<MenuItem>{
     MenuItem{ "", "None",         [=](){ if (auto t = GetActiveTab()) t->ChangeShader("none");     } },
     MenuItem{ "", "Warper",       [=](){ if (auto t = GetActiveTab()) t->ChangeShader("warper");   } },
     MenuItem{ "", "Water",        [=](){ if (auto t = GetActiveTab()) t->ChangeShader("water");    } },

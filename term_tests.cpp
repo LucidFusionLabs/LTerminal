@@ -15,8 +15,8 @@ struct MyTerminalTab;
 struct MyTerminalMenus;
 
 struct MyAppState {
-  unique_ptr<SystemAlertView> info_alert, confirm_alert, text_alert, passphrase_alert, passphraseconfirm_alert, passphrasefailed_alert;
-  unique_ptr<SystemMenuView> toys_menu;
+  unique_ptr<AlertViewInterface> info_alert, confirm_alert, text_alert, passphrase_alert, passphraseconfirm_alert, passphrasefailed_alert;
+  unique_ptr<MenuViewInterface> toys_menu;
   unique_ptr<MyTerminalMenus> menus;
   int background_timeout = 180;
   virtual ~MyAppState() {}
@@ -32,9 +32,9 @@ struct MyTerminalWindow : public TerminalWindowInterface<TerminalTabInterface> {
 
 struct MyTerminalTab : public TerminalTab {
   TerminalWindowInterface<TerminalTabInterface> *parent;
-  virtual ~MyTerminalTab() { root->DelGUI(terminal); }
+  virtual ~MyTerminalTab() { root->DelView(terminal); }
   MyTerminalTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P, int host_id) :
-    TerminalTab(W, W->AddGUI(make_unique<Terminal>(nullptr, W, W->default_font, point(80,25))), host_id), parent(P) {}
+    TerminalTab(W, W->AddView(make_unique<Terminal>(nullptr, W, W->default_font, point(80,25))), host_id), parent(P) {}
 
   void ChangeColors(const string &colors_name, bool redraw=true) {}
   void UseShellTerminalController(const string &m) {}
@@ -50,7 +50,7 @@ struct MyTerminalTab : public TerminalTab {
 };
 
 inline MyTerminalWindow *GetActiveWindow() {
-  if (auto w = app->focused) return w->GetOwnGUI<MyTerminalWindow>(0);
+  if (auto w = app->focused) return w->GetOwnView<MyTerminalWindow>(0);
   else                       return nullptr;
 }
 

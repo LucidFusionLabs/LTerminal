@@ -309,8 +309,8 @@ struct MyGenKeyModel {
   int bits=0;
 };
 
-struct MyTableViewController : public SystemTableViewController {
-  MyTableViewController(MyTerminalMenus*, unique_ptr<SystemTableView> = unique_ptr<SystemTableView>());
+struct MyTableViewController : public TableViewController {
+  MyTableViewController(MyTerminalMenus*, unique_ptr<TableViewInterface> = unique_ptr<TableViewInterface>());
 };
 
 struct MyKeyboardSettingsViewController : public MyTableViewController {
@@ -364,16 +364,16 @@ struct MyAppSettingsViewController : public MyTableViewController {
 
 struct MyTerminalInterfaceSettingsViewController : public MyTableViewController {
   MyTerminalInterfaceSettingsViewController(MyTerminalMenus*);
-  static vector<TableItem> GetBaseSchema(MyTerminalMenus*, SystemNavigationView*);
-  static vector<TableItem> GetSchema(MyTerminalMenus*, SystemNavigationView*);
+  static vector<TableItem> GetBaseSchema(MyTerminalMenus*, NavigationViewInterface*);
+  static vector<TableItem> GetSchema(MyTerminalMenus*, NavigationViewInterface*);
   void UpdateViewFromModel(const MyHostSettingsModel &host_model);
   void UpdateModelFromView(MyHostSettingsModel *host_model) const;
 };
 
 struct MyRFBInterfaceSettingsViewController : public MyTableViewController {
   MyRFBInterfaceSettingsViewController(MyTerminalMenus*);
-  static vector<TableItem> GetBaseSchema(MyTerminalMenus*, SystemNavigationView*);
-  static vector<TableItem> GetSchema(MyTerminalMenus*, SystemNavigationView*);
+  static vector<TableItem> GetBaseSchema(MyTerminalMenus*, NavigationViewInterface*);
+  static vector<TableItem> GetSchema(MyTerminalMenus*, NavigationViewInterface*);
   void UpdateViewFromModel(const MyHostSettingsModel &host_model);
   void UpdateModelFromView(MyHostSettingsModel *host_model) const;
 };
@@ -463,7 +463,7 @@ struct MyHostsViewController : public MyTableViewController {
 
 struct MyUpgradeViewController : public MyTableViewController {
   MyTerminalMenus *menus;
-  unique_ptr<SystemProduct> product;
+  unique_ptr<ProductInterface> product;
   bool loading_product=false, purchasing_product=false;
   MyUpgradeViewController(MyTerminalMenus*, const string&);
   void PurchaseUpgrade();
@@ -490,10 +490,10 @@ struct MyTerminalMenus {
   PickerItem color_picker = PickerItem{ {{"VGA", "Solarized Dark", "Solarized Light"}}, {0} };
   Color green;
 
-  unique_ptr<SystemTimer>          sessions_update_timer;
-  unique_ptr<SystemNavigationView> hosts_nav, interfacesettings_nav;
-  unique_ptr<SystemTextView>       credits;
-  unique_ptr<SystemPurchases>      purchases;
+  unique_ptr<TimerInterface>          sessions_update_timer;
+  unique_ptr<NavigationViewInterface> hosts_nav, interfacesettings_nav;
+  unique_ptr<TextViewInterface>       credits;
+  unique_ptr<PurchasesInterface>      purchases;
   MyKeyboardSettingsViewController keyboard;
   MyNewKeyViewController           newkey;
   MyGenKeyViewController           genkey;
@@ -515,9 +515,9 @@ struct MyTerminalMenus {
   MyNewHostViewController          newhost;
   MyUpdateHostViewController       updatehost;
   MyHostsViewController            hosts, hostsfolder;
-  unique_ptr<SystemToolbarView>       keyboard_toolbar, upgrade_toolbar;
+  unique_ptr<ToolbarViewInterface>    keyboard_toolbar, upgrade_toolbar;
   unique_ptr<MyUpgradeViewController> upgrade;
-  unique_ptr<SystemAdvertisingView>   advertising;
+  unique_ptr<AdvertisingViewInterface> advertising;
   int sessions_update_len = 0;
 
   unordered_map<string, Callback> mobile_key_cmd = {
@@ -574,15 +574,16 @@ struct MyTerminalMenus {
     ex_icon                (CheckNotNull(app->LoadSystemImage("ex"))),
     none_icon              (CheckNotNull(app->LoadSystemImage("none"))),
     icon_fb(app->focused->gd), theme(Application::GetSetting("theme")), green(76, 217, 100),
-    sessions_update_timer(SystemTimer::Create(bind(&MyTerminalMenus::UpdateSessionsTimer, this))),
-    hosts_nav(SystemNavigationView::Create("", theme)), interfacesettings_nav(SystemNavigationView::Create("", theme)),
+    sessions_update_timer(SystemToolkit::CreateTimer(bind(&MyTerminalMenus::UpdateMainMenuTimer, this))),
+    hosts_nav(SystemToolkit::CreateNavigationView("", theme)),
+    interfacesettings_nav(SystemToolkit::CreateNavigationView("", theme)),
     keyboard(this), newkey(this), genkey(this), keyinfo(this), keys(this, &credential_db), about(this),
     support(this), privacy(this), settings(this), terminalinterfacesettings(this), rfbinterfacesettings(this),
     sshfingerprint(this), sshportforward(this), sshsettings(this), telnetsettings(this), vncsettings(this),
     localshellsettings(this), protocol(this), newhost(this), updatehost(this), hosts(this, true),
     hostsfolder(this, false) {
 
-    keyboard_toolbar = SystemToolbarView::Create(theme, MenuItemVec{
+    keyboard_toolbar = SystemToolkit::CreateToolbar(theme, MenuItemVec{
       { "\U00002699", "",       bind(&MyTerminalMenus::ShowInterfaceSettings, this) },
       { "esc",        "",       bind(&MyTerminalMenus::PressKey,         this, "esc") },
       { "ctrl",       "toggle", bind(&MyTerminalMenus::ToggleKey,        this, "ctrl") },
@@ -596,19 +597,19 @@ struct MyTerminalMenus {
       { "\U000023EC", "",       bind(&MyTerminalMenus::PressKey,         this, "pgdown") }, 
       { "\U000023EA", "",       bind(&MyTerminalMenus::PressKey,         this, "home") },
       { "\U000023E9", "",       bind(&MyTerminalMenus::PressKey,         this, "end") }, 
-      { /*"\U000025F0",*/ "","",bind(&MyTerminalMenus::ShowSessionsMenu, this), stacked_squares_icon },
+      { /*"\U000025F0",*/ "","",bind(&MyTerminalMenus::ShowMainMenu,     this, true), stacked_squares_icon },
     });
 
 #if defined(LFL_IOS) || defined(LFL_ANDROID)
     INFO("Loading in-app purchases");
-    purchases = SystemPurchases::Create();
+    purchases = SystemToolkit::CreatePurchases();
     if (!(pro_version = purchases->HavePurchase(pro_product_id))) {
       upgrade = make_unique<MyUpgradeViewController>(this, pro_product_id);
-      if ((upgrade_toolbar = SystemToolbarView::Create(theme, MenuItemVec{
+      if ((upgrade_toolbar = SystemToolkit::CreateToolbar(theme, MenuItemVec{
         { "Upgrade to LTerminal Pro", "", [=](){ hosts_nav->PushTableView(upgrade->view.get()); } }
       }))) hosts.view->SetToolbar(upgrade_toolbar.get());
-      if ((advertising = SystemAdvertisingView::Create
-           (SystemAdvertisingView::Type::BANNER, VAlign::Bottom,
+      if ((advertising = SystemToolkit::CreateAdvertisingView
+           (AdvertisingViewInterface::Type::BANNER, VAlign::Bottom,
 #if defined(LFL_IOS)
             "ca-app-pub-4814825103153665/8426276832", {"41a638aad263424dd2207fdef30f4c10"}
 #elif defined(LFL_ANDROID)
@@ -796,7 +797,7 @@ struct MyTerminalMenus {
 
   void ChooseKey(int cred_row_id) {
     hosts_nav->PopView(1);
-    SystemTableView *host_menu = hosts_nav->Back();
+    TableViewInterface *host_menu = hosts_nav->Back();
     int key_row = 2 + (host_menu->GetKey(0, 0) == "Nickname");
     host_menu->BeginUpdates();
     if (cred_row_id) {
@@ -813,14 +814,14 @@ struct MyTerminalMenus {
 
   void ChooseProtocol(const string &n) {
     hosts_nav->PopView(1);
-    SystemTableView *host_menu = hosts_nav->Back();
+    TableViewInterface *host_menu = hosts_nav->Back();
     int host_row = (host_menu->GetKey(0, 0) == "Nickname");
     host_menu->BeginUpdates();
     host_menu->ApplyChangeSet(n, newhost.proto_deps);
     host_menu->EndUpdates();
   }
 
-  void ShowSessionsMenu() {
+  void ShowMainMenu(bool back) {
     Time now = Now();
     Box iconb(128, 128);
     int icon_pf = Texture::updatesystemimage_pf, count = 0, selected_row = -1;
@@ -850,7 +851,7 @@ struct MyTerminalMenus {
       section.emplace_back
         (t->title, TableItem::Command,
          t->networked ? (t->connected != Time::zero() ? StrCat("Connected ", intervalminutes(now - t->connected)) : "Disconnected") : "", "", 0, icon, ex_icon, [=](){
-           HideNewSessionMenu();
+           HideMainMenu();
            tw->tabs.SelectTab(t);
            app->scheduler.Wakeup(tw->root);
          }, [=](const string&){
@@ -866,13 +867,23 @@ struct MyTerminalMenus {
     hosts.view->BeginUpdates();
     hosts.view->ReplaceSection
       (0, TableItem("Sessions"), TableSection::Flag::DoubleRowHeight |
-       TableSection::Flag::HighlightSelectedRow | TableSection::Flag::DeleteRowsWhenAllHidden, move(section));
+       TableSection::Flag::HighlightSelectedRow | TableSection::Flag::DeleteRowsWhenAllHidden |
+       TableSection::Flag::ClearLeftNavWhenEmpty, move(section));
     hosts.view->SelectRow(0, selected_row);
+    hosts.view->SetTitle(pro_version ? "LTerminal Pro" : "LTerminal"); 
+    if (!back) hosts.view->DelNavigationButton(HAlign::Left);
+    else       hosts.view->AddNavigationButton
+      (HAlign::Left, TableItem("Back", TableItem::Button, "", "", 0, 0, 0, bind(&MyTerminalMenus::HideMainMenu, this)));
     hosts.view->EndUpdates();
-    LaunchSessionsMenu();
+
+    app->CloseTouchKeyboard();
+    hosts_nav->PushTableView(hosts.view.get());
+    hosts_nav->Show(true);
+    app->ShowSystemStatusBar(true);
+    sessions_update_timer->Run(Seconds(1), true);
   }
 
-  void UpdateSessionsTimer() {
+  void UpdateMainMenuTimer() {
     StringVec val;
     Time now = Now();
     auto tw = GetActiveWindow();
@@ -888,31 +899,7 @@ struct MyTerminalMenus {
     sessions_update_timer->Run(Seconds(1), true);
   }
 
-  void LaunchSessionsMenu() {
-    app->CloseTouchKeyboard();
-    hosts_nav->PushTableView(hosts.view.get());
-    hosts_nav->Show(true);
-    app->ShowSystemStatusBar(true);
-    sessions_update_timer->Run(Seconds(1), true);
-  }
-
-  void LaunchNewSessionMenu(const string &title, bool back) {
-    app->CloseTouchKeyboard();
-    hosts_nav->PopAll();
-    ShowNewSessionMenu(title, back);
-    hosts_nav->Show(true);
-    app->ShowSystemStatusBar(true);
-  }
-
-  void ShowNewSessionMenu(const string &title, bool back) {
-    hosts.view->SetTitle(title); 
-    if (!back) hosts.view->DelNavigationButton(HAlign::Left);
-    else       hosts.view->AddNavigationButton
-      (HAlign::Left, TableItem("Back", TableItem::Button, "", "", 0, 0, 0, bind(&MyTerminalMenus::HideNewSessionMenu, this)));
-    hosts_nav->PushTableView(my_app->menus->hosts.view.get());
-  }
-
-  void HideNewSessionMenu() {
+  void HideMainMenu() {
     app->ShowSystemStatusBar(false);
     app->OpenTouchKeyboard();
     hosts_nav->PopAll();
@@ -1099,7 +1086,7 @@ struct MyTerminalMenus {
          host.settings.compression, host.settings.agent_forwarding, host.settings.close_on_disconnect, true,
          host.settings.local_forward, host.settings.remote_forward }, false,
          host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "",
-         bind(&SystemToolbarView::ToggleButton, keyboard_toolbar.get(), _1),
+         bind(&ToolbarViewInterface::ToggleButton, keyboard_toolbar.get(), _1),
          move(reconnect_identity_cb), move(cb), move(fingerprint_cb));
       ApplyTerminalSettings(host.settings);
       if (host.username.empty()) {
@@ -1122,7 +1109,7 @@ struct MyTerminalMenus {
     } else if (host.protocol == LTerminal::Protocol_Telnet) {
       GetActiveWindow()->AddTerminalTab(host.host_id)->UseTelnetTerminalController
         (host.Hostport(), false, host.settings.close_on_disconnect,
-         bind(&SystemToolbarView::ToggleButton, keyboard_toolbar.get(), _1),
+         bind(&ToolbarViewInterface::ToggleButton, keyboard_toolbar.get(), _1),
          (bool(cb) ? Callback([=](){ cb(0, ""); }) : Callback()));
       ApplyTerminalSettings(host.settings);
     } else if (host.protocol == LTerminal::Protocol_RFB) {

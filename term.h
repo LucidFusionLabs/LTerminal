@@ -268,7 +268,7 @@ struct SSHTerminalController : public NetworkTerminalController {
   string fingerprint, password;
   int fingerprint_type=0;
   unordered_set<Socket> forward_fd;
-  SystemAlertView *passphrase_alert=0;
+  AlertViewInterface *passphrase_alert=0;
 
   SSHTerminalController(TerminalTabInterface *p, SSHClient::Params a, const Callback &ccb) :
     NetworkTerminalController(p, a.hostport, ccb), params(move(a)),
@@ -444,7 +444,7 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
   Box viewport;
   string password;
   Callback savehost_cb;
-  SystemAlertView *passphrase_alert=0;
+  AlertViewInterface *passphrase_alert=0;
   bool zoom_x_dir=0, zoom_y_dir;
   Box zoom_start_viewport;
   v2 zoom_last;
@@ -668,12 +668,12 @@ struct BufferedShellTerminalController : public ShellTerminalController {
 
 template <class TerminalType> struct TerminalTabT : public TerminalTabInterface {
   TerminalType *terminal;
-  GUI scrollbar_gui;
+  View scrollbar_view;
   Widget::Slider scrollbar;
   unique_ptr<FlatFile> record;
 
   TerminalTabT(Window *W, TerminalType *t, int host_id) :
-    TerminalTabInterface(W, 1.0, 1.0, 0, host_id), terminal(t), scrollbar_gui(W), scrollbar(&scrollbar_gui) {
+    TerminalTabInterface(W, 1.0, 1.0, 0, host_id), terminal(t), scrollbar_view(W), scrollbar(&scrollbar_view) {
     scrollbar.arrows = false;
 #ifdef FUZZ_DEBUG
     for (int i=0; i<256; i++) {
@@ -722,20 +722,20 @@ template <class TerminalType> struct TerminalTabT : public TerminalTabInterface 
   }
 
   void DrawScrollBar(const Box &draw_box) {
-    if (Changed(&scrollbar_gui.box, draw_box)) {
-      scrollbar_gui.ClearGUI();
+    if (Changed(&scrollbar_view.box, draw_box)) {
+      scrollbar_view.ClearView();
       scrollbar.LayoutAttached(draw_box.RelativeCoordinatesBox()); 
     }
     scrollbar.scrolled = 1.0 - terminal->v_scrolled;
     scrollbar.Update(true);
-    scrollbar_gui.Draw();
+    scrollbar_view.Draw();
   }
 };
 typedef TerminalTabT<Terminal> TerminalTab;
 
-template <class X> struct TerminalWindowInterface : public GUI {
+template <class X> struct TerminalWindowInterface : public View {
   TabbedDialog<X> tabs;
-  TerminalWindowInterface(Window *W) : GUI(W), tabs(this) {}
+  TerminalWindowInterface(Window *W) : View(W), tabs(this) {}
   virtual void UpdateTargetFPS() = 0;
 #ifdef LFL_RFB
   virtual X *AddRFBTab(int host_id, RFBClient::Params p, string, Callback savehost_cb=Callback()) = 0;
