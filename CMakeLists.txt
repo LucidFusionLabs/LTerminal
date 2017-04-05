@@ -1,7 +1,7 @@
 # $Id: CMakeLists.txt 1320 2014-10-26 08:12:52Z justin $
 
 if(LFL_IOS)
-  set(CRASHREPORTING_LIB app_hockeyapp_crashreporting)
+  set(CRASHREPORTING_LIB app_fabric_crashreporting)
 else()
   set(CRASHREPORTING_LIB app_null_crashreporting)
 endif()

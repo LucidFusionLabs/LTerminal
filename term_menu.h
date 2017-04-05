@@ -37,9 +37,10 @@ struct MyAutocompleteDB : public SQLiteIdValueStore { using SQLiteIdValueStore::
 struct MyHostSettingsModel {
   int settings_id, autocomplete_id, font_size;
   bool agent_forwarding, compression, close_on_disconnect;
-  string terminal_type, startup_command, font_name, color_scheme, prompt;
+  string terminal_type, startup_command, font_name, color_scheme, keyboard_theme, prompt;
   LTerminal::BeepType beep_type;
   LTerminal::TextEncoding text_encoding;
+  LTerminal::EnterMode enter_mode;
   LTerminal::DeleteMode delete_mode;
   vector<SSHClient::Params::Forward> local_forward, remote_forward;
 
@@ -55,6 +56,7 @@ struct MyHostSettingsModel {
     font_name        = FLAGS_font;
     font_size        = 15;
     color_scheme     = "VGA";
+    keyboard_theme   = "Dark";
     beep_type        = LTerminal::BeepType_None;
     text_encoding    = LTerminal::TextEncoding_UTF8;
     delete_mode      = LTerminal::DeleteMode_Normal;
@@ -75,8 +77,10 @@ struct MyHostSettingsModel {
     font_name = r.font_name() ? r.font_name()->data() : FLAGS_font;
     font_size = r.font_size();
     color_scheme = GetFlatBufferString(r.color_scheme());
+    keyboard_theme = GetFlatBufferString(r.keyboard_theme());
     beep_type = r.beep_type();
     text_encoding = r.text_encoding();
+    enter_mode = r.enter_mode();
     delete_mode = r.delete_mode();
     autocomplete_id = r.autocomplete_id();
     prompt = GetFlatBufferString(r.prompt_string());
@@ -85,13 +89,15 @@ struct MyHostSettingsModel {
   }
 
   flatbuffers::Offset<LTerminal::HostSettings> SaveProto(FlatBufferBuilder &fb) const {
+    vector<flatbuffers::Offset<LTerminal::ToolbarItem>> tb;
     vector<flatbuffers::Offset<LTerminal::PortForward>> lf, rf;
     for (auto &f : local_forward)  lf.push_back(LTerminal::CreatePortForward(fb, f.port, fb.CreateString(f.target_host), f.target_port));
     for (auto &f : remote_forward) rf.push_back(LTerminal::CreatePortForward(fb, f.port, fb.CreateString(f.target_host), f.target_port));
     return LTerminal::CreateHostSettings
       (fb, agent_forwarding, compression, close_on_disconnect, fb.CreateString(terminal_type),
        fb.CreateString(startup_command), fb.CreateString(font_name), font_size, fb.CreateString(color_scheme),
-       beep_type, text_encoding, delete_mode, lf.size() ? fb.CreateVector(lf) : 0,
+       fb.CreateString(keyboard_theme), beep_type, text_encoding, enter_mode, delete_mode,
+       tb.size() ? fb.CreateVector(tb) : 0, lf.size() ? fb.CreateVector(lf) : 0,
        rf.size() ? fb.CreateVector(rf) : 0, autocomplete_id, fb.CreateString(prompt));
   }
 

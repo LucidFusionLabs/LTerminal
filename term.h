@@ -24,10 +24,11 @@ struct TerminalTabInterface : public Dialog {
   string title;
   Callback closed_cb;
   unique_ptr<Terminal::Controller> controller, last_controller;
+  unique_ptr<ToolbarViewInterface> toolbar;
   Shader *activeshader = &app->shaders->shader_default;
   Time connected = Time::zero();
-  int connected_host_id=0;
-  bool networked=0;
+  int connected_host_id = 0;
+  bool networked = 0;
   TerminalTabInterface(Window *W, float w, float h, int flag, int host_id) : Dialog(W,w,h,flag), connected_host_id(host_id) {}
 
   virtual int ReadAndUpdateTerminalFramebuffer() = 0;
@@ -41,7 +42,10 @@ struct TerminalTabInterface : public Dialog {
   virtual Box GetLastDrawBox() = 0;
   virtual void DrawBox(GraphicsDevice*, Box draw_box, bool check_resized) = 0;
   virtual void LoseFocus() { root->active_textbox = root->default_textbox(); root->active_controller = root->default_controller(); }
-  virtual void TakeFocus() { root->active_textbox = GetKeyboardTarget();     root->active_controller = GetMouseTarget(); UpdateControllerWait(); }
+  virtual void TakeFocus() { root->active_textbox = GetKeyboardTarget();     root->active_controller = GetMouseTarget();
+    UpdateControllerWait();
+    if (toolbar) toolbar->Show(true);
+  }
   virtual void UpdateControllerWait() {
     if (controller && controller->frame_on_keyboard_input) app->scheduler.AddMainWaitKeyboard(root);
     else                                                   app->scheduler.DelMainWaitKeyboard(root);

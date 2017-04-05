@@ -21,9 +21,9 @@
 	<key>CFBundleSignature</key>
 	<string>????</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.16.0</string>
+	<string>1.17.0</string>
 	<key>CFBundleVersion</key>
-	<string>1.16.0</string>
+	<string>1.17.0</string>
   <key>CFBundleSupportedPlatforms</key>
   <array>
     <string>iPhoneOS</string>
@@ -123,5 +123,19 @@
     <string>remote-notification</string>
     <string>fetch</string>
   </array>
+  <key>Fabric</key>
+  <dict>
+    <key>APIKey</key>
+    <string>b8bfc53a14ff223e3cf7df5039c377bdac3ca074</string>
+    <key>Kits</key>
+    <array>
+      <dict>
+        <key>KitInfo</key>
+        <dict/>
+        <key>KitName</key>
+        <string>Crashlytics</string>
+      </dict>
+    </array>
+  </dict>
 </dict>
 </plist>

@@ -553,9 +553,7 @@ extern "C" void MyAppCreate(int argc, const char* const* argv) {
 #endif
 #if defined(LFL_IOS) && !defined(LFL_IOS_SIM)
   if (atoi(Application::GetSetting("send_crash_reports"))) {
-    // InitCrashReporting("5537f9374df847498b8661525445feaa00555300", // crittercism
-    InitCrashReporting("a594782b23094f22947179fb05892d64", // hockeyapp
-                       Application::GetSetting("crash_report_name"),
+    InitCrashReporting("", Application::GetSetting("crash_report_name"),
                        Application::GetSetting("crash_report_email"));
   }
 #endif

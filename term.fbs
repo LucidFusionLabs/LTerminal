@@ -2,6 +2,7 @@ namespace LFL.LTerminal;
 
 enum Protocol : int { SSH=1, Telnet, RFB, LocalShell }
 enum TextEncoding : int { UTF8=1, ASCII=2 }
+enum EnterMode : int { Normal=1, ControlJ=2 }
 enum DeleteMode : int { Normal=1, ControlH=2 }
 enum BeepType : int { None=0, Audio=1, Visual=2 }
 
@@ -9,6 +10,8 @@ enum CredentialDBType : int { Null = 0, Table, Keychain }
 enum CredentialType : int { Ask = 0, Password, PEM }
 struct CredentialRef { db: int; id: int; }
 struct Color { r: ubyte; g: ubyte; b: ubyte; a: ubyte; }
+table ColorScheme { name: string; data: [Color]; }
+table ToolbarItem { key: string; value: string; }
 table PortForward { port: int; target: string; target_port: int; }
 
 table Credential {
@@ -46,9 +49,12 @@ table HostSettings {
   font_name:           string;
   font_size:           int = 15;
   color_scheme:        string;
+  keyboard_theme:      string;
   beep_type:           BeepType     = None;
   text_encoding:       TextEncoding = UTF8;
+  enter_mode:          EnterMode    = Normal;
   delete_mode:         DeleteMode   = Normal;
+  toolbar_items:       [ToolbarItem];
   local_forward:       [PortForward];
   remote_forward:      [PortForward];
   autocomplete_id:     int;
@@ -60,11 +66,7 @@ table AppSettings {
   default_host_settings: HostSettings;
   keep_display_on:       bool;
   background_timeout:    int = 180;
-}
-
-table ColorScheme {
-  name: string;
-  data: [Color];
+  color_schemes:         [ColorScheme];
 }
 
 table RecordLog { stamp: ulong; data: [ubyte]; }
