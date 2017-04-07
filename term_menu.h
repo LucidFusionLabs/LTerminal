@@ -42,6 +42,7 @@ struct MyHostSettingsModel {
   LTerminal::TextEncoding text_encoding;
   LTerminal::EnterMode enter_mode;
   LTerminal::DeleteMode delete_mode;
+  StringPairVec toolbar;
   vector<SSHClient::Params::Forward> local_forward, remote_forward;
 
   MyHostSettingsModel() { Load(); }
@@ -84,15 +85,17 @@ struct MyHostSettingsModel {
     delete_mode = r.delete_mode();
     autocomplete_id = r.autocomplete_id();
     prompt = GetFlatBufferString(r.prompt_string());
-    if (auto lf = r.local_forward())  for (auto f : *lf) local_forward.push_back({ f->port(), GetFlatBufferString(f->target()), f->target_port() });
-    if (auto rf = r.remote_forward()) for (auto f : *rf) local_forward.push_back({ f->port(), GetFlatBufferString(f->target()), f->target_port() });
+    if (auto ti = r.toolbar_items())  for (auto i : *ti) toolbar.emplace_back(GetFlatBufferString(i->key()), GetFlatBufferString(i->value()));
+    if (auto lf = r.local_forward())  for (auto i : *lf) local_forward.push_back({ i->port(), GetFlatBufferString(i->target()), i->target_port() });
+    if (auto rf = r.remote_forward()) for (auto i : *rf) local_forward.push_back({ i->port(), GetFlatBufferString(i->target()), i->target_port() });
   }
 
   flatbuffers::Offset<LTerminal::HostSettings> SaveProto(FlatBufferBuilder &fb) const {
     vector<flatbuffers::Offset<LTerminal::ToolbarItem>> tb;
     vector<flatbuffers::Offset<LTerminal::PortForward>> lf, rf;
-    for (auto &f : local_forward)  lf.push_back(LTerminal::CreatePortForward(fb, f.port, fb.CreateString(f.target_host), f.target_port));
-    for (auto &f : remote_forward) rf.push_back(LTerminal::CreatePortForward(fb, f.port, fb.CreateString(f.target_host), f.target_port));
+    for (auto &i : toolbar)        tb.push_back(LTerminal::CreateToolbarItem(fb, fb.CreateString(i.first), fb.CreateString(i.second)));
+    for (auto &i : local_forward)  lf.push_back(LTerminal::CreatePortForward(fb, i.port, fb.CreateString(i.target_host), i.target_port));
+    for (auto &i : remote_forward) rf.push_back(LTerminal::CreatePortForward(fb, i.port, fb.CreateString(i.target_host), i.target_port));
     return LTerminal::CreateHostSettings
       (fb, agent_forwarding, compression, close_on_disconnect, fb.CreateString(terminal_type),
        fb.CreateString(startup_command), fb.CreateString(font_name), font_size, fb.CreateString(color_scheme),
@@ -319,9 +322,15 @@ struct MyTableViewController : public TableViewController {
   MyTableViewController(MyTerminalMenus*, unique_ptr<TableViewInterface> = unique_ptr<TableViewInterface>());
 };
 
+struct MyAddToolbarItemViewController : public MyTableViewController {
+  MyAddToolbarItemViewController(MyTerminalMenus*);
+};
+
 struct MyKeyboardSettingsViewController : public MyTableViewController {
+  MyTerminalMenus *menus;
   MyKeyboardSettingsViewController(MyTerminalMenus*);
   void UpdateViewFromModel(const MyHostSettingsModel&);
+  void UpdateModelFromView(MyHostSettingsModel*) const;
 };
 
 struct MyNewKeyViewController : public MyTableViewController {
@@ -500,7 +509,8 @@ struct MyTerminalMenus {
   unique_ptr<NavigationViewInterface> hosts_nav, interfacesettings_nav;
   unique_ptr<TextViewInterface>       credits;
   unique_ptr<PurchasesInterface>      purchases;
-  MyKeyboardSettingsViewController keyboard;
+  MyAddToolbarItemViewController   addtoolbaritem;
+  MyKeyboardSettingsViewController keyboardsettings;
   MyNewKeyViewController           newkey;
   MyGenKeyViewController           genkey;
   MyKeyInfoViewController          keyinfo;
@@ -521,27 +531,56 @@ struct MyTerminalMenus {
   MyNewHostViewController          newhost;
   MyUpdateHostViewController       updatehost;
   MyHostsViewController            hosts, hostsfolder;
-  unique_ptr<ToolbarViewInterface>    keyboard_toolbar, upgrade_toolbar;
+  unique_ptr<ToolbarViewInterface>    upgrade_toolbar;
   unique_ptr<MyUpgradeViewController> upgrade;
   unique_ptr<AdvertisingViewInterface> advertising;
   int sessions_update_len = 0;
 
   unordered_map<string, Callback> mobile_key_cmd = {
-    { "left",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->CursorLeft();  if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
-    { "right",  bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->CursorRight(); if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
-    { "up",     bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->HistUp();      if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
-    { "down",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->HistDown();    if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
-    { "pgup",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->PageUp();      if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
-    { "pgdown", bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->PageDown();    if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
-    { "home",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->Home();        if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
-    { "end",    bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->End();         if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
-    { "tab",    bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->Tab();         if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
-    { "paste",  bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->InputString(app->GetClipboardText()); } }) },
+    { "[left]",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->CursorLeft();  if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
+    { "[right]",  bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->CursorRight(); if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
+    { "[up]",     bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->HistUp();      if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
+    { "[down]",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->HistDown();    if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
+    { "[pgup]",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->PageUp();      if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
+    { "[pgdown]", bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->PageDown();    if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
+    { "[home]",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->Home();        if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
+    { "[end]",    bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->End();         if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
+    { "[tab]",    bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->Tab();         if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
+    { "[paste]",  bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->InputString(app->GetClipboardText()); } }) },
   };
 
   unordered_map<string, Callback> mobile_togglekey_cmd = {
-    { "ctrl", bind([&]{ if (auto t = GetActiveTerminalTab()) { t->controller->ctrl_down = !t->controller->ctrl_down; } }) },
-    { "alt",  bind([&]{ if (auto t = GetActiveTerminalTab()) { t->controller->alt_down  = !t->controller->alt_down;  } }) } };
+    { "[ctrl]", bind([&]{ if (auto t = GetActiveTerminalTab()) { t->controller->ctrl_down = !t->controller->ctrl_down; } }) },
+    { "[alt]",  bind([&]{ if (auto t = GetActiveTerminalTab()) { t->controller->alt_down  = !t->controller->alt_down;  } }) } };
+
+  StringPairVec default_terminal_toolbar = {
+    { "esc",        "[esc]"    },
+    { "ctrl",       "[ctrl]"   },
+    { "tab",        "[tab]"    },
+    { "\U000025C0", "[left]"   },
+    { "\U000025B6", "[right]"  },
+    { "\U000025B2", "[up]"     }, 
+    { "\U000025BC", "[down]"   },
+    { "\U000023EB", "[pgup]"   },
+    { "\U000023EC", "[pgdown]" }, 
+    { "\U000023EA", "[home]"   },
+    { "\U000023E9", "[end]"    }, 
+  };
+
+  StringPairVec default_rfb_toolbar {
+    { "esc",        "[esc]"    },
+    { "ctrl",       "[ctrl]"   },
+    { "alt",        "[alt]"    },
+    { "tab",        "[tab]"    },
+    { "\U000025C0", "[left]"   },
+    { "\U000025B6", "[right]"  },
+    { "\U000025B2", "[up]"     }, 
+    { "\U000025BC", "[down]"   },
+    { "\U000023EB", "[pgup]"   },
+    { "\U000023EC", "[pgdown]" }, 
+    { "\U000023EA", "[home]"   },
+    { "\U000023E9", "[end]"    }, 
+  };
 
   ~MyTerminalMenus() { SQLite::Close(db); }
   MyTerminalMenus() : db(SQLite::Open(StrCat(app->savedir, "lterm.db"))),
@@ -582,29 +621,12 @@ struct MyTerminalMenus {
     icon_fb(app->focused->gd), theme(Application::GetSetting("theme")), green(76, 217, 100),
     sessions_update_timer(SystemToolkit::CreateTimer(bind(&MyTerminalMenus::UpdateMainMenuTimer, this))),
     hosts_nav(SystemToolkit::CreateNavigationView("", theme)),
-    interfacesettings_nav(SystemToolkit::CreateNavigationView("", theme)),
-    keyboard(this), newkey(this), genkey(this), keyinfo(this), keys(this, &credential_db), about(this),
+    interfacesettings_nav(SystemToolkit::CreateNavigationView("", theme)), addtoolbaritem(this),
+    keyboardsettings(this), newkey(this), genkey(this), keyinfo(this), keys(this, &credential_db), about(this),
     support(this), privacy(this), settings(this), terminalinterfacesettings(this), rfbinterfacesettings(this),
     sshfingerprint(this), sshportforward(this), sshsettings(this), telnetsettings(this), vncsettings(this),
     localshellsettings(this), protocol(this), newhost(this), updatehost(this), hosts(this, true),
     hostsfolder(this, false) {
-
-    keyboard_toolbar = SystemToolkit::CreateToolbar(theme, MenuItemVec{
-      { "\U00002699", "",       bind(&MyTerminalMenus::ShowInterfaceSettings, this) },
-      { "esc",        "",       bind(&MyTerminalMenus::PressKey,         this, "esc") },
-      { "ctrl",       "toggle", bind(&MyTerminalMenus::ToggleKey,        this, "ctrl") },
-      // { "alt",     "toggle", bind(&MyTerminalMenus::ToggleKey,        this, "alt") },
-      { "tab",        "",       bind(&MyTerminalMenus::PressKey,         this, "tab") },
-      { "\U000025C0", "",       bind(&MyTerminalMenus::PressKey,         this, "left") },
-      { "\U000025B6", "",       bind(&MyTerminalMenus::PressKey,         this, "right") },
-      { "\U000025B2", "",       bind(&MyTerminalMenus::PressKey,         this, "up") }, 
-      { "\U000025BC", "",       bind(&MyTerminalMenus::PressKey,         this, "down") },
-      { "\U000023EB", "",       bind(&MyTerminalMenus::PressKey,         this, "pgup") },
-      { "\U000023EC", "",       bind(&MyTerminalMenus::PressKey,         this, "pgdown") }, 
-      { "\U000023EA", "",       bind(&MyTerminalMenus::PressKey,         this, "home") },
-      { "\U000023E9", "",       bind(&MyTerminalMenus::PressKey,         this, "end") }, 
-      { /*"\U000025F0",*/ "","",bind(&MyTerminalMenus::ShowMainMenu,     this, true), stacked_squares_icon },
-    });
 
 #if defined(LFL_IOS) || defined(LFL_ANDROID)
     INFO("Loading in-app purchases");
@@ -631,40 +653,21 @@ struct MyTerminalMenus {
     if (UnlockEncryptedDatabase(pw_empty)) hosts.LoadUnlockedUI(&host_db);
     else if ((db_protected = true))        hosts.LoadLockedUI  (&host_db);
     hostsfolder.LoadFolderUI(&host_db);
-    keyboard_toolbar->Show(true);
-
-    app->open_url_cb = [=](const string &url){
-      app->RunInMainThread([=]{
-        MyHostModel host;
-        string prot, hosttext, port, path;
-        if (!HTTP::ParseURL(url.c_str(), &prot, &hosttext, &port, &path)) return;
-        if      (prot == "ssh"    || prot == "lterm-ssh")    host.SetProtocol("SSH");
-        else if (prot == "vnc"    || prot == "lterm-vnc")    host.SetProtocol("VNC");
-        else if (prot == "telnet" || prot == "lterm-telnet") host.SetProtocol("Telnet");
-        else return ERROR("unknown url protocol ", prot);
-        auto userhost = Split(hosttext, '@');
-        if      (userhost.size() == 1) { host.hostname = userhost[0]; }
-        else if (userhost.size() == 2) { host.username = userhost[0]; host.hostname = userhost[1]; }
-        else return ERROR("unknown url hosttext ", hosttext);
-        auto hostport = Split(host.hostname, ':');
-        if (hostport.size() == 2) host.hostname = hostport[0];
-        host.SetPort(hostport.size() == 2 ? atoi(hostport[1]) : 0);
-        for (auto &hi : host_db.data) {
-          if (hi.first == 1) continue;
-          MyHostModel h(hi.first, flatbuffers::GetRoot<LTerminal::Host>(hi.second.blob.data()));
-          if (h.TargetEqual(host)) return ConnectHost(hi.first);
-        }
-        host.cred.Load(CredentialType_Password, "");
-        NewHostConnectTo(host);
-      });
-      if (hosts_nav->shown) hosts_nav->Show(false);
-      if (interfacesettings_nav->shown) interfacesettings_nav->Show(false);
-      app->scheduler.Wakeup(app->focused);
-    };
+    app->open_url_cb = bind(&MyTerminalMenus::OpenURL, this, _1);
   }
 
   void PressKey (const string &key) { FindAndDispatch(mobile_key_cmd,       key); }
   void ToggleKey(const string &key) { FindAndDispatch(mobile_togglekey_cmd, key); }
+
+  unique_ptr<ToolbarViewInterface> CreateKeyboardToolbar(const StringPairVec &v) {
+    MenuItemVec ret{ { "\U00002699", "", bind(&MyTerminalMenus::ShowInterfaceSettings, this) } };
+    for (auto &i : v) {
+      if      (Contains(mobile_key_cmd,       i.second)) ret.push_back({ i.first, "",       bind(&MyTerminalMenus::PressKey,  this, i.second) });
+      else if (Contains(mobile_togglekey_cmd, i.second)) ret.push_back({ i.first, "toggle", bind(&MyTerminalMenus::ToggleKey, this, i.second) });
+    }
+    ret.push_back({ /*"\U000025F0",*/"", "", bind(&MyTerminalMenus::ShowMainMenu, this, true), stacked_squares_icon });
+    return SystemToolkit::CreateToolbar(theme, move(ret));
+  }
 
   bool UnlockEncryptedDatabase(const string &pw) {
     if (!(db_opened = SQLite::UsePassphrase(db, pw))) return false;
@@ -702,7 +705,6 @@ struct MyTerminalMenus {
     theme = v;
     hosts_nav->SetTheme(v);
     interfacesettings_nav->SetTheme(v);
-    keyboard_toolbar->SetTheme(v);
     if (upgrade_toolbar) upgrade_toolbar->SetTheme(v);
     for (auto &i : tableviews) i->view->SetTheme(v); 
     Application::SaveSettings(StringPairVec{ StringPair("theme", v) });
@@ -931,6 +933,7 @@ struct MyTerminalMenus {
     if (t) t->ChangeShader("none");
     if (!t || !t->connected_host_id || interfacesettings_nav->shown) return;
     MyHostModel host_model(&host_db, &credential_db, &settings_db, t->connected_host_id);
+    keyboardsettings.UpdateViewFromModel(host_model.settings);
     if (host_model.protocol == LTerminal::Protocol_RFB) {
       rfbinterfacesettings.UpdateViewFromModel(host_model.settings);
       interfacesettings_nav->PushTableView(rfbinterfacesettings.view.get());
@@ -948,6 +951,13 @@ struct MyTerminalMenus {
       t->root->default_font.desc.name = settings.font_name;
       t->ChangeColors(settings.color_scheme, false);
       t->SetFontSize(settings.font_size);
+    }
+  }
+  
+  void ApplyToolbarSettings(const MyHostSettingsModel &settings) {
+    if (auto t = GetActiveTab()) {
+      if (t->toolbar) t->toolbar->Show(false);
+      (t->toolbar = CreateKeyboardToolbar(settings.toolbar))->Show(true);
     }
   }
 
@@ -1080,19 +1090,19 @@ struct MyTerminalMenus {
   void MenuConnect(const MyHostModel &host,
                    SSHClient::FingerprintCB fingerprint_cb=SSHClient::FingerprintCB(),
                    SSHTerminalController::SavehostCB cb=SSHTerminalController::SavehostCB()) {
+    unique_ptr<ToolbarViewInterface> toolbar = CreateKeyboardToolbar(host.settings.toolbar);
     if (host.protocol == LTerminal::Protocol_SSH) {
       SSHClient::LoadIdentityCB reconnect_identity_cb;
       if (host.username.empty()) reconnect_identity_cb = [=](shared_ptr<SSHClient::Identity>*) { return false; };
       else if (host.cred.credtype == LTerminal::CredentialType_PEM)
         reconnect_identity_cb = [=](shared_ptr<SSHClient::Identity> *out)
           { *out = LoadIdentity(host.cred); return true; };
-      auto ssh = GetActiveWindow()->AddTerminalTab(host.host_id)->UseSSHTerminalController
+      auto ssh = GetActiveWindow()->AddTerminalTab(host.host_id, move(toolbar))->UseSSHTerminalController
         (SSHClient::Params{ host.Hostport(), host.username, host.settings.terminal_type,
          host.settings.startup_command.size() ? StrCat(host.settings.startup_command, "\r") : "",
          host.settings.compression, host.settings.agent_forwarding, host.settings.close_on_disconnect, true,
          host.settings.local_forward, host.settings.remote_forward }, false,
          host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "",
-         bind(&ToolbarViewInterface::ToggleButton, keyboard_toolbar.get(), _1),
          move(reconnect_identity_cb), move(cb), move(fingerprint_cb));
       ApplyTerminalSettings(host.settings);
       if (host.username.empty()) {
@@ -1113,17 +1123,16 @@ struct MyTerminalMenus {
         };
       }
     } else if (host.protocol == LTerminal::Protocol_Telnet) {
-      GetActiveWindow()->AddTerminalTab(host.host_id)->UseTelnetTerminalController
+      GetActiveWindow()->AddTerminalTab(host.host_id, move(toolbar))->UseTelnetTerminalController
         (host.Hostport(), false, host.settings.close_on_disconnect,
-         bind(&ToolbarViewInterface::ToggleButton, keyboard_toolbar.get(), _1),
          (bool(cb) ? Callback([=](){ cb(0, ""); }) : Callback()));
       ApplyTerminalSettings(host.settings);
     } else if (host.protocol == LTerminal::Protocol_RFB) {
       GetActiveWindow()->AddRFBTab(host.host_id, RFBClient::Params{host.Hostport()},
                                    host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "",
-                                   (bool(cb) ? Callback([=](){ cb(0, ""); }) : Callback()));
+                                   (bool(cb) ? Callback([=](){ cb(0, ""); }) : Callback()), move(toolbar));
     } else if (host.protocol == LTerminal::Protocol_LocalShell) {
-      GetActiveWindow()->AddTerminalTab(1)->UseShellTerminalController("");
+      GetActiveWindow()->AddTerminalTab(1, move(toolbar))->UseShellTerminalController("");
       if (cb) cb(0, "");
       ApplyTerminalSettings(host.settings);
     }
@@ -1145,6 +1154,35 @@ struct MyTerminalMenus {
             if (auto ssh = dynamic_cast<SSHClient::Handler*>(conn->handler.get()))
               if (conn->state == Connection::Connected && !ssh->accepted_hostkey)
                 SSHClient::AcceptHostKeyAndBeginAuthRequest(conn);
+  }
+
+  void OpenURL(const string &url) {
+    app->RunInMainThread([=]{
+      MyHostModel host;
+      string prot, hosttext, port, path;
+      if (!HTTP::ParseURL(url.c_str(), &prot, &hosttext, &port, &path)) return;
+      if      (prot == "ssh"    || prot == "lterm-ssh")    host.SetProtocol("SSH");
+      else if (prot == "vnc"    || prot == "lterm-vnc")    host.SetProtocol("VNC");
+      else if (prot == "telnet" || prot == "lterm-telnet") host.SetProtocol("Telnet");
+      else return ERROR("unknown url protocol ", prot);
+      auto userhost = Split(hosttext, '@');
+      if      (userhost.size() == 1) { host.hostname = userhost[0]; }
+      else if (userhost.size() == 2) { host.username = userhost[0]; host.hostname = userhost[1]; }
+      else return ERROR("unknown url hosttext ", hosttext);
+      auto hostport = Split(host.hostname, ':');
+      if (hostport.size() == 2) host.hostname = hostport[0];
+      host.SetPort(hostport.size() == 2 ? atoi(hostport[1]) : 0);
+      for (auto &hi : host_db.data) {
+        if (hi.first == 1) continue;
+        MyHostModel h(hi.first, flatbuffers::GetRoot<LTerminal::Host>(hi.second.blob.data()));
+        if (h.TargetEqual(host)) return ConnectHost(hi.first);
+      }
+      host.cred.Load(CredentialType_Password, "");
+      NewHostConnectTo(host);
+    });
+    if (hosts_nav->shown) hosts_nav->Show(false);
+    if (interfacesettings_nav->shown) interfacesettings_nav->Show(false);
+    app->scheduler.Wakeup(app->focused);
   }
 };
 

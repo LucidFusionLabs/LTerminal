@@ -54,6 +54,7 @@ struct TerminalTabInterface : public Dialog {
   virtual bool Animating() const { return Effects(); }
   virtual bool Effects() const { return activeshader != &app->shaders->shader_default; }
   virtual void ChangeShader(const string &shader_name) {}
+  virtual void ToggleToolbarButton(const string &n) { if (toolbar) toolbar->ToggleButton(n); }
 
   virtual void ShowEffectsControls() { 
     root->shell->Run("slider shadertoy_blend 1.0 0.01");
@@ -742,7 +743,8 @@ template <class X> struct TerminalWindowInterface : public View {
   TerminalWindowInterface(Window *W) : View(W), tabs(this) {}
   virtual void UpdateTargetFPS() = 0;
 #ifdef LFL_RFB
-  virtual X *AddRFBTab(int host_id, RFBClient::Params p, string, Callback savehost_cb=Callback()) = 0;
+  virtual X *AddRFBTab(int host_id, RFBClient::Params p, string, Callback savehost_cb=Callback(),
+                       unique_ptr<ToolbarViewInterface> tb=unique_ptr<ToolbarViewInterface>()) = 0;
 #endif
 };
 

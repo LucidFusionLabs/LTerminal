@@ -22,15 +22,69 @@ MyTableViewController::MyTableViewController(MyTerminalMenus *m, unique_ptr<Tabl
   m->tableviews.push_back(this);
 }
 
+MyAddToolbarItemViewController::MyAddToolbarItemViewController(MyTerminalMenus *m) :
+  MyTableViewController(m, SystemToolkit::CreateTableView("Add Item", "", m->theme, vector<TableItem>{
+    TableItem("Name",   TableItem::TextInput, ""),
+    TableItem("Output", TableItem::TextInput, ""),
+    TableItem("",       TableItem::Separator, ""),
+    TableItem("Add",    TableItem::Command,   "", ">", 0, m->plus_green_icon, 0, [=](){
+      string name, output;
+      view->GetSectionText(0, {&name, &output});
+      m->keyboardsettings.view->BeginUpdates();
+      m->keyboardsettings.view->AddRow(1, TableItem(name, TableItem::Label, output));
+      m->keyboardsettings.view->EndUpdates();
+      m->keyboardsettings.view->changed = true;
+      m->interfacesettings_nav->PopView();
+    })
+  })) {
+  view->show_cb = [=](){
+    view->BeginUpdates();
+    view->SetSectionValues(0, vector<string>{ "", "" });
+    view->EndUpdates();
+  };
+}
+
 MyKeyboardSettingsViewController::MyKeyboardSettingsViewController(MyTerminalMenus *m) :
   MyTableViewController(m, SystemToolkit::CreateTableView("Keyboard", "", m->theme, vector<TableItem>{
-    TableItem("Delete Sends ^H", TableItem::Toggle, "")
-  })) {}
+    TableItem("Theme",           TableItem::Selector,  "Light,Dark", "", 0, m->eye_icon),
+    TableItem("Return Sends ^J", TableItem::Toggle,    "",           "", 0, m->keyboard_icon),
+    TableItem("Delete Sends ^H", TableItem::Toggle,    "",           "", 0, m->keyboard_icon),
+    TableItem("",                TableItem::Separator, ""),
+    TableItem("",                TableItem::Separator, ""),
+    TableItem("Add",             TableItem::Command,   "", ">", 0, m->plus_green_icon, 0, bind(&NavigationViewInterface::PushTableView, m->interfacesettings_nav.get(), m->addtoolbaritem.view.get())),
+    TableItem("Reset Defaults",  TableItem::Command,   "", ">", 0, m->none_icon, 0, [=](){
+      TableItemVec tb;
+      auto &dtb = 1 ? m->default_terminal_toolbar : m->default_rfb_toolbar;
+      for (auto &i : dtb) tb.emplace_back(i.first, TableItem::Label, i.second);
+      view->BeginUpdates();
+      view->ReplaceSection(1, TableItem("Toolbar"), TableSection::Flag::EditButton, tb);
+      view->EndUpdates();
+      view->changed = true;
+    })
+  })), menus(m) {
+  view->show_cb = Callback(); 
+  view->SetSectionEditable(1, 0, 0, [=](int index, int id){ view->changed = true; });
+}
 
 void MyKeyboardSettingsViewController::UpdateViewFromModel(const MyHostSettingsModel &model) {
+  TableItemVec tb;
+  for (auto &i : model.toolbar) tb.emplace_back(i.first, TableItem::Label, i.second);
   view->BeginUpdates();
-  view->SetSectionValues(0, vector<string>{ model.delete_mode == LTerminal::DeleteMode_ControlH ? "1" : "" });
+  view->SetSelected(0, 0, model.keyboard_theme == "Dark");
+  view->SetValue(0, 1, model.enter_mode  == LTerminal::EnterMode_ControlJ  ? "1" : "");
+  view->SetValue(0, 1, model.delete_mode == LTerminal::DeleteMode_ControlH ? "1" : "");
+  view->ReplaceSection(1, TableItem("Toolbar"), TableSection::Flag::EditButton, move(tb));
   view->EndUpdates();
+  view->changed = false;
+}
+
+void MyKeyboardSettingsViewController::UpdateModelFromView(MyHostSettingsModel *model) const {
+  string retscj = "Return Sends ^J", delsch = "Delete Sends ^H";
+  model->keyboard_theme = "Theme";
+  if (!view->GetSectionText(0, {&model->keyboard_theme, &retscj, &delsch})) return ERROR("parse keyboardsettings");
+  model->enter_mode  = retscj == "1" ? LTerminal::EnterMode_ControlJ  : LTerminal::EnterMode_Normal;
+  model->delete_mode = delsch == "1" ? LTerminal::DeleteMode_ControlH : LTerminal::DeleteMode_Normal;
+  model->toolbar = view->GetSectionText(1);
 }
 
 MyNewKeyViewController::MyNewKeyViewController(MyTerminalMenus *m) : MyTableViewController(m) {
@@ -103,7 +157,7 @@ MyKeysViewController::MyKeysViewController(MyTerminalMenus *m, MyCredentialDB *m
     TableItem("Paste Key From Clipboard", TableItem::Command, "", ">", 0, m->clipboard_download_icon, 0, bind(&MyTerminalMenus::PasteKey, m)),
     TableItem("Generate New Key",         TableItem::Command, "", ">", 0, m->keygen_icon,             0, [=](){ m->hosts_nav->PushTableView(m->genkey.view.get()); }),
   })), menus(m), model(mo) {
-  view->SetEditableSection(1, 0, bind(&MyTerminalMenus::DeleteKey, m, _1, _2));
+  view->SetSectionEditable(1, 0, 0, bind(&MyTerminalMenus::DeleteKey, m, _1, _2));
   view->show_cb = bind(&MyKeysViewController::UpdateViewFromModel, this);
 }
 
@@ -178,7 +232,7 @@ MyAppSettingsViewController::MyAppSettingsViewController(MyTerminalMenus *m) :
               bind(&AlertViewInterface::ShowCB, my_app->passphrase_alert.get(), "Enable encryption", "Passphrase", "", [=](const string &pw){
                    my_app->passphraseconfirm_alert->ShowCB("Confirm enable encryption", "Passphrase", "", StringCB(bind(&MyTerminalMenus::EnableLocalEncryption, m, pw, _1))); })),
     TableItem("SQLCipher", TableItem::Command, "", "Enabled >", 0, m->locked_icon, 0, bind(&MyTerminalMenus::DisableLocalEncryption, m)),
-    TableItem("Theme",           TableItem::Selector, "Light,Dark", "", 0, 0, 0, Callback(), [=](const string &n){ view->SetSelected(0, 2, n == "Dark"); m->ChangeTheme(n); }),
+    TableItem("Theme",           TableItem::Selector, "Light,Dark", "", 0, m->eye_icon, 0, Callback(), [=](const string &n){ view->SetSelected(0, 2, n == "Dark"); m->ChangeTheme(n); }),
     TableItem("Keep Display On", TableItem::Toggle,  ""),
 #ifdef LFL_IOS
     TableItem("Background Timeout", TableItem::NumberInput, ""),
@@ -235,11 +289,14 @@ MyTerminalInterfaceSettingsViewController::MyTerminalInterfaceSettingsViewContro
   view->show_cb = Callback();
   view->hide_cb = [=](){
     auto t = GetActiveTerminalTab();
-    if (view->changed && t && t->connected_host_id) {
+    bool toolbar_changed = m->keyboardsettings.view->changed;
+    if ((view->changed || toolbar_changed) && t && t->connected_host_id) {
       MyHostModel host(&m->host_db, &m->credential_db, &m->settings_db, t->connected_host_id);
       UpdateModelFromView(&host.settings);
+      m->keyboardsettings.UpdateModelFromView(&host.settings);
       host.Update(host, &m->host_db, &m->credential_db, &m->settings_db);
       m->ApplyTerminalSettings(host.settings);
+      if (toolbar_changed) m->ApplyToolbarSettings(host.settings);
     }
   };
 }
@@ -251,7 +308,7 @@ vector<TableItem> MyTerminalInterfaceSettingsViewController::GetBaseSchema(MyTer
     TableItem("Colors",   TableItem::Label,      "", "",  0, m->eye_icon,      0, [=](){}),
     TableItem("",         TableItem::Picker,     "", "",  0, 0,                0, Callback(), StringCB(), 0, true, &m->color_picker),
     TableItem("Beep",     TableItem::Label,      "", "",  0, m->audio_icon,    0, [=](){}),
-    TableItem("Keyboard", TableItem::Command,    "", ">", 0, m->keyboard_icon, 0, bind(&NavigationViewInterface::PushTableView, nav, m->keyboard.view.get())),
+    TableItem("Keyboard", TableItem::Command,    "", ">", 0, m->keyboard_icon, 0, bind(&NavigationViewInterface::PushTableView, nav, m->keyboardsettings.view.get())),
     TableItem("Toys",     TableItem::Command,    "", ">", 0, m->toys_icon,     0, bind(&MyTerminalMenus::ShowToysMenu, m))
   };
 }
@@ -356,7 +413,7 @@ MySSHPortForwardViewController::MySSHPortForwardViewController(MyTerminalMenus *
 
 MySSHSettingsViewController::MySSHSettingsViewController(MyTerminalMenus *m) :
   MyTableViewController(m, SystemToolkit::CreateTableView("SSH Settings", "", m->theme, GetSchema(m))), menus(m) {
-  view->SetEditableSection(2, 1, [=](int, int){});
+  view->SetSectionEditable(2, 1, 0, [=](int, int){});
   view->SelectRow(-1, -1);
 }
 
@@ -570,6 +627,8 @@ bool MyNewHostViewController::UpdateModelFromView(MyHostModel *model, MyCredenti
   if      (ct == CredentialType_Password) model->cred.Load(CredentialType_Password, cred);
   else if (ct == CredentialType_PEM)      model->cred.Load(cred_db, view->GetTag(0, 3));
   else                                    model->cred.Load();
+  if (model->protocol == LTerminal::Protocol_RFB) model->settings.toolbar = menus->default_rfb_toolbar;
+  else                                            model->settings.toolbar = menus->default_terminal_toolbar;
   return true;
 }
 
@@ -626,7 +685,7 @@ vector<TableItem> MyHostsViewController::GetBaseSchema(MyTerminalMenus *m) { ret
 void MyHostsViewController::LoadFolderUI(MyHostDB *model) {
   CHECK(!menu);
   view->AddNavigationButton(HAlign::Right, TableItem("Edit", TableItem::Button, ""));
-  view->SetEditableSection(0, 0, bind(&MyTerminalMenus::DeleteHost, menus, _1, _2));
+  view->SetSectionEditable(0, 0, 0, bind(&MyTerminalMenus::DeleteHost, menus, _1, _2));
   view->show_cb = bind(&MyHostsViewController::UpdateViewFromModel, this, model);
 }
 
@@ -655,7 +714,7 @@ void MyHostsViewController::LoadUnlockedUI(MyHostDB *model) {
     TableItem("Settings", TableItem::Command, "", ">", 0, menus->settings_gray_icon, 0, bind(&MyTerminalMenus::ShowAppSettings, menus))
   }));
   view->EndUpdates();
-  view->SetEditableSection(menu, 0, bind(&MyTerminalMenus::DeleteHost, menus, _1, _2));
+  view->SetSectionEditable(menu, 0, 0, bind(&MyTerminalMenus::DeleteHost, menus, _1, _2));
   view->show_cb = bind(&MyHostsViewController::UpdateViewFromModel, this, model);
   view->hide_cb = bind(&TimerInterface::Clear, menus->sessions_update_timer.get());
 }

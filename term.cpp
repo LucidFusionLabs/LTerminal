@@ -148,8 +148,7 @@ struct MyTerminalTab : public TerminalTab {
     ChangeController(make_unique<PlaybackTerminalController>(this, move(f)));
   }
 
-  void UseShellTerminalController(const string &m, bool commands=true,
-                                  StringCB metakey_cb=StringCB(), Callback reconnect_cb=Callback()) {
+  void UseShellTerminalController(const string &m, bool commands=true, Callback reconnect_cb=Callback()) {
     if (m.size()) connected = Time::zero();
     else {
       networked = false;
@@ -160,7 +159,7 @@ struct MyTerminalTab : public TerminalTab {
        [=](const StringVec&) { closed_cb(); }, move(reconnect_cb), commands);
     c->ssh_term = FLAGS_term;
 #ifdef LFL_CRYPTO
-    c->ssh_cb = [=](SSHClient::Params p){ UseSSHTerminalController(move(p), true, "", metakey_cb); };
+    c->ssh_cb = [=](SSHClient::Params p){ UseSSHTerminalController(move(p), true, ""); };
 #endif
 #ifdef LFL_RFB
     c->vnc_cb = [=](RFBClient::Params p){ parent->AddRFBTab(1, move(p), ""); };
@@ -171,7 +170,6 @@ struct MyTerminalTab : public TerminalTab {
 #ifdef LFL_CRYPTO
   SSHTerminalController*
   UseSSHTerminalController(SSHClient::Params params, bool from_shell=false, const string &pw="",
-                           StringCB metakey_cb=StringCB(),
                            SSHClient::LoadIdentityCB identity_cb=SSHClient::LoadIdentityCB(),
                            SSHTerminalController::SavehostCB savehost_cb=SSHTerminalController::SavehostCB(),
                            SSHClient::FingerprintCB fingerprint_cb=SSHClient::FingerprintCB()) {
@@ -180,13 +178,13 @@ struct MyTerminalTab : public TerminalTab {
     bool close_on_disconn = params.close_on_disconnect;
     Callback reconnect_cb = (!add_reconnect_links || close_on_disconn) ? Callback() : [=](){
       if (dynamic_cast<InteractiveTerminalController*>(controller.get()))
-        UseSSHTerminalController(params, from_shell, pw, metakey_cb, identity_cb, SSHTerminalController::SavehostCB(), fingerprint_cb);
+        UseSSHTerminalController(params, from_shell, pw, identity_cb, SSHTerminalController::SavehostCB(), fingerprint_cb);
     };
     auto ssh = make_unique<SSHTerminalController>(this, move(params), close_on_disconn ? closed_cb : [=, r = move(reconnect_cb)]() {
-      UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n", from_shell, metakey_cb, move(r));
+      UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n", from_shell, move(r));
     });
     auto ret = ssh.get();
-    ssh->metakey_cb = move(metakey_cb);
+    ssh->metakey_cb = bind(&TerminalTabInterface::ToggleToolbarButton, this, _1);
     ssh->savehost_cb = move(savehost_cb);
     ssh->fingerprint_cb = move(fingerprint_cb);
     ssh->passphrase_alert = my_app->passphrase_alert.get();
@@ -198,17 +196,17 @@ struct MyTerminalTab : public TerminalTab {
 #endif
 
   void UseTelnetTerminalController(const string &hostport, bool from_shell=false, bool close_on_disconn=false,
-                                   StringCB metakey_cb=StringCB(), Callback savehost_cb=Callback()) {
+                                   Callback savehost_cb=Callback()) {
     networked = true;
     title = StrCat("Telnet ", hostport);
     Callback reconnect_cb = (!add_reconnect_links || close_on_disconn) ? Callback() : [=](){
       if (dynamic_cast<InteractiveTerminalController*>(controller.get()))
-        UseTelnetTerminalController(hostport, from_shell, close_on_disconn, metakey_cb, Callback());
+        UseTelnetTerminalController(hostport, from_shell, close_on_disconn, Callback());
     };
     auto telnet = make_unique<NetworkTerminalController>(this, hostport, close_on_disconn ? closed_cb : [=, r = move(reconnect_cb)]() {
-      UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n", from_shell, metakey_cb, move(r));
+      UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n", from_shell, move(r));
     });
-    telnet->metakey_cb = move(metakey_cb);
+    telnet->metakey_cb = bind(&TerminalTabInterface::ToggleToolbarButton, this, _1);
     telnet->success_cb = move(savehost_cb);
     telnet->success_on_connect = true;
     ChangeController(move(telnet));
@@ -240,7 +238,7 @@ struct MyTerminalTab : public TerminalTab {
                               [&](string v) { return my_app->passphrase_alert->RunModal(v); })) identity.reset();
         if (identity) identity_cb = [=](shared_ptr<SSHClient::Identity> *out) { *out = identity; return true; };
       }
-      return ReturnVoid(UseSSHTerminalController(params, false, string(), StringCB(), identity_cb));
+      return ReturnVoid(UseSSHTerminalController(params, false, string(), identity_cb));
     }
 #endif
     else if (FLAGS_telnet.size()) return UseTelnetTerminalController(FLAGS_telnet);
@@ -390,8 +388,9 @@ struct MyTerminalWindow : public TerminalWindowInterface<TerminalTabInterface> {
   MyTerminalWindow(Window *W) : TerminalWindowInterface(W) {}
   virtual ~MyTerminalWindow() { for (auto t : tabs.tabs) delete t; }
 
-  MyTerminalTab *AddTerminalTab(int host_id);
-  TerminalTabInterface *AddRFBTab(int host_id, RFBClient::Params p, string, Callback savehost_cb=Callback());
+  MyTerminalTab *AddTerminalTab(int host_id, unique_ptr<ToolbarViewInterface> tb=unique_ptr<ToolbarViewInterface>());
+  TerminalTabInterface *AddRFBTab(int host_id, RFBClient::Params p, string, Callback savehost_cb=Callback(),
+                                  unique_ptr<ToolbarViewInterface> tb=unique_ptr<ToolbarViewInterface>());
   void InitTab(TerminalTabInterface*);
 
   void CloseActiveTab() {
@@ -443,8 +442,9 @@ struct MyTerminalMenus { int unused; };
 
 MyAppState::~MyAppState() {}
   
-MyTerminalTab *MyTerminalWindow::AddTerminalTab(int host_id) {
+MyTerminalTab *MyTerminalWindow::AddTerminalTab(int host_id, unique_ptr<ToolbarViewInterface> tb) {
   auto t = new MyTerminalTab(root, this, host_id);
+  t->toolbar = move(tb);
 #ifdef LFL_TERMINAL_MENUS
   t->terminal->line_fb.align_top_or_bot = t->terminal->cmd_fb.align_top_or_bot = true;
   if (atoi(Application::GetSetting("record_session")))
@@ -466,9 +466,11 @@ MyTerminalTab *MyTerminalWindow::AddTerminalTab(int host_id) {
   return t;
 }
 
-TerminalTabInterface *MyTerminalWindow::AddRFBTab(int host_id, RFBClient::Params p, string pw, Callback savehost_cb) {
+TerminalTabInterface *MyTerminalWindow::AddRFBTab(int host_id, RFBClient::Params p, string pw,
+                                                  Callback savehost_cb, unique_ptr<ToolbarViewInterface> tb) {
 #ifdef LFL_RFB
   auto t = new MyRFBTab(root, this, host_id, move(p), move(pw), move(savehost_cb));
+  t->toolbar = move(tb);
   InitTab(t);
   return t;
 #else
