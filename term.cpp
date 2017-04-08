@@ -35,7 +35,7 @@
 #include "core/app/net/rfb.h"
 #include "core/app/db/sqlite.h"
 #ifdef LFL_FLATBUFFERS
-#include "term/term_generated.h"
+#include "LTerminal/term_generated.h"
 #endif
 #include "term.h"
 
