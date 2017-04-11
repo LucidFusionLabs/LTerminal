@@ -7,7 +7,7 @@
 #include "core/app/net/ssh.h"
 #include "core/app/net/rfb.h"
 #include "core/app/db/sqlite.h"
-#include "term/term_generated.h"
+#include "LTerminal/term_generated.h"
 #include "term.h"
 
 namespace LFL {
@@ -25,9 +25,11 @@ struct MyAppState {
   
 struct MyTerminalWindow : public TerminalWindowInterface<TerminalTabInterface> {
   MyTerminalWindow(Window *W) : TerminalWindowInterface(W) {}
-  MyTerminalTab *AddTerminalTab(int host_id) { return 0; }
-  TerminalTabInterface *AddRFBTab(int host_id, RFBClient::Params p, string, Callback savehost_cb=Callback()) { return 0; }
+  MyTerminalTab *AddTerminalTab(int host_id, unique_ptr<ToolbarViewInterface> tb=unique_ptr<ToolbarViewInterface>()) { return 0; }
+  TerminalTabInterface *AddRFBTab(int host_id, RFBClient::Params p, string, Callback savehost_cb=Callback(),
+                                  unique_ptr<ToolbarViewInterface> tb=unique_ptr<ToolbarViewInterface>()) { return 0; }
   void CloseActiveTab() {}
+  void ConsoleAnimatingCB() {}
 };
 
 struct MyTerminalTab : public TerminalTab {
@@ -37,13 +39,12 @@ struct MyTerminalTab : public TerminalTab {
     TerminalTab(W, W->AddView(make_unique<Terminal>(nullptr, W, W->default_font, point(80,25))), host_id), parent(P) {}
 
   void ChangeColors(const string &colors_name, bool redraw=true) {}
-  void UseShellTerminalController(const string &m) {}
+  void UseShellTerminalController(const string &m, bool commands=true, Callback reconnect_cb=Callback()) {}
   void UseTelnetTerminalController(const string &hostport, bool from_shell=false, bool close_on_disconn=false,
-                                   StringCB metakey_cb=StringCB(), Callback savehost_cb=Callback()) {}
+                                   Callback savehost_cb=Callback()) {}
 
   SSHTerminalController*
   UseSSHTerminalController(SSHClient::Params params, bool from_shell=false, const string &pw="",
-                           StringCB metakey_cb=StringCB(),
                            SSHClient::LoadIdentityCB identity_cb=SSHClient::LoadIdentityCB(),
                            SSHTerminalController::SavehostCB savehost_cb=SSHTerminalController::SavehostCB(),
                            SSHClient::FingerprintCB fingerprint_cb=SSHClient::FingerprintCB()) { return nullptr; }

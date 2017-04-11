@@ -487,6 +487,7 @@ struct MyUpgradeViewController : public MyTableViewController {
 };
 
 struct MyTerminalMenus {
+  typedef function<void(TerminalTabInterface*, int, const string&)> SavehostCB;
   bool pro_version = true, db_protected = false, db_opened = false;
   SQLite::Database db;
   MyHostDB host_db;
@@ -537,6 +538,8 @@ struct MyTerminalMenus {
   int sessions_update_len = 0;
 
   unordered_map<string, Callback> mobile_key_cmd = {
+    { "[esc]",    bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->Escape();      if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
+    { "[tab]",    bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->Tab();         if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
     { "[left]",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->CursorLeft();  if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
     { "[right]",  bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->CursorRight(); if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
     { "[up]",     bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->HistUp();      if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
@@ -545,8 +548,8 @@ struct MyTerminalMenus {
     { "[pgdown]", bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->PageDown();    if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
     { "[home]",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->Home();        if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
     { "[end]",    bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->End();         if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
-    { "[tab]",    bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->Tab();         if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
     { "[paste]",  bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->InputString(app->GetClipboardText()); } }) },
+    { "[console]",bind([=]{ if (auto w = GetActiveWindow()) { if (!w->root->console) w->root->InitConsole(bind(&MyTerminalWindow::ConsoleAnimatingCB, w)); w->root->shell->console(StringVec()); } }) },
   };
 
   unordered_map<string, Callback> mobile_togglekey_cmd = {
@@ -664,6 +667,7 @@ struct MyTerminalMenus {
     for (auto &i : v) {
       if      (Contains(mobile_key_cmd,       i.second)) ret.push_back({ i.first, "",       bind(&MyTerminalMenus::PressKey,  this, i.second) });
       else if (Contains(mobile_togglekey_cmd, i.second)) ret.push_back({ i.first, "toggle", bind(&MyTerminalMenus::ToggleKey, this, i.second) });
+      else ret.push_back({ i.first, "", [=](){ if (auto t = GetActiveTerminalTab()) { t->terminal->InputString(i.second); if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } } });
     }
     ret.push_back({ /*"\U000025F0",*/"", "", bind(&MyTerminalMenus::ShowMainMenu, this, true), stacked_squares_icon });
     return SystemToolkit::CreateToolbar(theme, move(ret));
@@ -885,7 +889,7 @@ struct MyTerminalMenus {
     hosts.view->EndUpdates();
 
     app->CloseTouchKeyboard();
-    hosts_nav->PushTableView(hosts.view.get());
+    hosts_nav->PopToRoot();
     hosts_nav->Show(true);
     app->ShowSystemStatusBar(true);
     sessions_update_timer->Run(Seconds(1), true);
@@ -910,7 +914,6 @@ struct MyTerminalMenus {
   void HideMainMenu() {
     app->ShowSystemStatusBar(false);
     app->OpenTouchKeyboard();
-    hosts_nav->PopAll();
     hosts_nav->Show(false);
     app->scheduler.Wakeup(app->focused);
   }
@@ -991,7 +994,7 @@ struct MyTerminalMenus {
     MenuConnect(host, [=](int fpt, const StringPiece &fpb) -> bool {
       string fp = fpb.str();
       return host.FingerprintMatch(fpt, fp) ? true : ShowAcceptFingerprintAlert(fp);
-    }, [=](int fpt, const string &fp) mutable {
+    }, [=](TerminalTabInterface*, int fpt, const string &fp) mutable {
       if (host.FingerprintMatch(fpt, fp)) { host_db.UpdateDate(host_id, Now()); return; }
       host.SetFingerprint(fpt, fp);
       host.Update(host, &host_db, &credential_db, &settings_db);
@@ -1032,15 +1035,14 @@ struct MyTerminalMenus {
       else host.displayname = StrCat(host.username.size() ? StrCat(host.username, "@") : "", host.hostname,
                                      host.port != host.DefaultPort() ? StrCat(":", host.port) : " ");
     }
-    MenuConnect(host, SSHClient::FingerprintCB(), [=](int fpt, const string &fp) mutable {
+    MenuConnect(host, SSHClient::FingerprintCB(), [=](TerminalTabInterface *tab, int fpt, const string &fp) mutable {
       host.SetFingerprint(fpt, fp);           
-      GetActiveTab()->connected_host_id = host.SaveNew(&host_db, &credential_db, &settings_db);
+      tab->connected_host_id = host.SaveNew(&host_db, &credential_db, &settings_db);
     });
   }
 
   void UpdateHostConnect() {
-    hosts_nav->PopToRoot();
-    MyHostModel host;
+    MyHostModel host = updatehost.prev_model;
     updatehost.UpdateModelFromView(&host, &credential_db);
     UpdateModelFromSettingsView(host.protocol, &host.settings, &host.folder);
     if (host.cred.credtype == CredentialType_PEM)
@@ -1048,9 +1050,10 @@ struct MyTerminalMenus {
     MenuConnect(host, [=](int fpt, const StringPiece &fpb) -> bool {
         string fp = fpb.str();
         return updatehost.prev_model.FingerprintMatch(fpt, fp) ? true : ShowAcceptFingerprintAlert(fp);
-      }, [=](int fpt, const string &fp) mutable {
+      }, [=](TerminalTabInterface *tab, int fpt, const string &fp) mutable {
         host.SetFingerprint(fpt, fp);
-        host.Update(updatehost.prev_model, &host_db, &credential_db, &settings_db, true);
+        tab->connected_host_id =
+          host.Update(updatehost.prev_model, &host_db, &credential_db, &settings_db, true);
       });
   }
 
@@ -1058,7 +1061,6 @@ struct MyTerminalMenus {
     app->ShowSystemStatusBar(false);
     app->CloseTouchKeyboardAfterReturn(false);
     app->OpenTouchKeyboard();
-    hosts_nav->PopAll();
     hosts_nav->Show(false);
     app->scheduler.Wakeup(app->focused);
   }
@@ -1089,7 +1091,7 @@ struct MyTerminalMenus {
 
   void MenuConnect(const MyHostModel &host,
                    SSHClient::FingerprintCB fingerprint_cb=SSHClient::FingerprintCB(),
-                   SSHTerminalController::SavehostCB cb=SSHTerminalController::SavehostCB()) {
+                   SavehostCB cb=SavehostCB()) {
     unique_ptr<ToolbarViewInterface> toolbar = CreateKeyboardToolbar(host.settings.toolbar);
     if (host.protocol == LTerminal::Protocol_SSH) {
       SSHClient::LoadIdentityCB reconnect_identity_cb;
@@ -1097,13 +1099,14 @@ struct MyTerminalMenus {
       else if (host.cred.credtype == LTerminal::CredentialType_PEM)
         reconnect_identity_cb = [=](shared_ptr<SSHClient::Identity> *out)
           { *out = LoadIdentity(host.cred); return true; };
-      auto ssh = GetActiveWindow()->AddTerminalTab(host.host_id, move(toolbar))->UseSSHTerminalController
+      auto tab = GetActiveWindow()->AddTerminalTab(host.host_id, move(toolbar));
+      auto ssh = tab->UseSSHTerminalController
         (SSHClient::Params{ host.Hostport(), host.username, host.settings.terminal_type,
          host.settings.startup_command.size() ? StrCat(host.settings.startup_command, "\r") : "",
          host.settings.compression, host.settings.agent_forwarding, host.settings.close_on_disconnect, true,
          host.settings.local_forward, host.settings.remote_forward }, false,
          host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "",
-         move(reconnect_identity_cb), move(cb), move(fingerprint_cb));
+         move(reconnect_identity_cb), bind(move(cb), tab, _1, _2), move(fingerprint_cb));
       ApplyTerminalSettings(host.settings);
       if (host.username.empty()) {
         ssh->identity_cb = [=](shared_ptr<SSHClient::Identity> *out) { 
@@ -1123,17 +1126,20 @@ struct MyTerminalMenus {
         };
       }
     } else if (host.protocol == LTerminal::Protocol_Telnet) {
-      GetActiveWindow()->AddTerminalTab(host.host_id, move(toolbar))->UseTelnetTerminalController
+      auto tab = GetActiveWindow()->AddTerminalTab(host.host_id, move(toolbar));
+      tab->UseTelnetTerminalController
         (host.Hostport(), false, host.settings.close_on_disconnect,
-         (bool(cb) ? Callback([=](){ cb(0, ""); }) : Callback()));
+         (bool(cb) ? Callback([=](){ cb(tab, 0, ""); }) : Callback()));
       ApplyTerminalSettings(host.settings);
     } else if (host.protocol == LTerminal::Protocol_RFB) {
-      GetActiveWindow()->AddRFBTab(host.host_id, RFBClient::Params{host.Hostport()},
-                                   host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "",
-                                   (bool(cb) ? Callback([=](){ cb(0, ""); }) : Callback()), move(toolbar));
+      GetActiveWindow()->AddRFBTab
+        (host.host_id, RFBClient::Params{host.Hostport()},
+         host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "",
+         (bool(cb) ? bind(move(cb), _1, 0, "") : TerminalTabCB()), move(toolbar));
     } else if (host.protocol == LTerminal::Protocol_LocalShell) {
-      GetActiveWindow()->AddTerminalTab(1, move(toolbar))->UseShellTerminalController("");
-      if (cb) cb(0, "");
+      auto tab = GetActiveWindow()->AddTerminalTab(1, move(toolbar));
+      tab->UseShellTerminalController("");
+      if (cb) cb(tab, 0, "");
       ApplyTerminalSettings(host.settings);
     }
     MenuStartSession();
@@ -1181,7 +1187,10 @@ struct MyTerminalMenus {
       NewHostConnectTo(host);
     });
     if (hosts_nav->shown) hosts_nav->Show(false);
-    if (interfacesettings_nav->shown) interfacesettings_nav->Show(false);
+    if (interfacesettings_nav->shown) {
+      interfacesettings_nav->PopAll();
+      interfacesettings_nav->Show(false);
+    }
     app->scheduler.Wakeup(app->focused);
   }
 };

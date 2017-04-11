@@ -326,13 +326,13 @@ struct MyRFBTab : public TerminalTabInterface {
   Box last_draw_box;
 
   MyRFBTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P, int host_id,
-           RFBClient::Params a, string pw, Callback scb) :
+           RFBClient::Params a, string pw, TerminalTabCB scb) :
     TerminalTabInterface(W, 1.0, 1.0, 0, host_id), parent(P), fb(root->gd) {
     networked = true;
     title = StrCat("VNC: ", a.hostport);
     auto c = make_unique<RFBTerminalController>(this, move(a), [=](){ closed_cb(); }, &fb);
     c->passphrase_alert = my_app->passphrase_alert.get();
-    c->savehost_cb = move(scb);
+    c->savehost_cb = bind(move(scb), this);
     rfb = c.get();
     rfb->password = move(pw);
     (controller = move(c))->Open(nullptr);
@@ -389,7 +389,7 @@ struct MyTerminalWindow : public TerminalWindowInterface<TerminalTabInterface> {
   virtual ~MyTerminalWindow() { for (auto t : tabs.tabs) delete t; }
 
   MyTerminalTab *AddTerminalTab(int host_id, unique_ptr<ToolbarViewInterface> tb=unique_ptr<ToolbarViewInterface>());
-  TerminalTabInterface *AddRFBTab(int host_id, RFBClient::Params p, string, Callback savehost_cb=Callback(),
+  TerminalTabInterface *AddRFBTab(int host_id, RFBClient::Params p, string, TerminalTabCB savehost_cb=TerminalTabCB(),
                                   unique_ptr<ToolbarViewInterface> tb=unique_ptr<ToolbarViewInterface>());
   void InitTab(TerminalTabInterface*);
 
@@ -467,7 +467,7 @@ MyTerminalTab *MyTerminalWindow::AddTerminalTab(int host_id, unique_ptr<ToolbarV
 }
 
 TerminalTabInterface *MyTerminalWindow::AddRFBTab(int host_id, RFBClient::Params p, string pw,
-                                                  Callback savehost_cb, unique_ptr<ToolbarViewInterface> tb) {
+                                                  TerminalTabCB savehost_cb, unique_ptr<ToolbarViewInterface> tb) {
 #ifdef LFL_RFB
   auto t = new MyRFBTab(root, this, host_id, move(p), move(pw), move(savehost_cb));
   t->toolbar = move(tb);
@@ -531,7 +531,7 @@ void MyWindowStart(Window *W) {
   binds->Add(Key::Down, Key::Modifier::Cmd, Bind::CB(bind([=](){ t->ScrollDown();           app->scheduler.Wakeup(W); })));
   binds->Add('=',       Key::Modifier::Cmd, Bind::CB(bind([=](){ t->SetFontSize(W->default_font.desc.size + 1); })));
   binds->Add('-',       Key::Modifier::Cmd, Bind::CB(bind([=](){ t->SetFontSize(W->default_font.desc.size - 1); })));
-  binds->Add('6',       Key::Modifier::Cmd, Bind::CB(bind([=](){ W->shell->console(vector<string>()); })));
+  binds->Add('6',       Key::Modifier::Cmd, Bind::CB(bind([=](){ W->shell->console(StringVec()); })));
 #endif
 }
 

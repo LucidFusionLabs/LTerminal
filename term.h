@@ -74,6 +74,8 @@ struct TerminalTabInterface : public Dialog {
   }
 };
 
+typedef function<void(TerminalTabInterface*)> TerminalTabCB;
+
 struct TerminalControllerInterface : public Terminal::Controller {
   TerminalTabInterface *parent;
   StringCB metakey_cb;
@@ -743,7 +745,7 @@ template <class X> struct TerminalWindowInterface : public View {
   TerminalWindowInterface(Window *W) : View(W), tabs(this) {}
   virtual void UpdateTargetFPS() = 0;
 #ifdef LFL_RFB
-  virtual X *AddRFBTab(int host_id, RFBClient::Params p, string, Callback savehost_cb=Callback(),
+  virtual X *AddRFBTab(int host_id, RFBClient::Params p, string, TerminalTabCB savehost_cb=TerminalTabCB(),
                        unique_ptr<ToolbarViewInterface> tb=unique_ptr<ToolbarViewInterface>()) = 0;
 #endif
 };

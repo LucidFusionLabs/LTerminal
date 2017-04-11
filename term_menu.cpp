@@ -73,7 +73,8 @@ void MyKeyboardSettingsViewController::UpdateViewFromModel(const MyHostSettingsM
   view->SetSelected(0, 0, model.keyboard_theme == "Dark");
   view->SetValue(0, 1, model.enter_mode  == LTerminal::EnterMode_ControlJ  ? "1" : "");
   view->SetValue(0, 1, model.delete_mode == LTerminal::DeleteMode_ControlH ? "1" : "");
-  view->ReplaceSection(1, TableItem("Toolbar"), TableSection::Flag::EditButton, move(tb));
+  view->ReplaceSection(1, TableItem("Toolbar"),
+                       TableSection::Flag::EditButton | TableSection::Flag::MovableRows, move(tb));
   view->EndUpdates();
   view->changed = false;
 }

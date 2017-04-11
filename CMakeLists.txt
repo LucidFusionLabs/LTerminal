@@ -53,7 +53,7 @@ if(NOT LFL_MOBILE)
                  app_simple_resampler app_simple_loader ${LFL_APP_CONVERT} app_libpng_png
                  app_libjpeg_jpeg app_giflib_gif app_null_ogg app_null_css ${LFL_APP_FONT}
                  app_null_ssl app_null_js app_null_tu
-                 app_null_crypto app_null_dh ${TERMINAL_TOOLKIT} ${LFL_APP_OS})
+                 app_null_crypto app_null_dh ${CRASHREPORTING_LIB} ${TERMINAL_TOOLKIT} ${LFL_APP_OS})
   lfl_post_build_copy_bin(lterm-render-sandbox LTerminal)
 endif()
 
@@ -100,6 +100,6 @@ if(NOT LFL_MOBILE)
                  app_simple_resampler app_simple_loader ${LFL_APP_CONVERT}
                  app_null_png app_null_jpeg app_null_gif app_null_ogg app_null_css ${LFL_APP_FONT}
                  app_null_ssl app_null_js app_null_tu
-								 ${TERMINAL_DB_LIB} ${TERMINAL_CRYPTO_LIB} app_null_toolkit ${LFL_APP_OS} ${LFL_APP_FRAMEWORK_OS_LIB})
+								 ${TERMINAL_DB_LIB} ${TERMINAL_CRYPTO_LIB} app_null_crashreporting app_null_toolkit ${LFL_APP_OS} ${LFL_APP_FRAMEWORK_OS_LIB})
   add_dependencies(term_tests LTerminal)
 endif()
