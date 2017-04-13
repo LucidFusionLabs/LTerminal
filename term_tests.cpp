@@ -26,7 +26,7 @@ struct MyAppState {
 struct MyTerminalWindow : public TerminalWindowInterface<TerminalTabInterface> {
   MyTerminalWindow(Window *W) : TerminalWindowInterface(W) {}
   MyTerminalTab *AddTerminalTab(int host_id, unique_ptr<ToolbarViewInterface> tb=unique_ptr<ToolbarViewInterface>()) { return 0; }
-  TerminalTabInterface *AddRFBTab(int host_id, RFBClient::Params p, string, Callback savehost_cb=Callback(),
+  TerminalTabInterface *AddRFBTab(int host_id, RFBClient::Params p, string, TerminalTabCB savehost_cb=TerminalTabCB(),
                                   unique_ptr<ToolbarViewInterface> tb=unique_ptr<ToolbarViewInterface>()) { return 0; }
   void CloseActiveTab() {}
   void ConsoleAnimatingCB() {}

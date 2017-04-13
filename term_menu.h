@@ -889,7 +889,6 @@ struct MyTerminalMenus {
     hosts.view->EndUpdates();
 
     app->CloseTouchKeyboard();
-    hosts_nav->PopToRoot();
     hosts_nav->Show(true);
     app->ShowSystemStatusBar(true);
     sessions_update_timer->Run(Seconds(1), true);
@@ -914,6 +913,7 @@ struct MyTerminalMenus {
   void HideMainMenu() {
     app->ShowSystemStatusBar(false);
     app->OpenTouchKeyboard();
+    hosts_nav->PopToRoot();
     hosts_nav->Show(false);
     app->scheduler.Wakeup(app->focused);
   }
@@ -1061,6 +1061,7 @@ struct MyTerminalMenus {
     app->ShowSystemStatusBar(false);
     app->CloseTouchKeyboardAfterReturn(false);
     app->OpenTouchKeyboard();
+    hosts_nav->PopToRoot();
     hosts_nav->Show(false);
     app->scheduler.Wakeup(app->focused);
   }
@@ -1186,7 +1187,10 @@ struct MyTerminalMenus {
       host.cred.Load(CredentialType_Password, "");
       NewHostConnectTo(host);
     });
-    if (hosts_nav->shown) hosts_nav->Show(false);
+    if (hosts_nav->shown) {
+      hosts_nav->PopToRoot();
+      hosts_nav->Show(false);
+    }
     if (interfacesettings_nav->shown) {
       interfacesettings_nav->PopAll();
       interfacesettings_nav->Show(false);
