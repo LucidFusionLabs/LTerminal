@@ -236,7 +236,7 @@ MyAppSettingsViewController::MyAppSettingsViewController(MyTerminalMenus *m) :
     TableItem("Theme",           TableItem::Selector, "Light,Dark", "", 0, m->eye_icon, 0, Callback(), [=](const string &n){ view->SetSelected(0, 2, n == "Dark"); m->ChangeTheme(n); }),
     TableItem("Keep Display On", TableItem::Toggle,  ""),
 #ifdef LFL_IOS
-    TableItem("Background Timeout", TableItem::NumberInput, ""),
+    TableItem("Background Timeout", TableItem::Slider, "", "", 0, 0, 0, Callback(), StringCB(), 0, 0, 0, "", Color::clear, Color::clear, 0, 180),
 #endif
     TableItem("",                TableItem::Separator, ""),
     TableItem("About",           TableItem::Command, "", ">", 0, 0, 0, bind(&NavigationViewInterface::PushTableView, m->hosts_nav.get(), m->about.view.get())),

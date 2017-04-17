@@ -57,7 +57,7 @@ struct MyHostSettingsModel {
     font_name        = FLAGS_font;
     font_size        = 15;
     color_scheme     = "VGA";
-    keyboard_theme   = "Dark";
+    keyboard_theme   = "Light";
     beep_type        = LTerminal::BeepType_None;
     text_encoding    = LTerminal::TextEncoding_UTF8;
     delete_mode      = LTerminal::DeleteMode_Normal;
@@ -662,15 +662,20 @@ struct MyTerminalMenus {
   void PressKey (const string &key) { FindAndDispatch(mobile_key_cmd,       key); }
   void ToggleKey(const string &key) { FindAndDispatch(mobile_togglekey_cmd, key); }
 
-  unique_ptr<ToolbarViewInterface> CreateKeyboardToolbar(const StringPairVec &v) {
-    MenuItemVec ret{ { "\U00002699", "", bind(&MyTerminalMenus::ShowInterfaceSettings, this) } };
+  unique_ptr<ToolbarViewInterface> CreateKeyboardToolbar(const StringPairVec &v, const string &kb_theme) {
+    MenuItemVec ret;
     for (auto &i : v) {
       if      (Contains(mobile_key_cmd,       i.second)) ret.push_back({ i.first, "",       bind(&MyTerminalMenus::PressKey,  this, i.second) });
       else if (Contains(mobile_togglekey_cmd, i.second)) ret.push_back({ i.first, "toggle", bind(&MyTerminalMenus::ToggleKey, this, i.second) });
       else ret.push_back({ i.first, "", [=](){ if (auto t = GetActiveTerminalTab()) { t->terminal->InputString(i.second); if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } } });
     }
-    ret.push_back({ /*"\U000025F0",*/"", "", bind(&MyTerminalMenus::ShowMainMenu, this, true), stacked_squares_icon });
-    return SystemToolkit::CreateToolbar(theme, move(ret));
+    return CreateToolbar(kb_theme, move(ret));
+  }
+
+  unique_ptr<ToolbarViewInterface> CreateToolbar(const string &theme, MenuItemVec items) {
+    items.insert(items.begin(), { "\U00002699", "", bind(&MyTerminalMenus::ShowInterfaceSettings, this) });
+    items.push_back({ /*"\U000025F0",*/"", "", bind(&MyTerminalMenus::ShowMainMenu, this, true), stacked_squares_icon });
+    return SystemToolkit::CreateToolbar(theme, move(items));
   }
 
   bool UnlockEncryptedDatabase(const string &pw) {
@@ -834,6 +839,8 @@ struct MyTerminalMenus {
   }
 
   void ShowMainMenu(bool back) {
+    if (auto t = GetActiveTab()) t->ChangeShader("none");
+
     Time now = Now();
     Box iconb(128, 128);
     int icon_pf = Texture::updatesystemimage_pf, count = 0, selected_row = -1;
@@ -895,19 +902,34 @@ struct MyTerminalMenus {
   }
 
   void UpdateMainMenuTimer() {
-    StringVec val;
     Time now = Now();
+    StringVec val;
+    vector<Color> color;
     auto tw = GetActiveWindow();
+    bool still_counting = false;
     for (auto t : tw->tabs.tabs) {
       Box b(t->GetLastDrawBox().Dimension());
       if (!b.w || !b.h) continue;
-      val.emplace_back(t->networked ? (t->connected != Time::zero() ? StrCat("Connected ", intervalminutes(now - t->connected)) : "Disconnected") : "");
+      if (t->networked) {
+        if (t->connected != Time::zero()) { 
+          still_counting = true;
+          color.emplace_back(0,255,0);
+          val.emplace_back(StrCat("Connected ", intervalminutes(now - t->connected)));
+        } else { 
+          color.emplace_back(255,0,0);
+          val.emplace_back("Disconnected");
+        }
+      } else {
+        color.push_back(Color::clear);
+        val.emplace_back("");
+      }
     }
     if (sessions_update_len != val.size()) return;
     hosts.view->BeginUpdates();
+    hosts.view->SetSectionColors(0, color);
     hosts.view->SetSectionValues(0, val);
     hosts.view->EndUpdates();
-    sessions_update_timer->Run(Seconds(1), true);
+    if (still_counting) sessions_update_timer->Run(Seconds(1), true);
   }
 
   void HideMainMenu() {
@@ -954,13 +976,15 @@ struct MyTerminalMenus {
       t->root->default_font.desc.name = settings.font_name;
       t->ChangeColors(settings.color_scheme, false);
       t->SetFontSize(settings.font_size);
+      t->terminal->enter_char = settings.enter_mode  == LTerminal::EnterMode_ControlJ  ? '\n' : '\r';
+      t->terminal->erase_char = settings.delete_mode == LTerminal::DeleteMode_ControlH ? '\b' : 0x7f;
     }
   }
   
   void ApplyToolbarSettings(const MyHostSettingsModel &settings) {
     if (auto t = GetActiveTab()) {
-      if (t->toolbar) t->toolbar->Show(false);
-      (t->toolbar = CreateKeyboardToolbar(settings.toolbar))->Show(true);
+      if (t->last_toolbar) t->last_toolbar = CreateKeyboardToolbar(settings.toolbar, settings.keyboard_theme);
+      else                 t->ChangeToolbar(CreateKeyboardToolbar(settings.toolbar, settings.keyboard_theme));
     }
   }
 
@@ -1093,7 +1117,7 @@ struct MyTerminalMenus {
   void MenuConnect(const MyHostModel &host,
                    SSHClient::FingerprintCB fingerprint_cb=SSHClient::FingerprintCB(),
                    SavehostCB cb=SavehostCB()) {
-    unique_ptr<ToolbarViewInterface> toolbar = CreateKeyboardToolbar(host.settings.toolbar);
+    unique_ptr<ToolbarViewInterface> toolbar = CreateKeyboardToolbar(host.settings.toolbar, host.settings.keyboard_theme);
     if (host.protocol == LTerminal::Protocol_SSH) {
       SSHClient::LoadIdentityCB reconnect_identity_cb;
       if (host.username.empty()) reconnect_identity_cb = [=](shared_ptr<SSHClient::Identity>*) { return false; };

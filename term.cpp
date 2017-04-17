@@ -83,9 +83,12 @@ struct MyAppState {
   unique_ptr<AlertViewInterface> flash_alert, info_alert, confirm_alert, text_alert, passphrase_alert, passphraseconfirm_alert;
   unique_ptr<MenuViewInterface> edit_menu, view_menu, toys_menu;
   unique_ptr<MyTerminalMenus> menus;
+  function<unique_ptr<ToolbarViewInterface>(const string&, MenuItemVec)> create_toolbar;
   int new_win_width = FLAGS_dim.x*Fonts::InitFontWidth(), new_win_height = FLAGS_dim.y*Fonts::InitFontHeight();
   int downscale_effects = 1, background_timeout = 180;
+
   virtual ~MyAppState();
+  MyAppState() : create_toolbar(bind(&SystemToolkit::CreateToolbar, _1, _2)) {}
 
   Shader *GetShader(const string &shader_name) { 
     auto shader = shader_map.find(shader_name);
@@ -125,6 +128,14 @@ struct MyTerminalTab : public TerminalTab {
     gd->DisableBlend();
     terminal->Draw(draw_box, effects ? 0 : Terminal::DrawFlag::DrawCursor, effects ? activeshader : NULL);
     if (effects) { gd->UseShader(0); terminal->DrawCursor((orig_draw_box.Position() + terminal->GetCursorPosition()), activeshader); }
+    if (auto shell_controller = dynamic_cast<ShellTerminalController*>(controller.get())) {
+      if (shell_controller->NullController()) {
+        gd->EnableBlend();
+        gd->SetColor(Color::red - Color::Alpha(0.75));
+        GraphicsContext::DrawTexturedBox1(gd, draw_box);
+        gd->DisableBlend();
+      }
+    }
     if (terminal->scrolled_lines) DrawScrollBar(draw_box);
   }
 
@@ -167,6 +178,16 @@ struct MyTerminalTab : public TerminalTab {
     ChangeController(move(c));
   }
 
+  void UseReconnectTerminalController(const string &m, bool from_shell, Callback reconnect_cb=Callback()) {
+    if (!from_shell && reconnect_toolbar && reconnect_cb) {
+      string tb_theme = toolbar ? toolbar->GetTheme() : "Light";
+      last_toolbar = ChangeToolbar(my_app->create_toolbar
+                                   (tb_theme, MenuItemVec{ { "Reconnect", "", move(reconnect_cb) } }));
+      reconnect_cb = Callback();
+    }
+    UseShellTerminalController(m, from_shell, move(reconnect_cb));
+  }
+
 #ifdef LFL_CRYPTO
   SSHTerminalController*
   UseSSHTerminalController(SSHClient::Params params, bool from_shell=false, const string &pw="",
@@ -181,7 +202,7 @@ struct MyTerminalTab : public TerminalTab {
         UseSSHTerminalController(params, from_shell, pw, identity_cb, SSHTerminalController::SavehostCB(), fingerprint_cb);
     };
     auto ssh = make_unique<SSHTerminalController>(this, move(params), close_on_disconn ? closed_cb : [=, r = move(reconnect_cb)]() {
-      UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n", from_shell, move(r));
+      UseReconnectTerminalController("\r\nsession ended.\r\n\r\n\r\n", from_shell, move(r));
     });
     auto ret = ssh.get();
     ssh->metakey_cb = bind(&TerminalTabInterface::ToggleToolbarButton, this, _1);
@@ -204,7 +225,7 @@ struct MyTerminalTab : public TerminalTab {
         UseTelnetTerminalController(hostport, from_shell, close_on_disconn, Callback());
     };
     auto telnet = make_unique<NetworkTerminalController>(this, hostport, close_on_disconn ? closed_cb : [=, r = move(reconnect_cb)]() {
-      UseShellTerminalController("\r\nsession ended.\r\n\r\n\r\n", from_shell, move(r));
+      UseReconnectTerminalController("\r\nsession ended.\r\n\r\n\r\n", from_shell, move(r));
     });
     telnet->metakey_cb = bind(&TerminalTabInterface::ToggleToolbarButton, this, _1);
     telnet->success_cb = move(savehost_cb);
@@ -695,6 +716,7 @@ extern "C" int MyAppMain() {
   my_app->menus = make_unique<MyTerminalMenus>();
   my_app->menus->hosts_nav->PushTableView(my_app->menus->hosts.view.get());
   my_app->menus->hosts_nav->Show(true);
+  my_app->create_toolbar = bind(&MyTerminalMenus::CreateToolbar, my_app->menus.get(), _1, _2);
 #else
   app->SetVerticalSwipeRecognizer(2);
   app->SetHorizontalSwipeRecognizer(2);

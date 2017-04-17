@@ -24,11 +24,11 @@ struct TerminalTabInterface : public Dialog {
   string title;
   Callback closed_cb;
   unique_ptr<Terminal::Controller> controller, last_controller;
-  unique_ptr<ToolbarViewInterface> toolbar;
+  unique_ptr<ToolbarViewInterface> toolbar, last_toolbar;
   Shader *activeshader = &app->shaders->shader_default;
   Time connected = Time::zero();
   int connected_host_id = 0;
-  bool networked = 0;
+  bool networked = 0, reconnect_toolbar = 1;
   TerminalTabInterface(Window *W, float w, float h, int flag, int host_id) : Dialog(W,w,h,flag), connected_host_id(host_id) {}
 
   virtual int ReadAndUpdateTerminalFramebuffer() = 0;
@@ -71,6 +71,13 @@ struct TerminalTabInterface : public Dialog {
       draw_box->h -= extra_height * scale;
     }
     return downscale_effects;
+  }
+
+  unique_ptr<ToolbarViewInterface> ChangeToolbar(unique_ptr<ToolbarViewInterface> tb) {
+    if (toolbar) toolbar->Show(false);
+    swap(toolbar, tb);
+    toolbar->Show(true);
+    return tb;
   }
 };
 
@@ -526,8 +533,8 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
       }
       viewport.w = Clamp<float>(zoom_start_viewport.w * d.x, 256, fb->tex.width);
       viewport.h = Clamp<float>(zoom_start_viewport.h * d.y, 256, fb->tex.height);
-      viewport.x = p.x - viewport.w/2;
-      viewport.y = p.y - viewport.h/2;
+      viewport.x = zoom_start_viewport.x - (viewport.w - zoom_start_viewport.w)/2;
+      viewport.y = zoom_start_viewport.y - (viewport.h - zoom_start_viewport.h)/2;
       zoom_last = d;
       AddViewportOffset(point());
     }
@@ -593,7 +600,9 @@ struct ShellTerminalController : public InteractiveTerminalController {
     shell.Add("nslookup", bind(&ShellTerminalController::MyNSLookupCmd, this, _1));
     shell.Add("help",     bind(&ShellTerminalController::MyHelpCmd,     this, _1));
     shell.Add("exit",     move(ecb));
-  }
+    }
+
+  bool NullController() const { return shell.command.empty() && !reconnect_cb; }
 
   Socket Open(TextArea *ta) override {
     if (auto t = dynamic_cast<Terminal*>(ta)) {
@@ -712,6 +721,10 @@ template <class TerminalType> struct TerminalTabT : public TerminalTabInterface 
       (root, fd, SocketSet::READABLE, bind(&TerminalTabInterface::ControllerReadableCB, this));
     UpdateControllerWait();
     if (controller) OpenedController();
+    if (last_toolbar && nullptr == dynamic_cast<InteractiveTerminalController*>(controller.get())) {
+      ChangeToolbar(move(last_toolbar));
+      last_toolbar = unique_ptr<ToolbarViewInterface>();
+    }
   }
 
   int ReadAndUpdateTerminalFramebuffer() {
