@@ -563,6 +563,7 @@ using namespace LFL;
 
 extern "C" void MyAppCreate(int argc, const char* const* argv) {
 #ifdef LFL_TERMINAL_MENUS
+  SystemToolkit::DisableAdvertisingCrashReporting();
   Application::LoadDefaultSettings(StringPairVec{
     StringPair("send_crash_reports", "1"),
     StringPair("write_log_file",     "0"),
