@@ -488,7 +488,7 @@ struct MyUpgradeViewController : public MyTableViewController {
 
 struct MyTerminalMenus {
   typedef function<void(TerminalTabInterface*, int, const string&)> SavehostCB;
-  bool pro_version = true, db_protected = false, db_opened = false;
+  bool pro_version = true, db_protected = false, db_opened = false, suspended_timer = false;
   SQLite::Database db;
   MyHostDB host_db;
   MyCredentialDB credential_db;

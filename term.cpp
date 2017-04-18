@@ -473,8 +473,8 @@ MyTerminalTab *MyTerminalWindow::AddTerminalTab(int host_id, unique_ptr<ToolbarV
   t->terminal->resize_gui_ind.push_back(t->terminal->mouse.AddZoomBox(Box(), MouseController::CoordCB([=](int button, point p, point d, int down) {
     t->zoom_val = t->zoom_val * v2(d.x/100.0, d.y/100.0);
     int font_size = root->default_font.desc.size, delta=0;
-    if      ((t->zoom_val.x > 110 || t->zoom_val.y > 110))                  delta =  1;
-    else if ((t->zoom_val.x <  90 || t->zoom_val.y <  90) && font_size > 5) delta = -1;
+    if      ((t->zoom_val.x > 110 || t->zoom_val.y > 110))                  delta = -1;
+    else if ((t->zoom_val.x <  90 || t->zoom_val.y <  90) && font_size > 5) delta =  1;
     if (delta) {
       t->zoom_val = v2(100,100); 
       t->SetFontSize(font_size + delta);
@@ -596,6 +596,13 @@ extern "C" void MyAppCreate(int argc, const char* const* argv) {
   app->SetTitleBar(ANDROID);
   app->SetKeepScreenOn(false);
   app->SetAutoRotateOrientation(true);
+  app->focused->focused_cb = [=](){
+    if (auto m = my_app->menus.get())
+      if (m->suspended_timer && !(m->suspended_timer = false)) m->UpdateMainMenuTimer();
+  };
+  app->focused->unfocused_cb = [=](){
+    if (auto m = my_app->menus.get()) m->suspended_timer = m->sessions_update_timer->Clear();
+  };
 #endif
 #ifdef LFL_IOS
   app->SetExtendedBackgroundTask([=](){ MSleep(my_app->background_timeout * 1000); });
