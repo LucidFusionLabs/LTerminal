@@ -28,10 +28,10 @@ android {
     }
     signingConfigs {
         release {
-            storeFile file("/Users/p/safe/keys/lfl_keystore")
-            storePassword "kittycat"
-            keyAlias "LFLProd"
-            keyPassword "kittycat"
+            storeFile file("LTerminal_Distribution.keystore")
+            storePassword System.getenv("KEY_PASSWORD")
+            keyAlias "LTerminal_Distribution"
+            keyPassword System.getenv("KEY_PASSWORD")
         }
     }
     buildTypes {

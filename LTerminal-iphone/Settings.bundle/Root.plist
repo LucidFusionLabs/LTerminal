@@ -8,20 +8,6 @@
     <string>Root</string>
     <key>PreferenceSpecifiers</key>
     <array>
-        <dict>
-            <key>Type</key>
-            <string>PSGroupSpecifier</string>
-            <key>Title</key>
-            <string>Info</string>
-        </dict>
-        <dict>
-            <key>Type</key>
-            <string>PSChildPaneSpecifier</string>
-            <key>Title</key>
-            <string>Legal</string>
-            <key>File</key>
-            <string>Legal</string>
-        </dict>
     </array>
 </dict>
 </plist>
