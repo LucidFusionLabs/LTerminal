@@ -765,18 +765,15 @@ void MyHostsViewController::UpdateViewFromModel(MyHostDB *model) {
 MyUpgradeViewController::MyUpgradeViewController(MyTerminalMenus *m, const string &product_id) : MyTableViewController(m), menus(m) {
   vector<TableItem> item{
     TableItem("", TableItem::Separator),
-    TableItem{"Compression",      TableItem::Label, "Decrease latency and data usage using ZLib", "", 0, m->check_icon},
+    TableItem("Compression",      TableItem::Label, "Decrease latency and data usage using ZLib", "", 0, m->check_icon),
     TableItem("", TableItem::Separator),
-    TableItem{"Forwarding",       TableItem::Label, "Unlimited SSH Agent and TCP port forwarding", "", 0, m->check_icon},
+    TableItem("Forwarding",       TableItem::Label, "Unlimited SSH Agent and TCP port forwarding", "", 0, m->check_icon),
     TableItem("", TableItem::Separator),
-    TableItem{"Key Generation",   TableItem::Label, "Generate RSA, DSA, EC, and Ed25519 keys", "", 0, m->check_icon},
+    TableItem("Key Generation",   TableItem::Label, "Generate RSA, DSA, EC, and Ed25519 keys", "", 0, m->check_icon),
     TableItem("", TableItem::Separator),
-    TableItem{"Local Encryption", TableItem::Label, "Protect your host database with SQLCipher", "", 0, m->check_icon},
+    TableItem("Local Encryption", TableItem::Label, "Protect your host database with SQLCipher", "", 0, m->check_icon),
     TableItem("", TableItem::Separator, "", ""),
     TableItem("Checking for upgrade", TableItem::Button),
-#ifdef LFL_IOS
-    TableItem("", TableItem::Separator, "", "Restore Purchases", 0, 0, 0, Callback(), bind(&MyUpgradeViewController::RestorePurchases, this), 0, 0, 0, "", Color::clear, m->green),
-#endif
   };
   for (auto &i : item) if (i.type == TableItem::Label) i.flags |= TableItem::Flag::SubText;
   view = SystemToolkit::CreateTableView("LTerminal Pro", "", m->theme, move(item));
@@ -786,6 +783,11 @@ MyUpgradeViewController::MyUpgradeViewController(MyTerminalMenus *m, const strin
   view->ReplaceSection(0, move(header), 0, TableItemVec());
   view->show_cb = [=](){
     if (!loading_product && (loading_product = true)) {
+#ifdef LFL_IOS
+      TableItem h("", TableItem::Separator, "", "Restore Purchases", 0, 0, 0, Callback(), bind(&MyUpgradeViewController::RestorePurchases, this), 0, 0, 0, "", Color::clear, m->green);
+#else 
+      TableItem h;
+#endif
       if (!m->purchases->CanPurchase()) {
         view->BeginUpdates();
         view->ReplaceSection(5, TableItem(), 0, TableItemVec{ TableItem("Purchases not available", TableItem::Button) });
@@ -793,7 +795,7 @@ MyUpgradeViewController::MyUpgradeViewController(MyTerminalMenus *m, const strin
       } else m->purchases->PreparePurchase(StringVec{product_id}, [=](){
         view->BeginUpdates();
         if (!product) view->ReplaceSection(5, TableItem(), 0, TableItemVec{ TableItem("Upgrade not available",                  TableItem::Button, "", "", 0, 0, 0, Callback(),                                            StringCB(), 0, 0, 0, "", Color::clear, m->green) });
-        else          view->ReplaceSection(5, TableItem(), 0, TableItemVec{ TableItem(StrCat("Upgrade Now ", product->Price()), TableItem::Button, "", "", 0, 0, 0, bind(&MyUpgradeViewController::PurchaseUpgrade, this), StringCB(), 0, 0, 0, "", Color::clear, m->green) });
+        else          view->ReplaceSection(5, move(h),     0, TableItemVec{ TableItem(StrCat("Upgrade Now ", product->Price()), TableItem::Button, "", "", 0, 0, 0, bind(&MyUpgradeViewController::PurchaseUpgrade, this), StringCB(), 0, 0, 0, "", Color::clear, m->green) });
         view->EndUpdates();
       }, [=](unique_ptr<ProductInterface> p) { if (p->id == product_id) product = move(p); });
     }

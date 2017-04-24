@@ -8,8 +8,8 @@
 -keep public class com.lucidfusionlabs.app.LIntIntCB { *; }
 -keep public class com.lucidfusionlabs.app.LPickerItemCB { *; }
 -keep public class com.lucidfusionlabs.app.JPickerItem { *; }
--keep public class com.lucidfusionlabs.app.JDependencyItem { *; }
 -keep public class com.lucidfusionlabs.app.JModelItem { *; }
+-keep public class com.lucidfusionlabs.app.JModelItemChange { *; }
 -keep public class com.lucidfusionlabs.app.JWidget { *; }
 -keep public class com.lucidfusionlabs.app.JAlert { *; }
 -keep public class com.lucidfusionlabs.app.JToolbar { *; }
