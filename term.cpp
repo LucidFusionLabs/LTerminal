@@ -508,7 +508,7 @@ void MyTerminalWindow::InitTab(TerminalTabInterface *t) {
 #else
   t->closed_cb = [](){ LFAppShutdown(); };
 #endif
-  t->deleted_cb = [=](){ tabs.DelTab(t); app->RunInMainThread([=]{ delete t; }); };
+  t->deleted_cb = [=](){ tabs.DelTab(t); /*XXX*/ app->RunInMainThread([=]{ delete t; }); };
   tabs.AddTab(t);
 }
 
@@ -593,7 +593,7 @@ extern "C" void MyAppCreate(int argc, const char* const* argv) {
   app->window_init_cb(app->focused);
 #ifdef LFL_TERMINAL_MENUS
   my_app->downscale_effects = app->SetExtraScale(true);
-  app->SetTitleBar(ANDROID);
+  app->SetTitleBar(ANDROIDOS);
   app->SetKeepScreenOn(false);
   app->SetAutoRotateOrientation(true);
   app->focused->focused_cb = [=](){

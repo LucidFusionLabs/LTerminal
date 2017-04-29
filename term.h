@@ -130,14 +130,20 @@ struct NetworkTerminalController : public TerminalControllerInterface {
   }
 
   virtual void Close() {
-    if (!conn || conn->state != Connection::Connected) return;
-    conn->RemoveFromMainWait(parent->root);
-    conn->Close();
+    if (!conn) return;
+    if (conn->state == Connection::Connected) {
+      conn->RemoveFromMainWait(parent->root);
+      conn->Close();
+    } else {
+      conn->detach_delete = true;
+      conn->SetError();
+    }
     conn = 0;
     if (close_cb) close_cb();
   }
 
   virtual void ConnectedCB() {
+    if (conn->state != Connection::Connected) { auto c=conn; Close(); return c->Close(); }
     parent->connected = Now();
     conn->AddToMainWait(parent->root, bind(&TerminalTabInterface::ControllerReadableCB, parent));
     if (success_on_connect && success_cb) success_cb();

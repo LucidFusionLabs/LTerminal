@@ -458,6 +458,7 @@ struct MyNewHostViewController : public MyTableViewController {
 struct MyUpdateHostViewController : public MyTableViewController {
   MyTerminalMenus *menus;
   MyHostModel prev_model;
+  TableSection::ChangeSet proto_deps, auth_deps;
   MyUpdateHostViewController(MyTerminalMenus*);
   static vector<TableItem> GetSchema(MyTerminalMenus*);
   void UpdateViewFromModel(const MyHostModel &host);
@@ -832,7 +833,7 @@ struct MyTerminalMenus {
   void ChooseProtocol(const string &n) {
     hosts_nav->PopView(1);
     TableViewInterface *host_menu = hosts_nav->Back();
-    int host_row = (host_menu->GetKey(0, 0) == "Nickname");
+    // XXX ANDROID click stall? int host_row = (host_menu->GetKey(0, 0) == "Nickname");
     host_menu->BeginUpdates();
     host_menu->ApplyChangeSet(n, newhost.proto_deps);
     host_menu->EndUpdates();

@@ -634,7 +634,10 @@ bool MyNewHostViewController::UpdateModelFromView(MyHostModel *model, MyCredenti
 }
 
 MyUpdateHostViewController::MyUpdateHostViewController(MyTerminalMenus *m) :
-  MyTableViewController(m, SystemToolkit::CreateTableView("Update Host", "", m->theme, GetSchema(m))), menus(m) {}
+  MyTableViewController(m, SystemToolkit::CreateTableView("Update Host", "", m->theme, GetSchema(m))),
+  menus(m), proto_deps(m->newhost.proto_deps), auth_deps(m->newhost.auth_deps) {
+  for (auto &i : proto_deps) if (i.second.size()) i.second[0].flags |= TableItem::Flag::FixDropdown;
+}
 
 vector<TableItem> MyUpdateHostViewController::GetSchema(MyTerminalMenus *m) {
   vector<TableItem> ret = MyNewHostViewController::GetSchema(m);
@@ -648,12 +651,12 @@ void MyUpdateHostViewController::UpdateViewFromModel(const MyHostModel &host) {
   bool pw = host.cred.credtype == CredentialType_Password, pem = host.cred.credtype == CredentialType_PEM;
   string hostv, proto_name;
   if      (host.protocol == LTerminal::Protocol_Telnet)     { hostv = host.hostname; proto_name = "Telnet"; }
-  else if (host.protocol == LTerminal::Protocol_RFB)        { hostv = host.hostname; proto_name = "RFB"; }
+  else if (host.protocol == LTerminal::Protocol_RFB)        { hostv = host.hostname; proto_name = "VNC"; }
   else if (host.protocol == LTerminal::Protocol_LocalShell) { hostv = "";            proto_name = "Local Shell"; }
   else                                                      { hostv = host.hostname; proto_name = "SSH"; }
   view->BeginUpdates();
-  view->ApplyChangeSet(proto_name,               menus->newhost.proto_deps);
-  view->ApplyChangeSet(pem ? "Key" : "Password", menus->newhost.auth_deps);
+  view->ApplyChangeSet(pem ? "Key" : "Password", auth_deps);
+  view->ApplyChangeSet(proto_name,               proto_deps);
   view->SetSectionValues(0, vector<string>{
     host.displayname, host.port != host.DefaultPort() ? StrCat(hostv, ":", host.port) : hostv, host.username,
     pem ? host.cred.name : (pw ? host.cred.creddata : menus->pw_default)});
