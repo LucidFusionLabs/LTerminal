@@ -20,10 +20,31 @@
 #define LFL_TERM_TERM_H__
 namespace LFL {
 
+struct TerminalTabInterface;
+typedef function<void(TerminalTabInterface*)> TerminalTabCB;
+
+struct TerminalControllerInterface : public Terminal::Controller {
+  TerminalTabInterface *parent;
+  StringCB metakey_cb;
+  TerminalControllerInterface(TerminalTabInterface *P) : parent(P) {}
+  virtual int GetConnectionState() const { return Connection::Error; }
+
+#ifndef LFL_TERMINAL_MENUS
+  StringPiece GetMetaModified(const StringPiece &b, char*) { return b; }
+#else
+  StringPiece GetMetaModified(const StringPiece &b, char *buf) {
+    if (b.size() == 1 && ctrl_down && !(ctrl_down = false)) {
+      if (metakey_cb) metakey_cb("ctrl");
+      return StringPiece(&(buf[0] = Key::CtrlModified(*MakeUnsigned(b.data()))), 1);
+    } else return b;
+  }
+#endif
+};
+
 struct TerminalTabInterface : public Dialog {
   string title;
   Callback closed_cb;
-  unique_ptr<Terminal::Controller> controller, last_controller;
+  unique_ptr<TerminalControllerInterface> controller, last_controller;
   unique_ptr<ToolbarViewInterface> toolbar, last_toolbar;
   Shader *activeshader = &app->shaders->shader_default;
   Time connected = Time::zero();
@@ -31,8 +52,14 @@ struct TerminalTabInterface : public Dialog {
   bool networked = 0, reconnect_toolbar = 1;
   TerminalTabInterface(Window *W, float w, float h, int flag, int host_id) : Dialog(W,w,h,flag), connected_host_id(host_id) {}
 
-  virtual int ReadAndUpdateTerminalFramebuffer() = 0;
+  virtual bool GetFocused() const = 0;
+  virtual int GetConnectionState() const { 
+    return connected != Time::zero() ? Connection::Connected :
+      (controller ? controller->GetConnectionState() : Connection::Error);
+  }
+
   virtual bool ControllerReadableCB() { ReadAndUpdateTerminalFramebuffer(); return true; }
+  virtual int ReadAndUpdateTerminalFramebuffer() = 0;
   virtual void SetFontSize(int) = 0;
   virtual void ScrollUp() = 0;
   virtual void ScrollDown() = 0;
@@ -83,32 +110,14 @@ struct TerminalTabInterface : public Dialog {
   }
 
   unique_ptr<ToolbarViewInterface> ChangeToolbar(unique_ptr<ToolbarViewInterface> tb) {
-    if (toolbar) toolbar->Show(false);
+    bool focused = GetFocused();
+    if (toolbar && focused) toolbar->Show(false);
     swap(toolbar, tb);
-    toolbar->Show(true);
+    if (focused) toolbar->Show(true);
     return tb;
   }
 };
 
-typedef function<void(TerminalTabInterface*)> TerminalTabCB;
-
-struct TerminalControllerInterface : public Terminal::Controller {
-  TerminalTabInterface *parent;
-  StringCB metakey_cb;
-  TerminalControllerInterface(TerminalTabInterface *P) : parent(P) {}
-
-#ifndef LFL_TERMINAL_MENUS
-  StringPiece GetMetaModified(const StringPiece &b, char*) { return b; }
-#else
-  StringPiece GetMetaModified(const StringPiece &b, char *buf) {
-    if (b.size() == 1 && ctrl_down && !(ctrl_down = false)) {
-      if (metakey_cb) metakey_cb("ctrl");
-      return StringPiece(&(buf[0] = Key::CtrlModified(*MakeUnsigned(b.data()))), 1);
-    } else return b;
-  }
-#endif
-};
-  
 struct NetworkTerminalController : public TerminalControllerInterface {
   Connection *conn=0;
   Connection::CB detach_cb;
@@ -119,6 +128,7 @@ struct NetworkTerminalController : public TerminalControllerInterface {
     TerminalControllerInterface(p), detach_cb(bind(&NetworkTerminalController::ConnectedCB, this)),
     close_cb(ccb), remote(r) {}
   virtual ~NetworkTerminalController() { close_cb=Callback(); Close(); }
+  virtual int GetConnectionState() const { return conn ? conn->state : Connection::Error; }
 
   virtual Socket Open(TextArea *t) {
     if (remote.empty()) return InvalidSocket;
@@ -726,7 +736,7 @@ template <class TerminalType> struct TerminalTabT : public TerminalTabInterface 
   virtual KeyboardController *GetKeyboardTarget() { return terminal; }
   virtual Box                 GetLastDrawBox()    { return Box(terminal->line_fb.w, terminal->term_height * terminal->style.font->Height()); }
   
-  void ChangeController(unique_ptr<Terminal::Controller> new_controller) {
+  void ChangeController(unique_ptr<TerminalControllerInterface> new_controller) {
     if (auto ic = dynamic_cast<InteractiveTerminalController*>(controller.get())) ic->done = true;
     controller.swap(last_controller);
     controller = move(new_controller);

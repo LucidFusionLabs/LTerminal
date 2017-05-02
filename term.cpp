@@ -114,6 +114,7 @@ struct MyTerminalTab : public TerminalTab {
     if (terminal->bg_color) W->gd->clear_color = *terminal->bg_color;
   }
 
+  bool GetFocused() const { return parent->tabs.top == this; }
   void Draw() {
 #ifdef LFL_TERMINAL_JOIN_READS
     timer.ClearWakeupIn();
@@ -283,7 +284,7 @@ struct MyTerminalTab : public TerminalTab {
       }
 #endif
     }
-    return parent->tabs.top == this;
+    return GetFocused();
   }
 
   void NewLinkCB(const shared_ptr<TextBox::Control> &link) {
@@ -359,6 +360,7 @@ struct MyRFBTab : public TerminalTabInterface {
     (controller = move(c))->Open(nullptr);
   }
 
+  bool                GetFocused() const  { return parent->tabs.top == this; }
   MouseController    *GetMouseTarget()    { return rfb; }
   KeyboardController *GetKeyboardTarget() { return rfb; }
   Box                 GetLastDrawBox()    { return last_draw_box; }

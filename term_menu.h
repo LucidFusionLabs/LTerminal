@@ -866,11 +866,12 @@ struct MyTerminalMenus {
       if (t == tw->tabs.top) selected_row = count;
       if (count == sessions_icon.size()) sessions_icon.push_back(app->LoadSystemImage(""));
       CHECK_LT(count, sessions_icon.size());
-      int icon = sessions_icon[count++];
+      int icon = sessions_icon[count++], conn_state = t->GetConnectionState();
       app->UpdateSystemImage(icon, icon_tex);
       section.emplace_back
         (t->title, TableItem::Command,
-         t->networked ? (t->connected != Time::zero() ? StrCat("Connected ", intervalminutes(now - t->connected)) : "Disconnected") : "", "", 0, icon, ex_icon, [=](){
+         t->networked ? (t->connected != Time::zero() ? StrCat("Connected ", intervalminutes(now - t->connected)) : Connection::StateName(conn_state)) : "",
+         "", 0, icon, ex_icon, [=](){
            HideMainMenu();
            tw->tabs.SelectTab(t);
            app->scheduler.Wakeup(tw->root);
@@ -880,7 +881,7 @@ struct MyTerminalMenus {
            hosts.view->SetHidden(0, section.size(), true);
            hosts.view->EndUpdates();
          }, TableItem::Flag::SubText | TableItem::Flag::ColoredSubText);
-      if (t->networked) section.back().SetFGColor(t->connected != Time::zero() ? Color(0,255,0) : Color(255,0,0));
+      if (t->networked) section.back().SetFGColor(Connection::ConnectState(conn_state) ? Color(0,255,0) : Color(255,0,0));
     }
     icon_fb.Release();
     sessions_update_len = section.size();
@@ -917,8 +918,9 @@ struct MyTerminalMenus {
           color.emplace_back(0,255,0);
           val.emplace_back(StrCat("Connected ", intervalminutes(now - t->connected)));
         } else { 
-          color.emplace_back(255,0,0);
-          val.emplace_back("Disconnected");
+          int conn_state = t->GetConnectionState();
+          color.emplace_back(Connection::ConnectState(conn_state) ? Color(0,255,0) : Color(255,0,0));
+          val.emplace_back(Connection::StateName(conn_state));
         }
       } else {
         color.push_back(Color::clear);

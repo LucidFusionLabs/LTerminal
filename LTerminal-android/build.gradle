@@ -76,6 +76,10 @@ android {
     dexOptions {
         preDexLibraries = false
     }
+
+    compileOptions {
+        incremental = false
+    }
 }
 
 dependencies {
