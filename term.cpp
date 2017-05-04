@@ -600,7 +600,7 @@ extern "C" void MyAppCreate(int argc, const char* const* argv) {
   app->SetAutoRotateOrientation(true);
   app->focused->focused_cb = [=](){
     if (auto m = my_app->menus.get())
-      if (m->suspended_timer && !(m->suspended_timer = false)) m->UpdateMainMenuTimer();
+      if (m->suspended_timer && !(m->suspended_timer = false)) m->UpdateMainMenuSessionsSectionTimer();
   };
   app->focused->unfocused_cb = [=](){
     if (auto m = my_app->menus.get()) m->suspended_timer = m->sessions_update_timer->Clear();

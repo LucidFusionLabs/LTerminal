@@ -17,6 +17,7 @@
 -keep public class com.lucidfusionlabs.app.JTable { *; }
 -keep public class com.lucidfusionlabs.app.JTextView { *; }
 -keep public class com.lucidfusionlabs.app.JNavigation { *; }
+-keep public class com.lucidfusionlabs.app.JListAdapter { *; }
 
 -keep public class * extends android.app.Activity
 -keep public class * extends android.app.Fragment

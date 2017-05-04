@@ -623,7 +623,7 @@ struct MyTerminalMenus {
     ex_icon                (CheckNotNull(app->LoadSystemImage("ex"))),
     none_icon              (CheckNotNull(app->LoadSystemImage("none"))),
     icon_fb(app->focused->gd), theme(Application::GetSetting("theme")), green(76, 217, 100),
-    sessions_update_timer(SystemToolkit::CreateTimer(bind(&MyTerminalMenus::UpdateMainMenuTimer, this))),
+    sessions_update_timer(SystemToolkit::CreateTimer(bind(&MyTerminalMenus::UpdateMainMenuSessionsSectionTimer, this))),
     hosts_nav(SystemToolkit::CreateNavigationView("", theme)),
     interfacesettings_nav(SystemToolkit::CreateNavigationView("", theme)), addtoolbaritem(this),
     keyboardsettings(this), newkey(this), genkey(this), keyinfo(this), keys(this, &credential_db), about(this),
@@ -842,6 +842,21 @@ struct MyTerminalMenus {
   void ShowMainMenu(bool back) {
     if (auto t = GetActiveTab()) t->ChangeShader("none");
 
+    hosts.view->BeginUpdates();
+    ReplaceMainMenuSessionsSection();
+    hosts.view->SetTitle(pro_version ? "LTerminal Pro" : "LTerminal"); 
+    if (!back) hosts.view->DelNavigationButton(HAlign::Left);
+    else       hosts.view->AddNavigationButton
+      (HAlign::Left, TableItem("Back", TableItem::Button, "", "", 0, 0, 0, bind(&MyTerminalMenus::HideMainMenu, this)));
+    hosts.view->EndUpdates();
+
+    app->CloseTouchKeyboard();
+    hosts_nav->Show(true);
+    app->ShowSystemStatusBar(true);
+    sessions_update_timer->Run(Seconds(1), true);
+  }
+
+  void ReplaceMainMenuSessionsSection() {
     Time now = Now();
     Box iconb(128, 128);
     int icon_pf = Texture::updatesystemimage_pf, count = 0, selected_row = -1;
@@ -885,25 +900,14 @@ struct MyTerminalMenus {
     }
     icon_fb.Release();
     sessions_update_len = section.size();
-    hosts.view->BeginUpdates();
     hosts.view->ReplaceSection
       (0, TableItem("Sessions"), TableSection::Flag::DoubleRowHeight |
        TableSection::Flag::HighlightSelectedRow | TableSection::Flag::DeleteRowsWhenAllHidden |
        TableSection::Flag::ClearLeftNavWhenEmpty, move(section));
     hosts.view->SelectRow(0, selected_row);
-    hosts.view->SetTitle(pro_version ? "LTerminal Pro" : "LTerminal"); 
-    if (!back) hosts.view->DelNavigationButton(HAlign::Left);
-    else       hosts.view->AddNavigationButton
-      (HAlign::Left, TableItem("Back", TableItem::Button, "", "", 0, 0, 0, bind(&MyTerminalMenus::HideMainMenu, this)));
-    hosts.view->EndUpdates();
-
-    app->CloseTouchKeyboard();
-    hosts_nav->Show(true);
-    app->ShowSystemStatusBar(true);
-    sessions_update_timer->Run(Seconds(1), true);
   }
 
-  void UpdateMainMenuTimer() {
+  void UpdateMainMenuSessionsSectionTimer() {
     Time now = Now();
     StringVec val;
     vector<Color> color;
@@ -927,11 +931,17 @@ struct MyTerminalMenus {
         val.emplace_back("");
       }
     }
-    if (sessions_update_len != val.size()) return;
+
     hosts.view->BeginUpdates();
-    hosts.view->SetSectionColors(0, color);
-    hosts.view->SetSectionValues(0, val);
+    if (sessions_update_len != val.size()) {
+      ReplaceMainMenuSessionsSection();
+      still_counting = sessions_update_len != 0;
+    } else {
+      hosts.view->SetSectionColors(0, color);
+      hosts.view->SetSectionValues(0, val);
+    }
     hosts.view->EndUpdates();
+
     if (still_counting) sessions_update_timer->Run(Seconds(1), true);
   }
 
