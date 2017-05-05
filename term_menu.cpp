@@ -186,7 +186,7 @@ MyAboutViewController::MyAboutViewController(MyTerminalMenus *m) :
   view->ReplaceSection(0, TableItem("LTerminal", TableItem::Separator, "", "", 0, m->logo_image), 0, TableItemVec{
     TableItem("Version",                 TableItem::None,    "", app->GetVersion(), 0, 0, 0),
     TableItem("Credits",                 TableItem::Command, "", ">", 0, 0, 0, [=](){ if (!m->credits) m->credits = SystemToolkit::CreateTextView("Credits", Asset::FileContents("credits.txt")); m->hosts_nav->PushTextView(m->credits.get()); }),
-    TableItem("LTerminal Web Page",      TableItem::Command, "", ">", 0, 0, 0, bind(&Application::OpenSystemBrowser, app, "http://www.lucidfusionlabs.com/terminal/")),
+    TableItem("LTerminal Web Page",      TableItem::Command, "", ">", 0, 0, 0, bind(&Application::OpenSystemBrowser, app, "http://www.lucidfusionlabs.com/LTerminal/")),
     TableItem("Lucid Fusion Labs, LLC.", TableItem::Command, "", ">", 0, 0, 0, bind(&Application::OpenSystemBrowser, app, "http://www.lucidfusionlabs.com/")),
   });
   view->EndUpdates(); 

@@ -674,8 +674,8 @@ struct MyTerminalMenus {
   }
 
   unique_ptr<ToolbarViewInterface> CreateToolbar(const string &theme, MenuItemVec items) {
-    items.insert(items.begin(), { "\U00002699", "", bind(&MyTerminalMenus::ShowInterfaceSettings, this) });
-    items.push_back({ /*"\U000025F0",*/"", "", bind(&MyTerminalMenus::ShowMainMenu, this, true), stacked_squares_icon });
+    items.insert(items.begin(), { /*"\U000025F0",*/"", "", bind(&MyTerminalMenus::ShowMainMenu, this, true), stacked_squares_icon });
+    items.push_back({ "\U00002699", "", bind(&MyTerminalMenus::ShowInterfaceSettings, this) });
     return SystemToolkit::CreateToolbar(theme, move(items));
   }
 
