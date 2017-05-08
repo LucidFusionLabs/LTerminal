@@ -88,7 +88,7 @@ struct MyAppState {
   int downscale_effects = 1, background_timeout = 180;
 
   virtual ~MyAppState();
-  MyAppState() : create_toolbar(bind(&SystemToolkit::CreateToolbar, _1, _2)) {}
+  MyAppState() : create_toolbar(bind(&ToolkitInterface::CreateToolbar, app->toolkit, _1, _2)) {}
 
   Shader *GetShader(const string &shader_name) { 
     auto shader = shader_map.find(shader_name);
@@ -646,21 +646,21 @@ extern "C" int MyAppMain() {
 
   my_app->image_browser = make_unique<Browser>();
   my_app->flash_timer = SystemToolkit::CreateTimer([=](){ my_app->flash_alert->Hide(); });
-  my_app->flash_alert = SystemToolkit::CreateAlert(AlertItemVec{
+  my_app->flash_alert = app->toolkit->CreateAlert(AlertItemVec{
     { "style", "" }, { "", "" }, { "", "" }, { "", "" } });
-  my_app->info_alert = SystemToolkit::CreateAlert(AlertItemVec{
+  my_app->info_alert = app->toolkit->CreateAlert(AlertItemVec{
     { "style", "" }, { "", "" }, { "", "" }, { "Continue", "" } });
-  my_app->confirm_alert = SystemToolkit::CreateAlert(AlertItemVec{
+  my_app->confirm_alert = app->toolkit->CreateAlert(AlertItemVec{
     { "style", "" }, { "", "" }, { "Cancel", "" }, { "Continue", "" } });
-  my_app->text_alert = SystemToolkit::CreateAlert(AlertItemVec{
+  my_app->text_alert = app->toolkit->CreateAlert(AlertItemVec{
     { "style", "textinput" }, { "", "" }, { "Cancel", "" }, { "Continue", "" } });
-  my_app->passphrase_alert = SystemToolkit::CreateAlert(AlertItemVec{
+  my_app->passphrase_alert = app->toolkit->CreateAlert(AlertItemVec{
     { "style", "pwinput" }, { "Passphrase", "Passphrase" }, { "Cancel", "" }, { "Continue", "" } });
-  my_app->passphraseconfirm_alert = SystemToolkit::CreateAlert(AlertItemVec{
+  my_app->passphraseconfirm_alert = app->toolkit->CreateAlert(AlertItemVec{
     { "style", "pwinput" }, { "Passphrase", "Confirm Passphrase" }, { "Cancel", "" }, { "Continue", "" } });
 #ifndef LFL_TERMINAL_MENUS
-  my_app->edit_menu = SystemToolkit::CreateEditMenu(vector<MenuItem>());
-  my_app->view_menu = SystemToolkit::CreateMenu("View", MenuItemVec{
+  my_app->edit_menu = app->toolkit->CreateEditMenu(vector<MenuItem>());
+  my_app->view_menu = app->toolkit->CreateMenu("View", MenuItemVec{
 #ifdef __APPLE__
     MenuItem{ "=", "Zoom In" },
     MenuItem{ "-", "Zoom Out" },
@@ -674,7 +674,7 @@ extern "C" int MyAppMain() {
   if (FLAGS_term.empty()) FLAGS_term = BlankNull(getenv("TERM"));
 #endif
 
-  my_app->toys_menu = SystemToolkit::CreateMenu("Toys", vector<MenuItem>{
+  my_app->toys_menu = app->toolkit->CreateMenu("Toys", vector<MenuItem>{
     MenuItem{ "", "None",         [=](){ if (auto t = GetActiveTab()) t->ChangeShader("none");     } },
     MenuItem{ "", "Warper",       [=](){ if (auto t = GetActiveTab()) t->ChangeShader("warper");   } },
     MenuItem{ "", "Water",        [=](){ if (auto t = GetActiveTab()) t->ChangeShader("water");    } },

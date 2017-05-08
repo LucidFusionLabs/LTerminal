@@ -53,7 +53,7 @@ if(NOT LFL_MOBILE)
                  app_simple_resampler app_simple_loader ${LFL_APP_CONVERT} app_libpng_png
                  app_libjpeg_jpeg app_giflib_gif app_null_ogg app_null_css ${LFL_APP_FONT}
                  app_null_ssl app_null_js app_null_tu
-                 app_null_crypto app_null_dh ${CRASHREPORTING_LIB} ${TERMINAL_TOOLKIT} ${LFL_APP_OS})
+                 app_null_crypto app_null_dh ${CRASHREPORTING_LIB} app_null_toolkit ${LFL_APP_OS})
   lfl_post_build_copy_bin(lterm-render-sandbox LTerminal)
 endif()
 
@@ -84,7 +84,7 @@ if(NOT TERMINAL_MENUS)
                  app_null_audio app_null_camera app_null_matrix app_null_fft
                  app_simple_resampler app_simple_loader ${LFL_APP_CONVERT} app_libpng_png
                  app_null_jpeg app_null_gif app_null_ogg app_null_css ${LFL_APP_FONT}
-                 ${LFL_APP_SSL} app_null_js app_null_tu
+                 ${LFL_APP_SSL} app_null_js app_null_tu app_null_advertising
                  ${TERMINAL_DB_LIB} ${TERMINAL_CRYPTO_LIB} ${CRASHREPORTING_LIB} ${TERMINAL_TOOLKIT} ${LFL_APP_OS})
   lfl_post_build_copy_bin(lssh LTerminal)
   add_dependencies(lssh LTerminal)

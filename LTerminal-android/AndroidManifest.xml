@@ -16,8 +16,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <activity android:name="com.lucidfusionlabs.app.ListViewActivity">
-        </activity>
         <meta-data
             android:name="io.fabric.ApiKey"
             android:value="b8bfc53a14ff223e3cf7df5039c377bdac3ca074" />        

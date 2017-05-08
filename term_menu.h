@@ -624,8 +624,8 @@ struct MyTerminalMenus {
     none_icon              (CheckNotNull(app->LoadSystemImage("none"))),
     icon_fb(app->focused->gd), theme(Application::GetSetting("theme")), green(76, 217, 100),
     sessions_update_timer(SystemToolkit::CreateTimer(bind(&MyTerminalMenus::UpdateMainMenuSessionsSectionTimer, this))),
-    hosts_nav(SystemToolkit::CreateNavigationView("", theme)),
-    interfacesettings_nav(SystemToolkit::CreateNavigationView("", theme)), addtoolbaritem(this),
+    hosts_nav(app->toolkit->CreateNavigationView("", theme)),
+    interfacesettings_nav(app->toolkit->CreateNavigationView("", theme)), addtoolbaritem(this),
     keyboardsettings(this), newkey(this), genkey(this), keyinfo(this), keys(this, &credential_db), about(this),
     support(this), privacy(this), settings(this), terminalinterfacesettings(this), rfbinterfacesettings(this),
     sshfingerprint(this), sshportforward(this), sshsettings(this), telnetsettings(this), vncsettings(this),
@@ -637,7 +637,7 @@ struct MyTerminalMenus {
     purchases = SystemToolkit::CreatePurchases();
     if (!(pro_version = purchases->HavePurchase(pro_product_id))) {
       upgrade = make_unique<MyUpgradeViewController>(this, pro_product_id);
-      if ((upgrade_toolbar = SystemToolkit::CreateToolbar(theme, MenuItemVec{
+      if ((upgrade_toolbar = app->toolkit->CreateToolbar(theme, MenuItemVec{
         { "Upgrade to LTerminal Pro", "", [=](){ hosts_nav->PushTableView(upgrade->view.get()); } }
       }))) hosts.view->SetToolbar(upgrade_toolbar.get());
       if ((advertising = SystemToolkit::CreateAdvertisingView
@@ -676,7 +676,7 @@ struct MyTerminalMenus {
   unique_ptr<ToolbarViewInterface> CreateToolbar(const string &theme, MenuItemVec items) {
     items.insert(items.begin(), { /*"\U000025F0",*/"", "", bind(&MyTerminalMenus::ShowMainMenu, this, true), stacked_squares_icon });
     items.push_back({ "\U00002699", "", bind(&MyTerminalMenus::ShowInterfaceSettings, this) });
-    return SystemToolkit::CreateToolbar(theme, move(items));
+    return app->toolkit->CreateToolbar(theme, move(items));
   }
 
   bool UnlockEncryptedDatabase(const string &pw) {
