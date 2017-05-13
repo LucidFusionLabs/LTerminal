@@ -713,6 +713,7 @@ struct MyTerminalMenus {
 
   void ChangeTheme(const string &v) {
     theme = v;
+    app->SetTheme(v);
     hosts_nav->SetTheme(v);
     interfacesettings_nav->SetTheme(v);
     if (upgrade_toolbar) upgrade_toolbar->SetTheme(v);
@@ -816,6 +817,7 @@ struct MyTerminalMenus {
   void ChooseKey(int cred_row_id) {
     hosts_nav->PopView(1);
     TableViewInterface *host_menu = hosts_nav->Back();
+    CHECK(host_menu);
     int key_row = 2 + (host_menu->GetKey(0, 0) == "Nickname");
     host_menu->BeginUpdates();
     if (cred_row_id) {
@@ -833,6 +835,7 @@ struct MyTerminalMenus {
   void ChooseProtocol(const string &n) {
     hosts_nav->PopView(1);
     TableViewInterface *host_menu = hosts_nav->Back();
+    CHECK(host_menu);
     // XXX ANDROID click stall? int host_row = (host_menu->GetKey(0, 0) == "Nickname");
     host_menu->BeginUpdates();
     host_menu->ApplyChangeSet(n, newhost.proto_deps);
