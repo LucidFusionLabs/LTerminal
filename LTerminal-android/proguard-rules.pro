@@ -16,7 +16,7 @@
 -keep public class com.lucidfusionlabs.app.AlertScreen { *; }
 -keep public class com.lucidfusionlabs.app.MenuScreen { *; }
 -keep public class com.lucidfusionlabs.app.TableScreen { *; }
--keep public class com.lucidfusionlabs.app.TextViewScreen { *; }
+-keep public class com.lucidfusionlabs.app.TextScreen { *; }
 -keep public class com.lucidfusionlabs.app.ScreenFragmentNavigator { *; }
 -keep public class com.lucidfusionlabs.app.ModelItemRecyclerViewAdapter { *; }
 

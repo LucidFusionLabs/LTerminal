@@ -6,11 +6,7 @@ import com.crashlytics.android.ndk.CrashlyticsNdk;
 import io.fabric.sdk.android.Fabric;
 
 public class MainActivity extends com.lucidfusionlabs.app.MainActivity {
-    com.lucidfusionlabs.billing.PurchaseManager purchase_manager = null;
-
-    public MainActivity() {
-        preference_fragment = new com.lucidfusionlabs.app.PreferenceFragment(R.layout.preferences);
-    }
+    com.lucidfusionlabs.billing.PurchaseManager purchase_manager;
 
     @Override protected void onCreated() {
         if (preferences.getString("send_crash_reports", "1").equals("1")) {
@@ -26,9 +22,11 @@ public class MainActivity extends com.lucidfusionlabs.app.MainActivity {
         }
 
         purchase_manager = new com.lucidfusionlabs.billing.PurchaseManager(this);
+        preference_fragment = com.lucidfusionlabs.app.PreferenceFragment.newInstance(R.layout.preferences);
     }
 
     @Override protected void onDestroyed() {
         if (purchase_manager != null) purchase_manager.onDestroy();
+        preference_fragment = null;
     }
 }
