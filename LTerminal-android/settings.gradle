@@ -1,4 +1,8 @@
 include 'LFLApp'
+include 'LFLCore'
+include 'LFLAds'
 include 'LFLBilling'
 project(':LFLApp').projectDir = new File('../../core/app/java/app')
+project(':LFLCore').projectDir = new File('../../core/app/java/core')
+project(':LFLAds').projectDir = new File('../../core/app/java/ads')
 project(':LFLBilling').projectDir = new File('../../core/app/java/billing')

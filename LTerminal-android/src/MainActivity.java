@@ -27,4 +27,8 @@ public class MainActivity extends com.lucidfusionlabs.app.MainActivity {
 
         purchase_manager = new com.lucidfusionlabs.billing.PurchaseManager(this);
     }
+
+    @Override protected void onDestroyed() {
+        if (purchase_manager != null) purchase_manager.onDestroy();
+    }
 }
