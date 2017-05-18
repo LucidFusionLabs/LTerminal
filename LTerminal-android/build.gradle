@@ -85,6 +85,7 @@ android {
 dependencies {
     compile project(':LFLApp')
     compile project(':LFLCore')
+    compile project(':LFLAds')
     compile project(':LFLBilling')
     compile('com.crashlytics.sdk.android:crashlytics:2.6.6@aar') {
         transitive = true;
