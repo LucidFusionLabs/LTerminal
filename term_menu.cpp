@@ -154,7 +154,7 @@ void MyKeyInfoViewController::UpdateViewFromModel(const MyCredentialModel &m) {
 
 MyKeysViewController::MyKeysViewController(MyTerminalMenus *m, MyCredentialDB *mo) :
   MyTableViewController(m, app->toolkit->CreateTableView("Choose Key", "", m->theme, vector<TableItem>{
-    TableItem("None",                     TableItem::Command, "", ">", 0, m->none_icon,               0, bind(&MyTerminalMenus::ChooseKey, menus, 0)),
+    TableItem("None",                     TableItem::Command, "", ">", 0, m->none_icon,               0, bind(&MyTerminalMenus::ChooseKey, m, 0)),
     TableItem("Paste Key From Clipboard", TableItem::Command, "", ">", 0, m->clipboard_download_icon, 0, bind(&MyTerminalMenus::PasteKey, m)),
     TableItem("Generate New Key",         TableItem::Command, "", ">", 0, m->keygen_icon,             0, [=](){ m->hosts_nav->PushTableView(m->genkey.view.get()); }),
   })), menus(m), model(mo) {
