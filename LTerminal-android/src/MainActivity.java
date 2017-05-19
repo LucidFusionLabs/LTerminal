@@ -25,8 +25,11 @@ public class MainActivity extends com.lucidfusionlabs.app.MainActivity {
         preference_fragment = com.lucidfusionlabs.app.PreferenceFragment.newInstance(R.layout.preferences);
     }
 
-    @Override protected void onDestroyed() {
-        if (purchase_manager != null) purchase_manager.onDestroy();
-        preference_fragment = null;
+    @Override protected void onDestroy() {
+        if (purchase_manager != null) {
+            purchase_manager.onDestroy();
+            preference_fragment = null;
+        }
+        super.onDestroy();
     }
 }
