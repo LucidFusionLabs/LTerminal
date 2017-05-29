@@ -379,8 +379,6 @@ struct MyAppSettingsViewController : public MyTableViewController {
 
 struct MyTerminalInterfaceSettingsViewController : public MyTableViewController {
   MyTerminalInterfaceSettingsViewController(MyTerminalMenus*);
-  static vector<TableItem> GetBaseSchema(MyTerminalMenus*, NavigationViewInterface*);
-  static vector<TableItem> GetSchema(MyTerminalMenus*, NavigationViewInterface*);
   void UpdateViewFromModel(const MyHostSettingsModel &host_model);
   void UpdateModelFromView(MyHostSettingsModel *host_model) const;
 };
@@ -645,7 +643,7 @@ struct MyTerminalMenus {
 #if defined(LFL_IOS)
             "ca-app-pub-4814825103153665/8426276832", {"41a638aad263424dd2207fdef30f4c10"}
 #elif defined(LFL_ANDROID)
-            "ca-app-pub-4814825103153665/3996077236", {}
+            "ca-app-pub-4814825103153665/3996077236", {"0DBA42FB5610516D099B960C0424B343", "52615418751B72981EF42A9681544EDB"}
 #endif
            ))) advertising->Show(hosts.view.get(), true);
     } else {

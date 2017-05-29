@@ -107,7 +107,11 @@ MyGenKeyViewController::MyGenKeyViewController(MyTerminalMenus *m) : MyTableView
     TableItem("Generate", TableItem::Command, "", ">", 0, m->keygen_icon, 0, bind(&MyTerminalMenus::GenerateKey, m))
     });
   view->show_cb = bind(&MyGenKeyViewController::UpdateViewFromModel, this);
-  algo_deps = {{"RSA", {{2,0,"2048,4096"}}}, {"Ed25519", {{2,0,"256"}}}, {"ECDSA", {{2,0,"256,384,521"}}}};
+  algo_deps = {
+    {"RSA",     {{2,0,"2048,4096",  0,0,0,0,"",Callback(),TableItem::Flag::HideKey}}},
+    {"Ed25519", {{2,0,"256",        0,0,0,0,"",Callback(),TableItem::Flag::HideKey}}},
+    {"ECDSA",   {{2,0,"256,384,521",0,0,0,0,"",Callback(),TableItem::Flag::HideKey}}}
+  };
 }
 
 void MyGenKeyViewController::UpdateViewFromModel() {
@@ -283,7 +287,15 @@ void MyAppSettingsViewController::UpdateModelFromView(MyAppSettingsModel *model)
 }
 
 MyTerminalInterfaceSettingsViewController::MyTerminalInterfaceSettingsViewController(MyTerminalMenus *m) :
-  MyTableViewController(m, app->toolkit->CreateTableView("Interface Settings", "", m->theme, GetSchema(m, m->interfacesettings_nav.get()))) {
+  MyTableViewController(m, app->toolkit->CreateTableView("Interface Settings", "", m->theme, vector<TableItem>{
+    TableItem("Font",     TableItem::Label,      "", "",  0, m->font_icon,     0, [=](){ view->SetHidden(0, 1, -1); }),
+    TableItem("",         TableItem::FontPicker, "", "",  0, 0,                0, Callback(), StringCB(), 0, true),
+    TableItem("Colors",   TableItem::Label,      "", "",  0, m->eye_icon,      0, [=](){ view->SetHidden(0, 3, -1); }),
+    TableItem("",         TableItem::Picker,     "", "",  0, 0,                0, Callback(), StringCB(), 0, true, &m->color_picker),
+    TableItem("Beep",     TableItem::Label,      "", "",  0, m->audio_icon,    0, [=](){}),
+    TableItem("Keyboard", TableItem::Command,    "", ">", 0, m->keyboard_icon, 0, bind(&NavigationViewInterface::PushTableView, m->interfacesettings_nav.get(), m->keyboardsettings.view.get())),
+    TableItem("Toys",     TableItem::Command,    "", ">", 0, m->toys_icon,     0, bind(&MyTerminalMenus::ShowToysMenu, m))
+  })) {
   view->AddNavigationButton(HAlign::Left,
                             TableItem("Back", TableItem::Button, "", "", 0, 0, 0,
                                       bind(&MyTerminalMenus::HideInterfaceSettings, m)));
@@ -300,22 +312,6 @@ MyTerminalInterfaceSettingsViewController::MyTerminalInterfaceSettingsViewContro
       if (toolbar_changed) m->ApplyToolbarSettings(host.settings);
     }
   };
-}
-
-vector<TableItem> MyTerminalInterfaceSettingsViewController::GetBaseSchema(MyTerminalMenus *m, NavigationViewInterface *nav) {
-  return vector<TableItem>{
-    TableItem("Font",     TableItem::Label,      "", "",  0, m->font_icon,     0),
-    TableItem("",         TableItem::FontPicker, "", "",  0, 0,                0, Callback(), StringCB(), 0, true),
-    TableItem("Colors",   TableItem::Label,      "", "",  0, m->eye_icon,      0, [=](){}),
-    TableItem("",         TableItem::Picker,     "", "",  0, 0,                0, Callback(), StringCB(), 0, true, &m->color_picker),
-    TableItem("Beep",     TableItem::Label,      "", "",  0, m->audio_icon,    0, [=](){}),
-    TableItem("Keyboard", TableItem::Command,    "", ">", 0, m->keyboard_icon, 0, bind(&NavigationViewInterface::PushTableView, nav, m->keyboardsettings.view.get())),
-    TableItem("Toys",     TableItem::Command,    "", ">", 0, m->toys_icon,     0, bind(&MyTerminalMenus::ShowToysMenu, m))
-  };
-}
-
-vector<TableItem> MyTerminalInterfaceSettingsViewController::GetSchema(MyTerminalMenus *m, NavigationViewInterface *nav) {
-  return VectorCat<TableItem>(GetBaseSchema(m, nav), vector<TableItem>{});
 }
 
 void MyTerminalInterfaceSettingsViewController::UpdateViewFromModel(const MyHostSettingsModel &host_model) {
