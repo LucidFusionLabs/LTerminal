@@ -637,13 +637,13 @@ struct MyTerminalMenus {
       upgrade = make_unique<MyUpgradeViewController>(this, pro_product_id);
       if ((upgrade_toolbar = app->toolkit->CreateToolbar(theme, MenuItemVec{
         { "Upgrade to LTerminal Pro", "", [=](){ hosts_nav->PushTableView(upgrade->view.get()); } }
-      }))) hosts.view->SetToolbar(upgrade_toolbar.get());
+      }, 0))) hosts.view->SetToolbar(upgrade_toolbar.get());
       if ((advertising = SystemToolkit::CreateAdvertisingView
            (AdvertisingViewInterface::Type::BANNER, VAlign::Bottom,
 #if defined(LFL_IOS)
             "ca-app-pub-4814825103153665/8426276832", {"41a638aad263424dd2207fdef30f4c10"}
 #elif defined(LFL_ANDROID)
-            "ca-app-pub-4814825103153665/3996077236", {"0DBA42FB5610516D099B960C0424B343", "52615418751B72981EF42A9681544EDB"}
+            "ca-app-pub-4814825103153665/3996077236", {"0DBA42FB5610516D099B960C0424B343", "52615418751B72981EF42A9681544EDB", "BC7DC25BB8CF7F790300EB28DA44A4DC"}
 #endif
            ))) advertising->Show(hosts.view.get(), true);
     } else {
@@ -668,13 +668,17 @@ struct MyTerminalMenus {
       else if (Contains(mobile_togglekey_cmd, i.second)) ret.push_back({ i.first, "toggle", bind(&MyTerminalMenus::ToggleKey, this, i.second) });
       else ret.push_back({ i.first, "", [=](){ if (auto t = GetActiveTerminalTab()) { t->terminal->InputString(i.second); if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } } });
     }
-    return CreateToolbar(kb_theme, move(ret));
+    return CreateToolbar(kb_theme, move(ret), ToolbarViewInterface::BORDERLESS_BUTTONS);
   }
 
-  unique_ptr<ToolbarViewInterface> CreateToolbar(const string &theme, MenuItemVec items) {
-    items.insert(items.begin(), { /*"\U000025F0",*/"", "", bind(&MyTerminalMenus::ShowMainMenu, this, true), stacked_squares_icon });
+  unique_ptr<ToolbarViewInterface> CreateToolbar(const string &theme, MenuItemVec items, int flags) {
+#ifdef LFL_ANDROID
+    items.insert(items.begin(), { "\U000025FB", "", bind(&MyTerminalMenus::ShowMainMenu, this, true), 0 });
+#else
+    items.insert(items.begin(), { "", "", bind(&MyTerminalMenus::ShowMainMenu, this, true), stacked_squares_icon });
+#endif
     items.push_back({ "\U00002699", "", bind(&MyTerminalMenus::ShowInterfaceSettings, this) });
-    return app->toolkit->CreateToolbar(theme, move(items));
+    return app->toolkit->CreateToolbar(theme, move(items), flags);
   }
 
   bool UnlockEncryptedDatabase(const string &pw) {

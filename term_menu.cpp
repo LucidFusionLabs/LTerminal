@@ -57,7 +57,8 @@ MyKeyboardSettingsViewController::MyKeyboardSettingsViewController(MyTerminalMen
       auto &dtb = 1 ? m->default_terminal_toolbar : m->default_rfb_toolbar;
       for (auto &i : dtb) tb.emplace_back(i.first, TableItem::Label, i.second);
       view->BeginUpdates();
-      view->ReplaceSection(1, TableItem("Toolbar"), TableSection::Flag::EditButton, tb);
+      view->ReplaceSection(1, TableItem("Toolbar"),
+                           TableSection::Flag::EditButton | TableSection::Flag::MovableRows, move(tb));
       view->EndUpdates();
       view->changed = true;
     })
@@ -617,6 +618,9 @@ bool MyNewHostViewController::UpdateModelFromView(MyHostModel *model, MyCredenti
   string prot = "Protocol", credtype = "Credential", cred = "";
   if (!view->GetSectionText(0, {&model->displayname, &prot, &model->hostname, &model->username,
                             &credtype, &cred})) return ERRORv(false, "parse newhostconnect");
+  RemoveTrailing(&model->displayname, isspace);
+  RemoveTrailing(&model->hostname, isspace);
+  RemoveTrailing(&model->username, isspace);
 
   model->SetProtocol(prot);
   model->SetPort(0);
@@ -668,6 +672,9 @@ bool MyUpdateHostViewController::UpdateModelFromView(MyHostModel *model, MyCrede
   string prot = "Protocol", credtype = "Credential", cred = "";
   if (!view->GetSectionText(0, {&model->displayname, &prot, &model->hostname, &model->username,
                             &credtype, &cred})) return ERRORv(false, "parse updatehostconnect");
+  RemoveTrailing(&model->displayname, isspace);
+  RemoveTrailing(&model->hostname, isspace);
+  RemoveTrailing(&model->username, isspace);
 
   model->SetProtocol(prot);
   model->SetPort(0);
@@ -684,7 +691,6 @@ MyHostsViewController::MyHostsViewController(MyTerminalMenus *m, bool me) :
 vector<TableItem> MyHostsViewController::GetBaseSchema(MyTerminalMenus *m) { return TableItemVec{}; };
 void MyHostsViewController::LoadFolderUI(MyHostDB *model) {
   CHECK(!menu);
-  view->AddNavigationButton(HAlign::Right, TableItem("Edit", TableItem::Button, ""));
   view->SetSectionEditable(0, 0, 0, bind(&MyTerminalMenus::DeleteHost, menus, _1, _2));
   view->show_cb = bind(&MyHostsViewController::UpdateViewFromModel, this, model);
 }

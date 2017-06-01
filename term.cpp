@@ -83,12 +83,12 @@ struct MyAppState {
   unique_ptr<AlertViewInterface> flash_alert, info_alert, confirm_alert, text_alert, passphrase_alert, passphraseconfirm_alert;
   unique_ptr<MenuViewInterface> edit_menu, view_menu, toys_menu;
   unique_ptr<MyTerminalMenus> menus;
-  function<unique_ptr<ToolbarViewInterface>(const string&, MenuItemVec)> create_toolbar;
+  function<unique_ptr<ToolbarViewInterface>(const string&, MenuItemVec, int)> create_toolbar;
   int new_win_width = FLAGS_dim.x*Fonts::InitFontWidth(), new_win_height = FLAGS_dim.y*Fonts::InitFontHeight();
   int downscale_effects = 1, background_timeout = 180;
 
   virtual ~MyAppState();
-  MyAppState() : create_toolbar(bind(&ToolkitInterface::CreateToolbar, app->toolkit, _1, _2)) {}
+  MyAppState() : create_toolbar(bind(&ToolkitInterface::CreateToolbar, app->toolkit, _1, _2, _3)) {}
 
   Shader *GetShader(const string &shader_name) { 
     auto shader = shader_map.find(shader_name);
@@ -183,7 +183,7 @@ struct MyTerminalTab : public TerminalTab {
     if (!from_shell && reconnect_toolbar && reconnect_cb) {
       string tb_theme = toolbar ? toolbar->GetTheme() : "Light";
       last_toolbar = ChangeToolbar(my_app->create_toolbar
-                                   (tb_theme, MenuItemVec{ { "Reconnect", "", move(reconnect_cb) } }));
+                                   (tb_theme, MenuItemVec{ { "Reconnect", "", move(reconnect_cb) } }, 0));
       reconnect_cb = Callback();
     }
     UseShellTerminalController(m, from_shell, move(reconnect_cb));
@@ -729,7 +729,7 @@ extern "C" int MyAppMain() {
   my_app->menus = make_unique<MyTerminalMenus>();
   my_app->menus->hosts_nav->PushTableView(my_app->menus->hosts.view.get());
   my_app->menus->hosts_nav->Show(true);
-  my_app->create_toolbar = bind(&MyTerminalMenus::CreateToolbar, my_app->menus.get(), _1, _2);
+  my_app->create_toolbar = bind(&MyTerminalMenus::CreateToolbar, my_app->menus.get(), _1, _2, _3);
 #else
   app->SetVerticalSwipeRecognizer(2);
   app->SetHorizontalSwipeRecognizer(2);
