@@ -632,7 +632,16 @@ struct MyTerminalMenus {
 
 #if defined(LFL_IOS) || defined(LFL_ANDROID)
     INFO("Loading in-app purchases");
-    purchases = SystemToolkit::CreatePurchases();
+#if defined(LFL_IOS)
+    purchases = SystemToolkit::CreatePurchases("");
+#elif defined(LFL_ANDROID)
+    purchases = SystemToolkit::CreatePurchases
+      ("MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAm0qPVsRM2qpu87og/8y72CFMbtj+/IciLTaeUgIB60x+vCD"
+       "/F+O3sr+/Vf/tHUVOmKLb+wfyupcEqP1H6lbIGWi4/XqqIAMG7opqoxUBY8P6OShxAK0IKE204Rei3pupr9NSQV53q6"
+       "r7qsYKpGNSztzhYJVMmV8/PxwWF/j//sFyvNn0duuLOdYXGDiIHyrSgzjoHdMXhGb28ZDjGYV4jeeS+x4rK6lpaswfJ"
+       "PX6UZS7JLEho/CqlsP4OuhiPjayYcrA0kqsjpW+K7/nBsv0Y+qN3I1DcrxySusXLgC7UgtEQ30iOkU4o1GyrrYWPnTQ"
+       "yuAPT/FLzq25+lBngRXoYwIDAQAB");
+#endif
     if (!(pro_version = purchases->HavePurchase(pro_product_id))) {
       upgrade = make_unique<MyUpgradeViewController>(this, pro_product_id);
       if ((upgrade_toolbar = app->toolkit->CreateToolbar(theme, MenuItemVec{
@@ -838,7 +847,6 @@ struct MyTerminalMenus {
     hosts_nav->PopView(1);
     TableViewInterface *host_menu = hosts_nav->Back();
     CHECK(host_menu);
-    // XXX ANDROID click stall? int host_row = (host_menu->GetKey(0, 0) == "Nickname");
     host_menu->BeginUpdates();
     host_menu->ApplyChangeSet(n, newhost.proto_deps);
     host_menu->EndUpdates();
