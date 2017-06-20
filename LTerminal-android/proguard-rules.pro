@@ -21,7 +21,8 @@
 -keep public interface com.lucidfusionlabs.core.ViewOwner { *; }
 
 -keep public class com.lucidfusionlabs.app.MainActivity { *; }
--keep public class com.lucidfusionlabs.app.MainView { *; }
+-keep public class com.lucidfusionlabs.app.OpenGLView { *; }
+-keep public class com.lucidfusionlabs.app.NativeAPI { *; }
 -keep public class com.lucidfusionlabs.app.Toolbar { *; }
 -keep public class com.lucidfusionlabs.app.Screen { *; }
 -keep public class com.lucidfusionlabs.app.AlertScreen { *; }
