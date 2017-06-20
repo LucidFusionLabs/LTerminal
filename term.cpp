@@ -354,7 +354,7 @@ struct MyRFBTab : public TerminalTabInterface {
     title = StrCat("VNC: ", a.hostport);
     auto c = make_unique<RFBTerminalController>(this, move(a), [=](){ closed_cb(); }, &fb);
     c->passphrase_alert = my_app->passphrase_alert.get();
-    c->savehost_cb = bind(move(scb), this);
+    if (scb) c->savehost_cb = bind(move(scb), this);
     rfb = c.get();
     rfb->password = move(pw);
     (controller = move(c))->Open(nullptr);
@@ -472,8 +472,8 @@ MyTerminalTab *MyTerminalWindow::AddTerminalTab(int host_id, unique_ptr<ToolbarV
   t->terminal->line_fb.align_top_or_bot = t->terminal->cmd_fb.align_top_or_bot = true;
   if (atoi(Application::GetSetting("record_session")))
     t->record = make_unique<FlatFile>(StrCat(app->savedir, "session_", logfiletime(Now()), ".data"));
-  t->terminal->resize_gui_ind.push_back(t->terminal->mouse.AddZoomBox(Box(), MouseController::CoordCB([=](int button, point p, point d, int down) {
-    t->zoom_val = t->zoom_val * v2(d.x/100.0, d.y/100.0);
+  t->terminal->resize_gui_ind.push_back(t->terminal->mouse.AddZoomBox(Box(), MouseController::ScaleCB([=](int button, v2 p, v2 d, int down) {
+    t->zoom_val = t->zoom_val * d;
     int font_size = root->default_font.desc.size, delta=0;
     if      ((t->zoom_val.x > 110 || t->zoom_val.y > 110))                  delta = -1;
     else if ((t->zoom_val.x <  90 || t->zoom_val.y <  90) && font_size > 5) delta =  1;
@@ -584,7 +584,7 @@ extern "C" void MyAppCreate(int argc, const char* const* argv) {
   }
 #endif
   FLAGS_enable_video = FLAGS_enable_input = 1;
-  app = new Application(argc, argv);
+  app = CreateApplication(argc, argv);
   my_app = new MyAppState();
   app->focused = Window::Create();
   app->name = "LTerminal";

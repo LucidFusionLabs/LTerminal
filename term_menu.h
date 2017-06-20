@@ -1188,7 +1188,7 @@ struct MyTerminalMenus {
          host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "",
          (bool(cb) ? bind(move(cb), _1, 0, "") : TerminalTabCB()), move(toolbar));
     } else if (host.protocol == LTerminal::Protocol_LocalShell) {
-      auto tab = GetActiveWindow()->AddTerminalTab(1, move(toolbar));
+      auto tab = GetActiveWindow()->AddTerminalTab(host.host_id, move(toolbar));
       tab->UseShellTerminalController("");
       if (cb) cb(tab, 0, "");
       ApplyTerminalSettings(host.settings);
