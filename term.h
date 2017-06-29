@@ -48,9 +48,10 @@ struct TerminalTabInterface : public Dialog {
   unique_ptr<ToolbarViewInterface> toolbar, last_toolbar;
   Shader *activeshader = &app->shaders->shader_default;
   Time connected = Time::zero();
-  int connected_host_id = 0;
+  int connected_host_id = 0, thumbnail_system_image = 0;
   bool networked = 0, reconnect_toolbar = 1;
   TerminalTabInterface(Window *W, float w, float h, int flag, int host_id) : Dialog(W,w,h,flag), connected_host_id(host_id) {}
+  virtual ~TerminalTabInterface() { if (thumbnail_system_image) app->UnloadSystemImage(thumbnail_system_image); }
 
   virtual bool GetFocused() const = 0;
   virtual int GetConnectionState() const { 

@@ -795,7 +795,7 @@ MyUpgradeViewController::MyUpgradeViewController(MyTerminalMenus *m, const strin
 #endif
       if (!m->purchases->CanPurchase()) {
         view->BeginUpdates();
-        view->ReplaceSection(5, TableItem(), 0, TableItemVec{ TableItem("Purchases not available", TableItem::Button) });
+        view->ReplaceSection(5, TableItem(), 0, TableItemVec{ TableItem("Purchases not available", TableItem::Button, "", "", 0, 0, 0, Callback(), StringCB(), 0, 0, 0, "", Color::clear, m->green) });
         view->EndUpdates();
       } else m->purchases->PreparePurchase(StringVec{product_id}, [=](){
         view->BeginUpdates();

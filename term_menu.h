@@ -499,7 +499,6 @@ struct MyTerminalMenus {
       plus_red_icon, plus_green_icon, vnc_icon, locked_icon, unlocked_icon, font_icon, toys_icon,
       arrowleft_icon, arrowright_icon, clipboard_upload_icon, clipboard_download_icon, keygen_icon,
       user_icon, calendar_icon, check_icon, stacked_squares_icon, ex_icon, none_icon;
-  vector<int> sessions_icon;
   FrameBuffer icon_fb;
   string pw_default = "\x01""Ask each time", pw_empty = "lfl_default", pro_product_id = "com.lucidfusionlabs.lterminal.paid", theme;
   PickerItem color_picker = PickerItem{ {{"VGA", "Solarized Dark", "Solarized Light"}}, {0} };
@@ -853,7 +852,10 @@ struct MyTerminalMenus {
   }
 
   void ShowMainMenu(bool back) {
-    if (auto t = GetActiveTab()) t->ChangeShader("none");
+    if (auto t = GetActiveTab()) {
+      t->ChangeShader("none");
+      UpdateTabThumbnailSystemImage(t, Box(128, 128));
+    }
 
     hosts.view->BeginUpdates();
     ReplaceMainMenuSessionsSection();
@@ -871,46 +873,30 @@ struct MyTerminalMenus {
 
   void ReplaceMainMenuSessionsSection() {
     Time now = Now();
-    Box iconb(128, 128);
-    int icon_pf = Texture::updatesystemimage_pf, count = 0, selected_row = -1;
-    GraphicsContext gc(app->focused->gd);
     vector<TableItem> section;
-
     auto tw = GetActiveWindow();
+    int count = 0, selected_row = -1;
+
     for (auto t : tw->tabs.tabs) {
-      Box b(t->GetLastDrawBox().Dimension());
-      if (!b.w || !b.h) continue;
-
-      icon_fb.Resize(b.w, b.h, FrameBuffer::Flag::CreateGL | FrameBuffer::Flag::CreateTexture);
-      Texture screen_tex, icon_tex;
-      gc.gd->Clear();
-      t->DrawBox(gc.gd, b, false);
-      gc.gd->ScreenshotBox(&screen_tex, b, Texture::Flag::FlipY);
-      icon_tex.Resize(iconb.w, iconb.h, icon_pf, Texture::Flag::CreateBuf);
-      unique_ptr<VideoResamplerInterface> resampler(CreateVideoResampler());
-      resampler->Open(b.w, b.h, Texture::preferred_pf, iconb.w, iconb.h, icon_pf);
-      resampler->Resample(screen_tex.buf, screen_tex.LineSize(), icon_tex.buf, icon_tex.LineSize(), 0);
-
+      int section_ind = section.size(), conn_state = t->GetConnectionState();
       if (t == tw->tabs.top) selected_row = count;
-      if (count == sessions_icon.size()) sessions_icon.push_back(app->LoadSystemImage(""));
-      CHECK_LT(count, sessions_icon.size());
-      int icon = sessions_icon[count++], conn_state = t->GetConnectionState();
-      app->UpdateSystemImage(icon, icon_tex);
+
       section.emplace_back
         (t->title, TableItem::Command,
          t->networked ? (t->connected != Time::zero() ? StrCat("Connected ", intervalminutes(now - t->connected)) : Connection::StateName(conn_state)) : "",
-         "", 0, icon, ex_icon, [=](){
+         "", 0, t->thumbnail_system_image, ex_icon, [=](){
            HideMainMenu();
            tw->tabs.SelectTab(t);
            app->scheduler.Wakeup(tw->root);
          }, [=](const string&){
            t->deleted_cb();
            hosts.view->BeginUpdates();
-           hosts.view->SetHidden(0, section.size(), true);
+           hosts.view->SetHidden(0, section_ind, true);
            hosts.view->EndUpdates();
          }, TableItem::Flag::SubText | TableItem::Flag::ColoredSubText);
       if (t->networked) section.back().SetFGColor(Connection::ConnectState(conn_state) ? Color(0,255,0) : Color(255,0,0));
     }
+
     icon_fb.Release();
     sessions_update_len = section.size();
     hosts.view->ReplaceSection
@@ -918,6 +904,25 @@ struct MyTerminalMenus {
        TableSection::Flag::HighlightSelectedRow | TableSection::Flag::DeleteRowsWhenAllHidden |
        TableSection::Flag::ClearLeftNavWhenEmpty, move(section));
     hosts.view->SelectRow(0, selected_row);
+  }
+
+  void UpdateTabThumbnailSystemImage(TerminalTabInterface *t, const Box &iconb) {
+    Box b(t->GetLastDrawBox().Dimension());
+    if (!b.w || !b.h) return;
+    icon_fb.Resize(b.w, b.h, FrameBuffer::Flag::CreateGL | FrameBuffer::Flag::CreateTexture);
+
+    Texture screen_tex, icon_tex;
+    GraphicsContext gc(app->focused->gd);
+    gc.gd->Clear();
+    t->DrawBox(gc.gd, b, false);
+    gc.gd->ScreenshotBox(&screen_tex, b, Texture::Flag::FlipY);
+    icon_tex.Resize(iconb.w, iconb.h, Texture::updatesystemimage_pf, Texture::Flag::CreateBuf);
+    unique_ptr<VideoResamplerInterface> resampler(CreateVideoResampler());
+    resampler->Open(b.w, b.h, Texture::preferred_pf, iconb.w, iconb.h, Texture::updatesystemimage_pf);
+    resampler->Resample(screen_tex.buf, screen_tex.LineSize(), icon_tex.buf, icon_tex.LineSize(), 0);
+
+    if (!t->thumbnail_system_image) t->thumbnail_system_image = app->LoadSystemImage("");
+    app->UpdateSystemImage(t->thumbnail_system_image, icon_tex);
   }
 
   void UpdateMainMenuSessionsSectionTimer() {
