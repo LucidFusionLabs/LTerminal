@@ -788,11 +788,7 @@ MyUpgradeViewController::MyUpgradeViewController(MyTerminalMenus *m, const strin
   view->ReplaceSection(0, move(header), 0, TableItemVec());
   view->show_cb = [=](){
     if (!loading_product && (loading_product = true)) {
-#ifdef LFL_IOS
-      TableItem h("", TableItem::Separator, "", "Restore Purchases", 0, 0, 0, Callback(), bind(&MyUpgradeViewController::RestorePurchases, this), 0, 0, 0, "", Color::clear, m->green);
-#else 
-      TableItem h;
-#endif
+      TableItem h("", TableItem::Separator, "", "Restore Purchases", 0, 0, 0, Callback(), bind(&MyUpgradeViewController::RestorePurchases, this));
       if (!m->purchases->CanPurchase()) {
         view->BeginUpdates();
         view->ReplaceSection(5, TableItem(), 0, TableItemVec{ TableItem("Purchases not available", TableItem::Button, "", "", 0, 0, 0, Callback(), StringCB(), 0, 0, 0, "", Color::clear, m->green) });

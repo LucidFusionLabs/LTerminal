@@ -485,9 +485,7 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
   string password;
   Callback savehost_cb;
   AlertViewInterface *passphrase_alert=0;
-  bool zoom_x_dir=0, zoom_y_dir;
   Box zoom_start_viewport;
-  v2 zoom_last;
   RFBTerminalController(TerminalTabInterface *p, RFBClient::Params a, const Callback &ccb, FrameBuffer *f) :
     NetworkTerminalController(p, a.hostport, ccb), params(move(a)), fb(f) {}
 
@@ -547,21 +545,11 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
   int SendWheelEvent(InputEvent::Id id, const v2 &p, const v2 &d, bool begin) override {
     if (id == Mouse::Event::Wheel) AddViewportOffset(point(-p.x, p.y));
     else if (id == Mouse::Event::Zoom) {
-      if (begin) {
-        zoom_x_dir = d.x > 1;
-        zoom_y_dir = d.y > 1;
-        zoom_start_viewport = viewport;
-      } else {
-        if (zoom_x_dir) { if (d.x < zoom_last.x) return 0; }
-        else            { if (d.x > zoom_last.x) return 0; }
-        if (zoom_y_dir) { if (d.y < zoom_last.y) return 0; }
-        else            { if (d.y > zoom_last.y) return 0; }
-      }
-      viewport.w = Clamp<float>(zoom_start_viewport.w * d.x, 256, fb->tex.width);
-      viewport.h = Clamp<float>(zoom_start_viewport.h * d.y, 256, fb->tex.height);
+      if (begin) zoom_start_viewport = viewport;
+      viewport.w = Clamp<float>(viewport.w * d.x, 256, fb->tex.width);
+      viewport.h = Clamp<float>(viewport.h * d.y, 256, fb->tex.height);
       viewport.x = zoom_start_viewport.x - (viewport.w - zoom_start_viewport.w)/2;
       viewport.y = zoom_start_viewport.y - (viewport.h - zoom_start_viewport.h)/2;
-      zoom_last = d;
       AddViewportOffset(point());
     }
     return 1;
