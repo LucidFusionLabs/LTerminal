@@ -360,18 +360,18 @@ struct MyRFBTab : public TerminalTabInterface {
     (controller = move(c))->Open(nullptr);
   }
 
-  bool                GetFocused() const  { return parent->tabs.top == this; }
-  MouseController    *GetMouseTarget()    { return rfb; }
-  KeyboardController *GetKeyboardTarget() { return rfb; }
-  Box                 GetLastDrawBox()    { return last_draw_box; }
+  bool                GetFocused() const  override { return parent->tabs.top == this; }
+  MouseController    *GetMouseTarget()    override { return rfb; }
+  KeyboardController *GetKeyboardTarget() override { return rfb; }
+  Box                 GetLastDrawBox()    override { return last_draw_box; }
 
-  void UpdateTargetFPS() { parent->UpdateTargetFPS(); }
-  void SetFontSize(int) {}
-  void ScrollDown() {}
-  void ScrollUp() {}
+  void UpdateTargetFPS() override { parent->UpdateTargetFPS(); }
+  void SetFontSize(int)  override {}
+  void ScrollDown()      override {}
+  void ScrollUp()        override {}
 
-  void Draw() { DrawBox(root->gd, root->Box(), true); }
-  void DrawBox(GraphicsDevice *gd, Box draw_box, bool check_resized) {
+  void Draw() override { DrawBox(root->gd, root->Box(), true); }
+  void DrawBox(GraphicsDevice *gd, Box draw_box, bool check_resized) override {
     float tex[4];
     int effects = PrepareEffects(&draw_box, my_app->downscale_effects, 0);
     Texture::Coordinates(tex, rfb ? rfb->viewport : Box(), fb.tex.width, fb.tex.height);
@@ -394,12 +394,12 @@ struct MyRFBTab : public TerminalTabInterface {
     if (effects) gc.gd->UseShader(0);
   }
 
-  int ReadAndUpdateTerminalFramebuffer() {
+  int ReadAndUpdateTerminalFramebuffer() override {
     if (!controller) return 0;
     return controller->Read().len;
   }
 
-  void ChangeShader(const string &shader_name) {
+  void ChangeShader(const string &shader_name) override {
     auto shader = my_app->GetShader(shader_name);
     activeshader = shader ? shader : &app->shaders->shader_default;
     parent->UpdateTargetFPS();
