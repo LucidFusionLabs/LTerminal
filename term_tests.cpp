@@ -25,8 +25,8 @@ struct MyAppState {
   
 struct MyTerminalWindow : public TerminalWindowInterface<TerminalTabInterface> {
   MyTerminalWindow(Window *W) : TerminalWindowInterface(W) {}
-  MyTerminalTab *AddTerminalTab(int host_id, unique_ptr<ToolbarViewInterface> tb=unique_ptr<ToolbarViewInterface>()) { return 0; }
-  TerminalTabInterface *AddRFBTab(int host_id, RFBClient::Params p, string, TerminalTabCB savehost_cb=TerminalTabCB(),
+  MyTerminalTab *AddTerminalTab(int host_id, bool hide_sb, unique_ptr<ToolbarViewInterface> tb=unique_ptr<ToolbarViewInterface>()) { return 0; }
+  TerminalTabInterface *AddRFBTab(int host_id, bool hide_sb, RFBClient::Params p, string, TerminalTabCB savehost_cb=TerminalTabCB(),
                                   unique_ptr<ToolbarViewInterface> tb=unique_ptr<ToolbarViewInterface>()) { return 0; }
   void CloseActiveTab() {}
   void ConsoleAnimatingCB() {}
@@ -35,8 +35,8 @@ struct MyTerminalWindow : public TerminalWindowInterface<TerminalTabInterface> {
 struct MyTerminalTab : public TerminalTab {
   TerminalWindowInterface<TerminalTabInterface> *parent;
   virtual ~MyTerminalTab() { root->DelView(terminal); }
-  MyTerminalTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P, int host_id) :
-    TerminalTab(W, W->AddView(make_unique<Terminal>(nullptr, W, W->default_font, point(80,25))), host_id), parent(P) {}
+  MyTerminalTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P, int host_id, bool hide_sb) :
+    TerminalTab(W, W->AddView(make_unique<Terminal>(nullptr, W, W->default_font, point(80,25))), host_id, hide_sb), parent(P) {}
 
   void ChangeColors(const string &colors_name, bool redraw=true) {}
   void UseShellTerminalController(const string &m, bool commands=true, Callback reconnect_cb=Callback()) {}

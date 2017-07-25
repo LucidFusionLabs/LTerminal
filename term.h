@@ -49,8 +49,8 @@ struct TerminalTabInterface : public Dialog {
   Shader *activeshader = &app->shaders->shader_default;
   Time connected = Time::zero();
   int connected_host_id = 0, thumbnail_system_image = 0;
-  bool networked = 0, reconnect_toolbar = 1;
-  TerminalTabInterface(Window *W, float w, float h, int flag, int host_id) : Dialog(W,w,h,flag), connected_host_id(host_id) {}
+  bool networked = 0, reconnect_toolbar = 1, hide_statusbar;
+  TerminalTabInterface(Window *W, float w, float h, int flag, int host_id, bool hide_sb) : Dialog(W,w,h,flag), connected_host_id(host_id), hide_statusbar(hide_sb) {}
   virtual ~TerminalTabInterface() { if (thumbnail_system_image) app->UnloadSystemImage(thumbnail_system_image); }
 
   virtual bool GetFocused() const = 0;
@@ -80,6 +80,7 @@ struct TerminalTabInterface : public Dialog {
     root->active_textbox = GetKeyboardTarget();
     root->active_controller = GetMouseTarget();
     UpdateControllerWait();
+    app->ShowSystemStatusBar(!hide_statusbar);
     if (toolbar) toolbar->Show(true);
   }
 
@@ -702,8 +703,8 @@ template <class TerminalType> struct TerminalTabT : public TerminalTabInterface 
   Widget::Slider scrollbar;
   unique_ptr<FlatFile> record;
 
-  TerminalTabT(Window *W, TerminalType *t, int host_id) :
-    TerminalTabInterface(W, 1.0, 1.0, 0, host_id), terminal(t), scrollbar_view(W), scrollbar(&scrollbar_view) {
+  TerminalTabT(Window *W, TerminalType *t, int host_id, bool hide_sb) :
+    TerminalTabInterface(W, 1.0, 1.0, 0, host_id, hide_sb), terminal(t), scrollbar_view(W), scrollbar(&scrollbar_view) {
     scrollbar.arrows = false;
 #ifdef FUZZ_DEBUG
     for (int i=0; i<256; i++) {
@@ -772,7 +773,8 @@ template <class X> struct TerminalWindowInterface : public View {
   TerminalWindowInterface(Window *W) : View(W), tabs(this) {}
   virtual void UpdateTargetFPS() = 0;
 #ifdef LFL_RFB
-  virtual X *AddRFBTab(int host_id, RFBClient::Params p, string, TerminalTabCB savehost_cb=TerminalTabCB(),
+  virtual X *AddRFBTab(int host_id, bool hide_sb, RFBClient::Params p, string,
+                       TerminalTabCB savehost_cb=TerminalTabCB(),
                        unique_ptr<ToolbarViewInterface> tb=unique_ptr<ToolbarViewInterface>()) = 0;
 #endif
 };

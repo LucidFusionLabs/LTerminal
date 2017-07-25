@@ -59,6 +59,7 @@ table HostSettings {
   remote_forward:      [PortForward];
   autocomplete_id:     int;
   prompt_string:       string;
+  hide_statusbar:      bool = true;
 }
 
 table AppSettings {

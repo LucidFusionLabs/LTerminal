@@ -37,7 +37,7 @@ struct MyAutocompleteDB : public SQLiteIdValueStore { using SQLiteIdValueStore::
 
 struct MyHostSettingsModel {
   int settings_id, autocomplete_id, font_size;
-  bool agent_forwarding, compression, close_on_disconnect;
+  bool agent_forwarding, compression, close_on_disconnect, hide_statusbar;
   string terminal_type, startup_command, font_name, color_scheme, keyboard_theme, prompt;
   LTerminal::BeepType beep_type;
   LTerminal::TextEncoding text_encoding;
@@ -52,6 +52,7 @@ struct MyHostSettingsModel {
   void Load() {
     settings_id = autocomplete_id = 0;
     agent_forwarding = close_on_disconnect = 0;
+    hide_statusbar   = !ANDROIDOS;
     compression      = 1;
     terminal_type    = "xterm-color";
     startup_command  = "";
@@ -89,6 +90,7 @@ struct MyHostSettingsModel {
     if (auto ti = r.toolbar_items())  for (auto i : *ti) toolbar.emplace_back(GetFlatBufferString(i->key()), GetFlatBufferString(i->value()));
     if (auto lf = r.local_forward())  for (auto i : *lf) local_forward.push_back({ i->port(), GetFlatBufferString(i->target()), i->target_port() });
     if (auto rf = r.remote_forward()) for (auto i : *rf) local_forward.push_back({ i->port(), GetFlatBufferString(i->target()), i->target_port() });
+    hide_statusbar = flatbuffers::IsFieldPresent(&r, LTerminal::HostSettings::VT_HIDE_STATUSBAR) ? r.hide_statusbar() : !ANDROIDOS;
   }
 
   flatbuffers::Offset<LTerminal::HostSettings> SaveProto(FlatBufferBuilder &fb) const {
@@ -97,6 +99,7 @@ struct MyHostSettingsModel {
     for (auto &i : toolbar)        tb.push_back(LTerminal::CreateToolbarItem(fb, fb.CreateString(i.first), fb.CreateString(i.second)));
     for (auto &i : local_forward)  lf.push_back(LTerminal::CreatePortForward(fb, i.port, fb.CreateString(i.target_host), i.target_port));
     for (auto &i : remote_forward) rf.push_back(LTerminal::CreatePortForward(fb, i.port, fb.CreateString(i.target_host), i.target_port));
+    fb.ForceDefaults(true);
     return LTerminal::CreateHostSettings
       (fb, agent_forwarding, compression, close_on_disconnect, fb.CreateString(terminal_type),
        fb.CreateString(startup_command), fb.CreateString(font_name), font_size, fb.CreateString(color_scheme),
@@ -130,6 +133,7 @@ struct MyAppSettingsModel {
   }
 
   flatbuffers::Offset<LTerminal::AppSettings> SaveProto(FlatBufferBuilder &fb) const {
+    fb.ForceDefaults(true);
     return LTerminal::CreateAppSettings(fb, version, default_host_settings.SaveProto(fb), keep_display_on,
                                         background_timeout);
   }
@@ -965,7 +969,7 @@ struct MyTerminalMenus {
   }
 
   void HideMainMenu() {
-    app->ShowSystemStatusBar(false);
+    if (auto t = GetActiveTab()) if (t->hide_statusbar) app->ShowSystemStatusBar(false);
     app->OpenTouchKeyboard();
     hosts_nav->PopToRoot();
     hosts_nav->Show(false);
@@ -978,7 +982,7 @@ struct MyTerminalMenus {
   }
 
   void HideInterfaceSettings() {
-    app->ShowSystemStatusBar(false);
+    if (auto t = GetActiveTab()) if (t->hide_statusbar) app->ShowSystemStatusBar(false);
     app->OpenTouchKeyboard();
     interfacesettings_nav->PopAll();
     interfacesettings_nav->Show(false);
@@ -1114,7 +1118,6 @@ struct MyTerminalMenus {
   }
 
   void MenuStartSession() {
-    app->ShowSystemStatusBar(false);
     app->CloseTouchKeyboardAfterReturn(false);
     app->OpenTouchKeyboard();
     hosts_nav->PopToRoot();
@@ -1156,7 +1159,7 @@ struct MyTerminalMenus {
       else if (host.cred.credtype == LTerminal::CredentialType_PEM)
         reconnect_identity_cb = [=](shared_ptr<SSHClient::Identity> *out)
           { *out = LoadIdentity(host.cred); return true; };
-      auto tab = GetActiveWindow()->AddTerminalTab(host.host_id, move(toolbar));
+      auto tab = GetActiveWindow()->AddTerminalTab(host.host_id, host.settings.hide_statusbar, move(toolbar));
       auto ssh = tab->UseSSHTerminalController
         (SSHClient::Params{ host.Hostport(), host.username, host.settings.terminal_type,
          host.settings.startup_command.size() ? StrCat(host.settings.startup_command, "\r") : "",
@@ -1183,18 +1186,18 @@ struct MyTerminalMenus {
         };
       }
     } else if (host.protocol == LTerminal::Protocol_Telnet) {
-      auto tab = GetActiveWindow()->AddTerminalTab(host.host_id, move(toolbar));
+      auto tab = GetActiveWindow()->AddTerminalTab(host.host_id, host.settings.hide_statusbar, move(toolbar));
       tab->UseTelnetTerminalController
         (host.Hostport(), false, host.settings.close_on_disconnect,
          (bool(cb) ? Callback([=](){ cb(tab, 0, ""); }) : Callback()));
       ApplyTerminalSettings(host.settings);
     } else if (host.protocol == LTerminal::Protocol_RFB) {
       GetActiveWindow()->AddRFBTab
-        (host.host_id, RFBClient::Params{host.Hostport()},
+        (host.host_id, host.settings.hide_statusbar, RFBClient::Params{host.Hostport()},
          host.cred.credtype == LTerminal::CredentialType_Password ? host.cred.creddata : "",
          (bool(cb) ? bind(move(cb), _1, 0, "") : TerminalTabCB()), move(toolbar));
     } else if (host.protocol == LTerminal::Protocol_LocalShell) {
-      auto tab = GetActiveWindow()->AddTerminalTab(host.host_id, move(toolbar));
+      auto tab = GetActiveWindow()->AddTerminalTab(host.host_id, host.settings.hide_statusbar, move(toolbar));
       tab->UseShellTerminalController("");
       if (cb) cb(tab, 0, "");
       ApplyTerminalSettings(host.settings);

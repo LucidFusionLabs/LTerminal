@@ -107,8 +107,8 @@ struct MyTerminalTab : public TerminalTab {
   v2 zoom_val = v2(100, 100);
 
   virtual ~MyTerminalTab() { root->DelView(terminal); }
-  MyTerminalTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P, int host_id) :
-    TerminalTab(W, W->AddView(make_unique<Terminal>(nullptr, W, W->default_font, FLAGS_dim)), host_id), parent(P), timer(W) {
+  MyTerminalTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P, int host_id, bool hide_sb) :
+    TerminalTab(W, W->AddView(make_unique<Terminal>(nullptr, W, W->default_font, FLAGS_dim)), host_id, hide_sb), parent(P), timer(W) {
     terminal->new_link_cb      = bind(&MyTerminalTab::NewLinkCB,   this, _1);
     terminal->hover_control_cb = bind(&MyTerminalTab::HoverLinkCB, this, _1);
     if (terminal->bg_color) W->gd->clear_color = *terminal->bg_color;
@@ -174,7 +174,7 @@ struct MyTerminalTab : public TerminalTab {
     c->ssh_cb = [=](SSHClient::Params p){ UseSSHTerminalController(move(p), true, ""); };
 #endif
 #ifdef LFL_RFB
-    c->vnc_cb = [=](RFBClient::Params p){ parent->AddRFBTab(1, move(p), ""); };
+    c->vnc_cb = [=](RFBClient::Params p){ parent->AddRFBTab(1, !ANDROIDOS, move(p), ""); };
 #endif
     ChangeController(move(c));
   }
@@ -347,9 +347,9 @@ struct MyRFBTab : public TerminalTabInterface {
   RFBTerminalController *rfb;
   Box last_draw_box;
 
-  MyRFBTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P, int host_id,
+  MyRFBTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P, int host_id, bool hide_sb,
            RFBClient::Params a, string pw, TerminalTabCB scb) :
-    TerminalTabInterface(W, 1.0, 1.0, 0, host_id), parent(P), fb(root->gd) {
+    TerminalTabInterface(W, 1.0, 1.0, 0, host_id, hide_sb), parent(P), fb(root->gd) {
     networked = true;
     title = StrCat("VNC: ", a.hostport);
     auto c = make_unique<RFBTerminalController>(this, move(a), [=](){ closed_cb(); }, &fb);
@@ -411,8 +411,8 @@ struct MyTerminalWindow : public TerminalWindowInterface<TerminalTabInterface> {
   MyTerminalWindow(Window *W) : TerminalWindowInterface(W) {}
   virtual ~MyTerminalWindow() { for (auto t : tabs.tabs) delete t; }
 
-  MyTerminalTab *AddTerminalTab(int host_id, unique_ptr<ToolbarViewInterface> tb=unique_ptr<ToolbarViewInterface>());
-  TerminalTabInterface *AddRFBTab(int host_id, RFBClient::Params p, string, TerminalTabCB savehost_cb=TerminalTabCB(),
+  MyTerminalTab *AddTerminalTab(int host_id, bool hide_sb=!ANDROIDOS, unique_ptr<ToolbarViewInterface> tb=unique_ptr<ToolbarViewInterface>());
+  TerminalTabInterface *AddRFBTab(int host_id, bool hide_sb, RFBClient::Params p, string, TerminalTabCB savehost_cb=TerminalTabCB(),
                                   unique_ptr<ToolbarViewInterface> tb=unique_ptr<ToolbarViewInterface>());
   void InitTab(TerminalTabInterface*);
 
@@ -465,8 +465,8 @@ struct MyTerminalMenus { int unused; };
 
 MyAppState::~MyAppState() {}
   
-MyTerminalTab *MyTerminalWindow::AddTerminalTab(int host_id, unique_ptr<ToolbarViewInterface> tb) {
-  auto t = new MyTerminalTab(root, this, host_id);
+MyTerminalTab *MyTerminalWindow::AddTerminalTab(int host_id, bool hide_statusbar, unique_ptr<ToolbarViewInterface> tb) {
+  auto t = new MyTerminalTab(root, this, host_id, hide_statusbar);
   t->toolbar = move(tb);
 #ifdef LFL_TERMINAL_MENUS
   t->terminal->line_fb.align_top_or_bot = t->terminal->cmd_fb.align_top_or_bot = true;
@@ -489,10 +489,10 @@ MyTerminalTab *MyTerminalWindow::AddTerminalTab(int host_id, unique_ptr<ToolbarV
   return t;
 }
 
-TerminalTabInterface *MyTerminalWindow::AddRFBTab(int host_id, RFBClient::Params p, string pw,
+TerminalTabInterface *MyTerminalWindow::AddRFBTab(int host_id, bool hide_statusbar, RFBClient::Params p, string pw,
                                                   TerminalTabCB savehost_cb, unique_ptr<ToolbarViewInterface> tb) {
 #ifdef LFL_RFB
-  auto t = new MyRFBTab(root, this, host_id, move(p), move(pw), move(savehost_cb));
+  auto t = new MyRFBTab(root, this, host_id, hide_statusbar, move(p), move(pw), move(savehost_cb));
   t->toolbar = move(tb);
   InitTab(t);
   return t;
@@ -534,7 +534,7 @@ void MyWindowStart(Window *W) {
 
 #ifndef LFL_TERMINAL_MENUS
   TerminalTabInterface *t = nullptr;
-  ONCE_ELSE({ if (FLAGS_vnc.size()) t = tw->AddRFBTab(0, RFBClient::Params{FLAGS_vnc}, "");
+  ONCE_ELSE({ if (FLAGS_vnc.size()) t = tw->AddRFBTab(0, !ANDROIDOS, RFBClient::Params{FLAGS_vnc}, "");
               else { auto tt = tw->AddTerminalTab(0); tt->UseInitialTerminalController(); t=tt; }
               },   { auto tt = tw->AddTerminalTab(0); tt->UseDefaultTerminalController(); t=tt; });
   if (FLAGS_resize_grid)
