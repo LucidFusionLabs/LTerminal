@@ -105,7 +105,7 @@ struct MyHostSettingsModel {
        fb.CreateString(startup_command), fb.CreateString(font_name), font_size, fb.CreateString(color_scheme),
        fb.CreateString(keyboard_theme), beep_type, text_encoding, enter_mode, delete_mode,
        tb.size() ? fb.CreateVector(tb) : 0, lf.size() ? fb.CreateVector(lf) : 0,
-       rf.size() ? fb.CreateVector(rf) : 0, autocomplete_id, fb.CreateString(prompt));
+       rf.size() ? fb.CreateVector(rf) : 0, autocomplete_id, fb.CreateString(prompt), hide_statusbar);
   }
 
   FlatBufferPiece SaveBlob() const {
