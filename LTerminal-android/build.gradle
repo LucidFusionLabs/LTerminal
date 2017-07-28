@@ -24,8 +24,8 @@ android {
     defaultConfig {
         minSdkVersion 19
         targetSdkVersion 25
-        versionCode 1019001
-        versionName "1.19.1"
+        versionCode 1019002
+        versionName "1.19.2"
         externalNativeBuild {
             cmake {
                 targets "LTerminal"
