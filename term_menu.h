@@ -343,7 +343,7 @@ struct MyNewKeyViewController : public MyTableViewController {
 };
 
 struct MyGenKeyViewController : public MyTableViewController {
-  TableSection::ChangeSet algo_deps;
+  TableSectionInterface::ChangeSet algo_deps;
   MyGenKeyViewController(MyTerminalMenus*);
   void UpdateViewFromModel();
   bool UpdateModelFromView(MyGenKeyModel *model) const;
@@ -402,7 +402,7 @@ struct MySSHFingerprintViewController : public MyTableViewController {
 };
 
 struct MySSHPortForwardViewController : public MyTableViewController {
-  TableSection::ChangeSet type_deps;
+  TableSectionInterface::ChangeSet type_deps;
   MySSHPortForwardViewController(MyTerminalMenus*);
   void ApplyTypeChangeSet(const string &n) { view->ApplyChangeSet(n, type_deps); }
 };
@@ -445,13 +445,13 @@ struct MyProtocolViewController : public MyTableViewController {
 
 struct MyQuickConnectViewController {
   static vector<TableItem> GetSchema(MyTerminalMenus*);
-  static TableSection::ChangeSet GetProtoDepends(MyTerminalMenus*);
-  static TableSection::ChangeSet GetAuthDepends(MyTerminalMenus*);
+  static TableSectionInterface::ChangeSet GetProtoDepends(MyTerminalMenus*);
+  static TableSectionInterface::ChangeSet GetAuthDepends(MyTerminalMenus*);
 };
 
 struct MyNewHostViewController : public MyTableViewController {
   MyTerminalMenus *menus;
-  TableSection::ChangeSet proto_deps, auth_deps;
+  TableSectionInterface::ChangeSet proto_deps, auth_deps;
   MyNewHostViewController(MyTerminalMenus*);
   static vector<TableItem> GetSchema(MyTerminalMenus*);
   void UpdateViewFromModel();
@@ -461,7 +461,7 @@ struct MyNewHostViewController : public MyTableViewController {
 struct MyUpdateHostViewController : public MyTableViewController {
   MyTerminalMenus *menus;
   MyHostModel prev_model;
-  TableSection::ChangeSet proto_deps, auth_deps;
+  TableSectionInterface::ChangeSet proto_deps, auth_deps;
   MyUpdateHostViewController(MyTerminalMenus*);
   static vector<TableItem> GetSchema(MyTerminalMenus*);
   void UpdateViewFromModel(const MyHostModel &host);
@@ -538,6 +538,7 @@ struct MyTerminalMenus {
   unique_ptr<ToolbarViewInterface>    upgrade_toolbar;
   unique_ptr<MyUpgradeViewController> upgrade;
   unique_ptr<AdvertisingViewInterface> advertising;
+  unique_ptr<NagInterface>             nag;
   int sessions_update_len = 0;
 
   unordered_map<string, Callback> mobile_key_cmd = {
@@ -659,6 +660,10 @@ struct MyTerminalMenus {
             "ca-app-pub-4814825103153665/3996077236", {"0DBA42FB5610516D099B960C0424B343", "52615418751B72981EF42A9681544EDB", "BC7DC25BB8CF7F790300EB28DA44A4DC"}
 #endif
            ))) advertising->Show(hosts.view.get(), true);
+#if defined(LFL_IOS)
+      nag = SystemToolkit::CreateNag("1193359415", 7, 10, -1, 5);
+#elif defined(LFL_ANDROID)
+#endif
     } else {
       hosts.view->SetTitle("LTerminal Pro");
       about.view->SetHeader(0, TableItem("LTerminal Pro", TableItem::Separator, "", "", 0, logo_image));
@@ -905,9 +910,9 @@ struct MyTerminalMenus {
     icon_fb.Release();
     sessions_update_len = section.size();
     hosts.view->ReplaceSection
-      (0, TableItem("Sessions"), TableSection::Flag::DoubleRowHeight |
-       TableSection::Flag::HighlightSelectedRow | TableSection::Flag::DeleteRowsWhenAllHidden |
-       TableSection::Flag::ClearLeftNavWhenEmpty, move(section));
+      (0, TableItem("Sessions"), TableSectionInterface::Flag::DoubleRowHeight |
+       TableSectionInterface::Flag::HighlightSelectedRow | TableSectionInterface::Flag::DeleteRowsWhenAllHidden |
+       TableSectionInterface::Flag::ClearLeftNavWhenEmpty, move(section));
     hosts.view->SelectRow(0, selected_row);
   }
 

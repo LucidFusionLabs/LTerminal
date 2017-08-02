@@ -23,7 +23,8 @@
 #endif
 
 #include "core/app/app.h"
-#include "core/app/gui.h"
+#include "core/app/gl/view.h"
+#include "core/app/gl/terminal.h"
 #include "core/app/ipc.h"
 #include "core/app/net/resolver.h"
 #include "core/web/browser.h"

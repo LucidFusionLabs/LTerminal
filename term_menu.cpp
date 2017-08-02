@@ -58,7 +58,7 @@ MyKeyboardSettingsViewController::MyKeyboardSettingsViewController(MyTerminalMen
       for (auto &i : dtb) tb.emplace_back(i.first, TableItem::Label, i.second);
       view->BeginUpdates();
       view->ReplaceSection(1, TableItem("Toolbar"),
-                           TableSection::Flag::EditButton | TableSection::Flag::MovableRows, move(tb));
+                           TableSectionInterface::Flag::EditButton | TableSectionInterface::Flag::MovableRows, move(tb));
       view->EndUpdates();
       view->changed = true;
     })
@@ -75,7 +75,7 @@ void MyKeyboardSettingsViewController::UpdateViewFromModel(const MyHostSettingsM
   view->SetValue(0, 1, model.enter_mode  == LTerminal::EnterMode_ControlJ  ? "1" : "");
   view->SetValue(0, 1, model.delete_mode == LTerminal::DeleteMode_ControlH ? "1" : "");
   view->ReplaceSection(1, TableItem("Toolbar"),
-                       TableSection::Flag::EditButton | TableSection::Flag::MovableRows, move(tb));
+                       TableSectionInterface::Flag::EditButton | TableSectionInterface::Flag::MovableRows, move(tb));
   view->EndUpdates();
   view->changed = false;
 }
@@ -179,7 +179,7 @@ void MyKeysViewController::UpdateViewFromModel() {
   }
   view->BeginUpdates();
   view->ReplaceSection(1, TableItem(section.size() ? "Keys" : ""),
-                       section.size() ? (TableSection::Flag::EditButton | TableSection::Flag::EditableIfHasTag) : 0,
+                       section.size() ? (TableSectionInterface::Flag::EditButton | TableSectionInterface::Flag::EditableIfHasTag) : 0,
                        section);
   view->EndUpdates();
   view->changed = false;
@@ -200,7 +200,7 @@ MyAboutViewController::MyAboutViewController(MyTerminalMenus *m) :
 MySupportViewController::MySupportViewController(MyTerminalMenus *m) :
   MyTableViewController(m, app->toolkit->CreateTableView("Support", "", m->theme, vector<TableItem>{
     TableItem("Reference", TableItem::Separator, ""),
-    TableItem("LTerminal", TableItem::Command, "", ">", 0, 0, 0, bind(&Application::OpenSystemBrowser, app, "http://www.lucidfusionlabs.com/terminal/")),
+    TableItem("LTerminal", TableItem::Command, "", ">", 0, 0, 0, bind(&Application::OpenSystemBrowser, app, "http://www.lucidfusionlabs.com/LTerminal/")),
   })) {
   view->BeginUpdates();
   view->ReplaceSection(0, TableItem("Contact"), 0, TableItemVec{
@@ -444,7 +444,7 @@ void MySSHSettingsViewController::UpdateViewFromModel(const MyHostModel &model) 
     model.settings.compression ? "1" : "",
     model.settings.close_on_disconnect ? "1" : "",
     model.settings.startup_command.size() ? model.settings.startup_command : "\x01none" });
-  view->ReplaceSection(2, TableItem("Port Forwarding"), TableSection::Flag::EditButton, forwards);
+  view->ReplaceSection(2, TableItem("Port Forwarding"), TableSectionInterface::Flag::EditButton, forwards);
   view->EndUpdates();
 }
 
@@ -570,7 +570,7 @@ vector<TableItem> MyQuickConnectViewController::GetSchema(MyTerminalMenus *m) {
     TableItem("SSH Settings", TableItem::Command, "", ">", 0, m->settings_gray_icon, 0, bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_SSH)) };
 }
 
-TableSection::ChangeSet MyQuickConnectViewController::GetProtoDepends(MyTerminalMenus *m) {
+TableSectionInterface::ChangeSet MyQuickConnectViewController::GetProtoDepends(MyTerminalMenus *m) {
   return {
     {"SSH",         {{0,0,"\x01Host[:port]",false,m->host_locked_icon,0,TableItem::TextInput,"SSH"},         {0,1,"\x01Username"}, {0,2,m->pw_default,false,0,0,0,"",Callback(),0},                            {2,0,"",false,m->settings_gray_icon,0,0,"SSH Settings",        bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_SSH) } }},
     {"Telnet",      {{0,0,"\x01Host[:port]",false,m->host_icon,       0,TableItem::TextInput,"Telnet"},      {0,1,"",true},        {0,2,"",true,0,0},                                                          {2,0,"",false,m->settings_gray_icon,0,0,"Telnet Settings",     bind(&MyTerminalMenus::ShowProtocolSettings, m, LTerminal::Protocol_Telnet) } }},
@@ -579,7 +579,7 @@ TableSection::ChangeSet MyQuickConnectViewController::GetProtoDepends(MyTerminal
   };
 }
 
-TableSection::ChangeSet MyQuickConnectViewController::GetAuthDepends(MyTerminalMenus *m) {
+TableSectionInterface::ChangeSet MyQuickConnectViewController::GetAuthDepends(MyTerminalMenus *m) {
   return {
     {"Password", {{0,2,m->pw_default,false,m->locked_icon,0,TableItem::PasswordInput,"Password"}}},
     {"Key",      {{0,2,"",           false,m->key_icon   ,0,TableItem::Label,        "Key"     }}}
@@ -759,10 +759,10 @@ void MyHostsViewController::UpdateViewFromModel(MyHostDB *model) {
                          bind(&MyTerminalMenus::HostInfo, menus, host.id), TableItem::Flag::SubText);
   }
   view->BeginUpdates();
-  if (!menu) view->ReplaceSection(0, TableItem(), TableSection::Flag::EditableIfHasTag, section);
+  if (!menu) view->ReplaceSection(0, TableItem(), TableSectionInterface::Flag::EditableIfHasTag, section);
   else view->ReplaceSection
     (1, TableItem(section.size() ? "Hosts" : ""),
-     (section.size() ? TableSection::Flag::EditButton : 0) | TableSection::Flag::EditableIfHasTag, section);
+     (section.size() ? TableSectionInterface::Flag::EditButton : 0) | TableSectionInterface::Flag::EditableIfHasTag, section);
   view->EndUpdates();
   view->changed = false;
 }

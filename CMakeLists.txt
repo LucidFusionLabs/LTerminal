@@ -64,7 +64,7 @@ lfl_add_package(LTerminal SOURCES term.cpp term.rc ${FLATBUFFERS_SRC_OUTPUTS}
                 app_null_audio app_null_camera app_null_matrix app_null_fft
                 app_simple_resampler app_simple_loader ${LFL_APP_CONVERT} app_libpng_png
                 app_null_jpeg app_null_gif app_null_ogg app_null_css ${LFL_APP_FONT}
-                ${LFL_APP_SSL} app_null_js app_null_tu ${BILLING_LIB} ${ADVERTISING_LIB}
+                ${LFL_APP_SSL} app_null_js app_null_tu ${BILLING_LIB} ${ADVERTISING_LIB} ${LFL_APP_NAG}
                 ${DB_LIB} ${CRYPTO_LIB} ${CRASHREPORTING_LIB} ${TERMINAL_TOOLKIT} ${LFL_APP_OS}
                 LIB_FILES ${LFL_APP_LIB_FILES}
                 ASSET_DIRS ${LFL_APP_ASSET_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/drawable-xhdpi

@@ -1,6 +1,7 @@
 #include "gtest/gtest.h"
 #include "core/app/app.h"
-#include "core/app/gui.h"
+#include "core/app/gl/view.h"
+#include "core/app/gl/terminal.h"
 #include "core/web/browser.h"
 #include "core/app/crypto.h"
 #include "core/app/net/resolver.h"
