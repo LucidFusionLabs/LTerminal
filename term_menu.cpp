@@ -200,7 +200,7 @@ MyAboutViewController::MyAboutViewController(MyTerminalMenus *m) :
 MySupportViewController::MySupportViewController(MyTerminalMenus *m) :
   MyTableViewController(m, app->toolkit->CreateTableView("Support", "", m->theme, vector<TableItem>{
     TableItem("Reference", TableItem::Separator, ""),
-    TableItem("LTerminal", TableItem::Command, "", ">", 0, 0, 0, bind(&Application::OpenSystemBrowser, app, "http://www.lucidfusionlabs.com/LTerminal/")),
+    TableItem("LTerminal", TableItem::Command, "", ">", 0, 0, 0, bind(&Application::OpenSystemBrowser, app, "http://www.lucidfusionlabs.com/LTerminal/FAQ/")),
   })) {
   view->BeginUpdates();
   view->ReplaceSection(0, TableItem("Contact"), 0, TableItemVec{
