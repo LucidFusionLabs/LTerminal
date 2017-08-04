@@ -660,10 +660,14 @@ struct MyTerminalMenus {
             "ca-app-pub-4814825103153665/3996077236", {"0DBA42FB5610516D099B960C0424B343", "52615418751B72981EF42A9681544EDB", "BC7DC25BB8CF7F790300EB28DA44A4DC"}
 #endif
            ))) advertising->Show(hosts.view.get(), true);
+
+      nag = SystemToolkit::CreateNag(
 #if defined(LFL_IOS)
-      nag = SystemToolkit::CreateNag("1193359415", 7, 10, -1, 5);
-#elif defined(LFL_ANDROID)
+                                     "1193359415",
+#else
+                                     app->name,
 #endif
+                                     7, 10, -1, 5);
     } else {
       hosts.view->SetTitle("LTerminal Pro");
       about.view->SetHeader(0, TableItem("LTerminal Pro", TableItem::Separator, "", "", 0, logo_image));

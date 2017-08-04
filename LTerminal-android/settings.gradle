@@ -2,7 +2,9 @@ include 'LFLApp'
 include 'LFLCore'
 include 'LFLAds'
 include 'LFLBilling'
+include 'appirater'
 project(':LFLApp').projectDir = new File('../../core/java/app')
 project(':LFLCore').projectDir = new File('../../core/java/core')
 project(':LFLAds').projectDir = new File('../../core/java/ads')
 project(':LFLBilling').projectDir = new File('../../core/java/billing')
+project(':appirater').projectDir = new File('../../core/imports/java/appirater-android')
