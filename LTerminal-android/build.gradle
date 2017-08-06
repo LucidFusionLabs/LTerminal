@@ -24,8 +24,8 @@ android {
     defaultConfig {
         minSdkVersion 19
         targetSdkVersion 25
-        versionCode 1019005
-        versionName "1.19.5"
+        versionCode 1019006
+        versionName "1.19.6"
         externalNativeBuild {
             cmake {
                 targets "LTerminal"
@@ -106,6 +106,4 @@ allprojects {
 
 crashlytics {
     enableNdk true
-    androidNdkOut 'src/main/obj'
-    androidNdkLibsOut 'src/main/libs'
 }
