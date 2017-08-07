@@ -6,7 +6,7 @@ buildscript {
     }
     dependencies {
         classpath 'com.android.tools.build:gradle:2.3.0'
-        classpath 'io.fabric.tools:gradle:1.+'
+        classpath 'io.fabric.tools:gradle:1.23.0'
     }
 }
 
@@ -24,8 +24,8 @@ android {
     defaultConfig {
         minSdkVersion 19
         targetSdkVersion 25
-        versionCode 1019006
-        versionName "1.19.6"
+        versionCode 1019007
+        versionName "1.19.7"
         externalNativeBuild {
             cmake {
                 targets "LTerminal"
