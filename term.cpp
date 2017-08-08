@@ -150,7 +150,7 @@ struct MyTerminalTab : public TerminalTab {
     int font_width  = terminal->style.font->FixedWidth(), new_width  = font_width  * terminal->term_width;
     int font_height = terminal->style.font->Height(),     new_height = font_height * terminal->term_height;
     if (FLAGS_resize_grid) root->SetResizeIncrements(font_width, font_height);
-    if (new_width != root->width || new_height != root->height) drew = root->Reshape(new_width, new_height);
+    if (new_width != root->gl_w || new_height != root->gl_h) drew = root->Reshape(new_width, new_height);
     if (!drew && terminal->line_fb.w && terminal->line_fb.h) terminal->Redraw(true, true);
     INFO("Font: ", app->fonts->DefaultFontEngine()->DebugString(terminal->style.font));
   }
@@ -312,7 +312,7 @@ struct MyTerminalTab : public TerminalTab {
     root->gd->EnableBlend();
     root->gd->SetColor(Color::white - Color::Alpha(0.25));
     GraphicsContext::DrawTexturedBox1
-      (root->gd, Box::DelBorder(root->Box(), root->width*.2, root->height*.2), tex->coord);
+      (root->gd, Box::DelBorder(root->Box(), root->gl_w*.2, root->gl_h*.2), tex->coord);
     root->gd->ClearDeferred();
   }
 
@@ -426,7 +426,7 @@ struct MyTerminalWindow : public TerminalWindowInterface<TerminalTabInterface> {
   int Frame(Window *W, unsigned clicks, int flag) {
     if (tabs.top) tabs.top->Draw();
     W->DrawDialogs();
-    if (FLAGS_draw_fps) W->default_font->Draw(StringPrintf("FPS = %.2f", app->focused->fps.FPS()), point(W->width*.85, 0));
+    if (FLAGS_draw_fps) W->default_font->Draw(StringPrintf("FPS = %.2f", app->focused->fps.FPS()), point(W->gl_w*.85, 0));
     if (FLAGS_screenshot.size()) ONCE(W->shell->screenshot(vector<string>(1, FLAGS_screenshot)); app->run=0;);
     return 0;
   }
@@ -516,8 +516,8 @@ void MyTerminalWindow::InitTab(TerminalTabInterface *t) {
 }
 
 void MyWindowInit(Window *W) {
-  W->width = my_app->new_win_width;
-  W->height = my_app->new_win_height;
+  W->gl_w = my_app->new_win_width;
+  W->gl_h = my_app->new_win_height;
   W->caption = app->name;
 }
 

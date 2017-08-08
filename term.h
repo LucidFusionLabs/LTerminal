@@ -491,8 +491,8 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
     NetworkTerminalController(p, a.hostport, ccb), params(move(a)), fb(f) {}
 
   template <class X> X MouseToFramebufferCoords(const X &p) const {
-    return X(viewport.x +        float(p.x)                   / parent->root->width   * viewport.w,
-             viewport.y + (1.0 - float(p.y - parent->root->y) / parent->root->height) * viewport.h);
+    return X(viewport.x +        float(p.x)                      / parent->root->gl_w  * viewport.w,
+             viewport.y + (1.0 - float(p.y - parent->root->gl_y) / parent->root->gl_h) * viewport.h);
   }
 
   Socket Open(TextArea*) override {
