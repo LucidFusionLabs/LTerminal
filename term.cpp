@@ -157,7 +157,7 @@ struct MyTerminalTab : public TerminalTab {
 
   void UsePlaybackTerminalController(unique_ptr<FlatFile> f) {
     networked = false;
-    title = "Playback";
+    title = LS("playback");
     ChangeController(make_unique<PlaybackTerminalController>(this, move(f)));
   }
 
@@ -165,7 +165,7 @@ struct MyTerminalTab : public TerminalTab {
     if (m.size()) connected = Time::zero();
     else {
       networked = false;
-      title = "Interactive Shell";
+      title = LS("interactive_shell");
     }
     auto c = make_unique<ShellTerminalController>
       (this, m, [=](const string &h){ UseTelnetTerminalController(h, true); },
@@ -184,7 +184,7 @@ struct MyTerminalTab : public TerminalTab {
     if (!from_shell && reconnect_toolbar && reconnect_cb) {
       string tb_theme = toolbar ? toolbar->GetTheme() : "Light";
       last_toolbar = ChangeToolbar(my_app->create_toolbar
-                                   (tb_theme, MenuItemVec{ { "Reconnect", "", move(reconnect_cb) } }, 0));
+                                   (tb_theme, MenuItemVec{ { LS("reconnect"), "", move(reconnect_cb) } }, 0));
       reconnect_cb = Callback();
     }
     UseShellTerminalController(m, from_shell, move(reconnect_cb));
@@ -197,14 +197,14 @@ struct MyTerminalTab : public TerminalTab {
                            SSHTerminalController::SavehostCB savehost_cb=SSHTerminalController::SavehostCB(),
                            SSHClient::FingerprintCB fingerprint_cb=SSHClient::FingerprintCB()) {
     networked = true;
-    title = StrCat("SSH ", params.user, "@", params.hostport);
+    title = StrCat(LS("ssh"), " ", params.user, "@", params.hostport);
     bool close_on_disconn = params.close_on_disconnect;
     Callback reconnect_cb = (!add_reconnect_links || close_on_disconn) ? Callback() : [=](){
       if (dynamic_cast<InteractiveTerminalController*>(controller.get()))
         UseSSHTerminalController(params, from_shell, pw, identity_cb, SSHTerminalController::SavehostCB(), fingerprint_cb);
     };
     auto ssh = make_unique<SSHTerminalController>(this, move(params), close_on_disconn ? closed_cb : [=, r = move(reconnect_cb)]() {
-      UseReconnectTerminalController("\r\nsession ended.\r\n\r\n\r\n", from_shell, move(r));
+      UseReconnectTerminalController(StrCat("\r\n", LS("session_ended"), ".\r\n\r\n\r\n"), from_shell, move(r));
     });
     auto ret = ssh.get();
     ssh->metakey_cb = bind(&TerminalTabInterface::ToggleToolbarButton, this, _1);
@@ -221,13 +221,13 @@ struct MyTerminalTab : public TerminalTab {
   void UseTelnetTerminalController(const string &hostport, bool from_shell=false, bool close_on_disconn=false,
                                    Callback savehost_cb=Callback()) {
     networked = true;
-    title = StrCat("Telnet ", hostport);
+    title = StrCat(LS("telnet"), " ", hostport);
     Callback reconnect_cb = (!add_reconnect_links || close_on_disconn) ? Callback() : [=](){
       if (dynamic_cast<InteractiveTerminalController*>(controller.get()))
         UseTelnetTerminalController(hostport, from_shell, close_on_disconn, Callback());
     };
     auto telnet = make_unique<NetworkTerminalController>(this, hostport, close_on_disconn ? closed_cb : [=, r = move(reconnect_cb)]() {
-      UseReconnectTerminalController("\r\nsession ended.\r\n\r\n\r\n", from_shell, move(r));
+      UseReconnectTerminalController(StrCat("\r\n", LS("session_ended"), ".\r\n\r\n\r\n"), from_shell, move(r));
     });
     telnet->metakey_cb = bind(&TerminalTabInterface::ToggleToolbarButton, this, _1);
     telnet->success_cb = move(savehost_cb);
@@ -352,7 +352,7 @@ struct MyRFBTab : public TerminalTabInterface {
            RFBClient::Params a, string pw, TerminalTabCB scb) :
     TerminalTabInterface(W, 1.0, 1.0, 0, host_id, hide_sb), parent(P), fb(root->gd) {
     networked = true;
-    title = StrCat("VNC: ", a.hostport);
+    title = StrCat(LS("vnc"), ": ", a.hostport);
     auto c = make_unique<RFBTerminalController>(this, move(a), [=](){ closed_cb(); }, &fb);
     c->passphrase_alert = my_app->passphrase_alert.get();
     if (scb) c->savehost_cb = bind(move(scb), this);
@@ -481,7 +481,7 @@ MyTerminalTab *MyTerminalWindow::AddTerminalTab(int host_id, bool hide_statusbar
     if (delta) {
       t->zoom_val = v2(100,100); 
       t->SetFontSize(font_size + delta);
-      my_app->flash_alert->ShowCB(StrCat("Font size ", font_size + delta), "", "", StringCB());
+      my_app->flash_alert->ShowCB(StrCat(LS("font_size"), " ", font_size + delta), "", "", StringCB());
       my_app->flash_timer->Run(FSeconds(2/3.0), true);
     }
   })));
@@ -588,7 +588,7 @@ extern "C" void MyAppCreate(int argc, const char* const* argv) {
   app = CreateApplication(argc, argv);
   my_app = new MyAppState();
   app->focused = Window::Create();
-  app->name = "LTerminal";
+  app->name = LS("app_name");
   app->exit_cb = []() { delete my_app; };
   app->window_closed_cb = MyWindowClosed;
   app->window_start_cb = MyWindowStart;
@@ -650,15 +650,15 @@ extern "C" int MyAppMain() {
   my_app->flash_alert = app->toolkit->CreateAlert(AlertItemVec{
     { "style", "" }, { "", "" }, { "", "" }, { "", "" } });
   my_app->info_alert = app->toolkit->CreateAlert(AlertItemVec{
-    { "style", "" }, { "", "" }, { "", "" }, { "Continue", "" } });
+    { "style", "" }, { "", "" }, { "", "" }, { LS("continue_"), "" } });
   my_app->confirm_alert = app->toolkit->CreateAlert(AlertItemVec{
-    { "style", "" }, { "", "" }, { "Cancel", "" }, { "Continue", "" } });
+    { "style", "" }, { "", "" }, { LS("cancel"), "" }, { LS("continue_"), "" } });
   my_app->text_alert = app->toolkit->CreateAlert(AlertItemVec{
-    { "style", "textinput" }, { "", "" }, { "Cancel", "" }, { "Continue", "" } });
+    { "style", "textinput" }, { "", "" }, { LS("cancel"), "" }, { LS("continue_"), "" } });
   my_app->passphrase_alert = app->toolkit->CreateAlert(AlertItemVec{
-    { "style", "pwinput" }, { "Passphrase", "Passphrase" }, { "Cancel", "" }, { "Continue", "" } });
+    { "style", "pwinput" }, { LS("passphrase"), LS("passphrase") }, { LS("cancel"), "" }, { LS("continue_"), "" } });
   my_app->passphraseconfirm_alert = app->toolkit->CreateAlert(AlertItemVec{
-    { "style", "pwinput" }, { "Passphrase", "Confirm Passphrase" }, { "Cancel", "" }, { "Continue", "" } });
+    { "style", "pwinput" }, { LS("passphrase"), LS("confirm_passphrase") }, { LS("cancel"), "" }, { LS("continue_"), "" } });
 #ifndef LFL_TERMINAL_MENUS
   my_app->edit_menu = app->toolkit->CreateEditMenu(vector<MenuItem>());
   my_app->view_menu = app->toolkit->CreateMenu("View", MenuItemVec{
@@ -675,21 +675,21 @@ extern "C" int MyAppMain() {
   if (FLAGS_term.empty()) FLAGS_term = BlankNull(getenv("TERM"));
 #endif
 
-  my_app->toys_menu = app->toolkit->CreateMenu("Toys", vector<MenuItem>{
-    MenuItem{ "", "None",         [=](){ if (auto t = GetActiveTab()) t->ChangeShader("none");     } },
-    MenuItem{ "", "Warper",       [=](){ if (auto t = GetActiveTab()) t->ChangeShader("warper");   } },
-    MenuItem{ "", "Water",        [=](){ if (auto t = GetActiveTab()) t->ChangeShader("water");    } },
-    MenuItem{ "", "Twistery",     [=](){ if (auto t = GetActiveTab()) t->ChangeShader("twistery"); } },
-    MenuItem{ "", "Fire",         [=](){ if (auto t = GetActiveTab()) t->ChangeShader("fire");     } },
-    MenuItem{ "", "Waves",        [=](){ if (auto t = GetActiveTab()) t->ChangeShader("waves");    } },
-    MenuItem{ "", "Emboss",       [=](){ if (auto t = GetActiveTab()) t->ChangeShader("emboss");   } },
-    MenuItem{ "", "Stormy",       [=](){ if (auto t = GetActiveTab()) t->ChangeShader("stormy");   } },
-    MenuItem{ "", "Alien",        [=](){ if (auto t = GetActiveTab()) t->ChangeShader("alien");    } },
-    MenuItem{ "", "Fractal",      [=](){ if (auto t = GetActiveTab()) t->ChangeShader("fractal");  } },
-    MenuItem{ "", "Darkly",       [=](){ if (auto t = GetActiveTab()) t->ChangeShader("darkly");   } },
+  my_app->toys_menu = app->toolkit->CreateMenu(LS("toys"), vector<MenuItem>{
+    MenuItem{ "", LS("none"), [=](){ if (auto t = GetActiveTab()) t->ChangeShader("none");     } },
+    MenuItem{ "", "Warper",   [=](){ if (auto t = GetActiveTab()) t->ChangeShader("warper");   } },
+    MenuItem{ "", "Water",    [=](){ if (auto t = GetActiveTab()) t->ChangeShader("water");    } },
+    MenuItem{ "", "Twistery", [=](){ if (auto t = GetActiveTab()) t->ChangeShader("twistery"); } },
+    MenuItem{ "", "Fire",     [=](){ if (auto t = GetActiveTab()) t->ChangeShader("fire");     } },
+    MenuItem{ "", "Waves",    [=](){ if (auto t = GetActiveTab()) t->ChangeShader("waves");    } },
+    MenuItem{ "", "Emboss",   [=](){ if (auto t = GetActiveTab()) t->ChangeShader("emboss");   } },
+    MenuItem{ "", "Stormy",   [=](){ if (auto t = GetActiveTab()) t->ChangeShader("stormy");   } },
+    MenuItem{ "", "Alien",    [=](){ if (auto t = GetActiveTab()) t->ChangeShader("alien");    } },
+    MenuItem{ "", "Fractal",  [=](){ if (auto t = GetActiveTab()) t->ChangeShader("fractal");  } },
+    MenuItem{ "", "Darkly",   [=](){ if (auto t = GetActiveTab()) t->ChangeShader("darkly");   } },
 #ifndef LFL_MOBILE
     MenuItem{ "", "<separator>" },
-    MenuItem{ "", "Controls",     [=](){ if (auto t = GetActiveTab()) t->ShowEffectsControls(); } },
+    MenuItem{ "", "Controls", [=](){ if (auto t = GetActiveTab()) t->ShowEffectsControls(); } },
 #endif
   });
 

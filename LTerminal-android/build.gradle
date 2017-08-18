@@ -14,7 +14,7 @@ apply plugin: 'com.android.application'
 apply plugin: 'io.fabric'
 
 repositories {
-    maven { url 'https://maven.fabric.io/public' }
+    maven { url 'https://s3.amazonaws.com/fabric-artifacts-private/internal-snapshots' }
 }
 
 android {
@@ -24,8 +24,8 @@ android {
     defaultConfig {
         minSdkVersion 19
         targetSdkVersion 25
-        versionCode 1020000
-        versionName "1.20.0"
+        versionCode 1021000
+        versionName "1.21.0"
         externalNativeBuild {
             cmake {
                 targets "LTerminal"
@@ -88,10 +88,10 @@ dependencies {
     compile project(':LFLAds')
     compile project(':LFLBilling')
     compile project(':appirater')
-    compile('com.crashlytics.sdk.android:crashlytics:2.6.6@aar') {
+    compile('com.crashlytics.sdk.android:crashlytics:2.7.0-SNAPSHOT@aar') {
         transitive = true;
     }
-    compile('com.crashlytics.sdk.android:crashlytics-ndk:1.1.6@aar') {
+    compile('com.crashlytics.sdk.android:crashlytics-ndk:1.2.0-SNAPSHOT:debug@aar') {
         transitive = true;
     }
 }

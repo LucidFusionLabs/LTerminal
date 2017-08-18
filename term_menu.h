@@ -1,4 +1,3 @@
-
 /*
  * $Id: term.h 1336 2014-12-08 09:29:59Z justin $
  * Copyright (C) 2009 Lucid Fusion Labs
@@ -505,7 +504,7 @@ struct MyTerminalMenus {
       arrowleft_icon, arrowright_icon, clipboard_upload_icon, clipboard_download_icon, keygen_icon,
       user_icon, calendar_icon, check_icon, stacked_squares_icon, ex_icon, none_icon;
   FrameBuffer icon_fb;
-  string pw_default = "\x01""Ask each time", pw_empty = "lfl_default", pro_product_id = "com.lucidfusionlabs.lterminal.paid", theme;
+  string pw_default = StrCat("\x01", LS("ask_each_time")), pw_empty = "lfl_default", pro_product_id = "com.lucidfusionlabs.lterminal.paid", theme;
   PickerItem color_picker = PickerItem{ {{"VGA", "Solarized Dark", "Solarized Light"}}, {0} };
   Color green;
 
@@ -650,7 +649,7 @@ struct MyTerminalMenus {
     if (!(pro_version = purchases->HavePurchase(pro_product_id))) {
       upgrade = make_unique<MyUpgradeViewController>(this, pro_product_id);
       if ((upgrade_toolbar = app->toolkit->CreateToolbar(theme, MenuItemVec{
-        { "Upgrade to LTerminal Pro", "", [=](){ hosts_nav->PushTableView(upgrade->view.get()); } }
+        { LS("upgrade_to"), "", [=](){ hosts_nav->PushTableView(upgrade->view.get()); } }
       }, 0))) hosts.view->SetToolbar(upgrade_toolbar.get());
       if ((advertising = SystemToolkit::CreateAdvertisingView
            (AdvertisingViewInterface::Type::BANNER, VAlign::Bottom,
@@ -669,8 +668,8 @@ struct MyTerminalMenus {
 #endif
                                      7, 10, -1, 5);
     } else {
-      hosts.view->SetTitle("LTerminal Pro");
-      about.view->SetHeader(0, TableItem("LTerminal Pro", TableItem::Separator, "", "", 0, logo_image));
+      hosts.view->SetTitle(LS("pro_name"));
+      about.view->SetHeader(0, TableItem(LS("pro_name"), TableItem::Separator, "", "", 0, logo_image));
     }
 #endif
 
@@ -723,7 +722,7 @@ struct MyTerminalMenus {
   }
 
   void EnableLocalEncryption(const string &pw, const string &confirm_pw) {
-    if (pw != confirm_pw) return my_app->info_alert->ShowCB("Invalid passphrase", "Passphrase failed", "", StringCB());
+    if (pw != confirm_pw) return my_app->info_alert->ShowCB(LS("invalid_passphrase"), LS("passphrase_failed"), "", StringCB());
     SQLite::ChangePassphrase(db, pw);
     db_protected = true;
     settings.view->show_cb();
@@ -803,7 +802,7 @@ struct MyTerminalMenus {
       int row_id = MyCredentialModel(CredentialType_PEM, pem, pemtype).Save(&credential_db);
       keys.view->show_cb();
     } else {
-      my_app->info_alert->ShowCB("Paste key failed", "Load key failed", "", StringCB());
+      my_app->info_alert->ShowCB(LS("paste_key_failed"), LS("load_key_failed"), "", StringCB());
     }
   }
   
@@ -819,7 +818,7 @@ struct MyTerminalMenus {
     if (cred.credtype == CredentialType_PEM) {
       if (private_key) {
         app->SetClipboardText(cred.creddata);
-        my_app->info_alert->ShowCB("Copied to Clipboard", "Copied Private Key to Clipboard", "", StringCB());
+        my_app->info_alert->ShowCB(LS("copied_to_clipboard"), LS("copied_private_key_to_clipboard"), "", StringCB());
       } else {
         shared_ptr<SSHClient::Identity> identity = LoadIdentity(cred);
         if (!identity) return LoadNewIdentity
@@ -835,7 +834,7 @@ struct MyTerminalMenus {
     else if (identity->ec)      app->SetClipboardText(ECDSAOpenSSHPublicKey  (identity->ec,      comment));
     else if (identity->rsa)     app->SetClipboardText(RSAOpenSSHPublicKey    (identity->rsa,     comment));
     else if (identity->dsa)     app->SetClipboardText(DSAOpenSSHPublicKey    (identity->dsa,     comment));
-    my_app->info_alert->ShowCB("Copied to Clipboard", "Copied Public Key to Clipboard", "", StringCB());
+    my_app->info_alert->ShowCB(LS("copied_to_clipboard"), LS("copied_public_key_to_clipboard"), "", StringCB());
   }
 
   void ChooseKey(int cred_row_id) {
@@ -873,10 +872,10 @@ struct MyTerminalMenus {
 
     hosts.view->BeginUpdates();
     ReplaceMainMenuSessionsSection();
-    hosts.view->SetTitle(pro_version ? "LTerminal Pro" : "LTerminal"); 
+    hosts.view->SetTitle(pro_version ? LS("pro_name") : LS("app_name")); 
     if (!back) hosts.view->DelNavigationButton(HAlign::Left);
     else       hosts.view->AddNavigationButton
-      (HAlign::Left, TableItem("Back", TableItem::Button, "", "", 0, 0, 0, bind(&MyTerminalMenus::HideMainMenu, this)));
+      (HAlign::Left, TableItem(LS("back"), TableItem::Button, "", "", 0, 0, 0, bind(&MyTerminalMenus::HideMainMenu, this)));
     hosts.view->EndUpdates();
 
     app->CloseTouchKeyboard();
@@ -897,7 +896,7 @@ struct MyTerminalMenus {
 
       section.emplace_back
         (t->title, TableItem::Command,
-         t->networked ? (t->connected != Time::zero() ? StrCat("Connected ", intervalminutes(now - t->connected)) : Connection::StateName(conn_state)) : "",
+         t->networked ? (t->connected != Time::zero() ? StrCat(LS("connected"), " ", intervalminutes(now - t->connected)) : Connection::StateName(conn_state)) : "",
          "", 0, t->thumbnail_system_image, ex_icon, [=](){
            HideMainMenu();
            tw->tabs.SelectTab(t);
@@ -914,7 +913,7 @@ struct MyTerminalMenus {
     icon_fb.Release();
     sessions_update_len = section.size();
     hosts.view->ReplaceSection
-      (0, TableItem("Sessions"), TableSectionInterface::Flag::DoubleRowHeight |
+      (0, TableItem(LS("sessions")), TableSectionInterface::Flag::DoubleRowHeight |
        TableSectionInterface::Flag::HighlightSelectedRow | TableSectionInterface::Flag::DeleteRowsWhenAllHidden |
        TableSectionInterface::Flag::ClearLeftNavWhenEmpty, move(section));
     hosts.view->SelectRow(0, selected_row);
@@ -952,7 +951,7 @@ struct MyTerminalMenus {
         if (t->connected != Time::zero()) { 
           still_counting = true;
           color.emplace_back(0,255,0);
-          val.emplace_back(StrCat("Connected ", intervalminutes(now - t->connected)));
+          val.emplace_back(StrCat(LS("connected"), " ", intervalminutes(now - t->connected)));
         } else { 
           int conn_state = t->GetConnectionState();
           color.emplace_back(Connection::ConnectState(conn_state) ? Color(0,255,0) : Color(255,0,0));
@@ -1100,7 +1099,7 @@ struct MyTerminalMenus {
 
   void NewHostConnectTo(MyHostModel &host) {
     if (host.displayname.empty()) {
-      if (host.protocol == LTerminal::Protocol_LocalShell) host.displayname = "Local Shell";
+      if (host.protocol == LTerminal::Protocol_LocalShell) host.displayname = LS("local_shell");
       else host.displayname = StrCat(host.username.size() ? StrCat(host.username, "@") : "", host.hostname,
                                      host.port != host.DefaultPort() ? StrCat(":", host.port) : " ");
     }
@@ -1149,7 +1148,7 @@ struct MyTerminalMenus {
 
   void LoadNewIdentity(const MyCredentialModel &cred, SSHClient::IdentityCB success_cb) {
     my_app->passphrase_alert->ShowCB
-      ("Identity passphrase", "Passphrase", "", [=](const string &v) {
+      (LS("identity_passphrase"), LS("passphrase"), "", [=](const string &v) {
          shared_ptr<SSHClient::Identity> new_identity = make_shared<SSHClient::Identity>();
          if (!Crypto::ParsePEM(cred.creddata.c_str(), &new_identity->rsa, &new_identity->dsa,
                                &new_identity->ec, &new_identity->ed25519, [=](string) { return v; })) return;
@@ -1180,7 +1179,7 @@ struct MyTerminalMenus {
       if (host.username.empty()) {
         ssh->identity_cb = [=](shared_ptr<SSHClient::Identity> *out) { 
           my_app->text_alert->ShowCB
-            ("Login", "Username", "", [=](const string &v) {
+            (LS("login"), LS("username"), "", [=](const string &v) {
               SSHClient::SendAuthenticationRequest(ssh->conn, shared_ptr<SSHClient::Identity>(), &v);
             });
           return false;
@@ -1216,8 +1215,8 @@ struct MyTerminalMenus {
 
   bool ShowAcceptFingerprintAlert(const string &fp) {
     my_app->confirm_alert->ShowCB
-      ("Host key changed.", StrCat("Accept new key? Fingerprint MD5: ",
-                                   fp.size() ? HexEscape(Crypto::MD5(fp), ":").substr(1) : ""),
+      (LS("host_key_changed"), StrCat(LS("accept_new_key"), " Fingerprint MD5: ",
+                                      fp.size() ? HexEscape(Crypto::MD5(fp), ":").substr(1) : ""),
        "", bind(&MyTerminalMenus::AcceptFingerprintCB, this, _1));
     return false;
   }

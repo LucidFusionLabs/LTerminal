@@ -134,7 +134,7 @@ struct NetworkTerminalController : public TerminalControllerInterface {
 
   virtual Socket Open(TextArea *t) {
     if (remote.empty()) return InvalidSocket;
-    t->Write(StrCat("Connecting to ", remote, "\r\n"));
+    t->Write(StrCat(LS("connecting_to"), " ", remote, "\r\n"));
     app->RunInNetworkThread([=](){
       if (!(conn = app->ConnectTCP(remote, 0, &detach_cb, background_services)))
         if (app->network_thread) app->RunInMainThread([=](){ Close(); }); });
@@ -326,7 +326,7 @@ struct SSHTerminalController : public NetworkTerminalController {
 
   Socket Open(TextArea *t) {
     Terminal *term = dynamic_cast<Terminal*>(t);
-    SSHReadCB(0, StrCat("Connecting to ", params.user, params.user.size() ? "@" : "", params.hostport, "\r\n"));
+    SSHReadCB(0, StrCat(LS("connecting_to"), " ", params.user, params.user.size() ? "@" : "", params.hostport, "\r\n"));
     params.background_services = background_services;
     app->RunInNetworkThread([=](){
       success_cb = bind(&SSHTerminalController::SSHLoginCB, this, term);
@@ -354,13 +354,13 @@ struct SSHTerminalController : public NetworkTerminalController {
     if (password.size()) { out->clear(); swap(*out, password); return true; }
     else {
       if (passphrase_alert) passphrase_alert->ShowCB
-        ("Password", "Password", "", [=](const string &pw){ SSHClient::WritePassword(conn, pw); });
+        (LS("password"), LS("password"), "", [=](const string &pw){ SSHClient::WritePassword(conn, pw); });
       return false;
     } 
   }
 
   void SSHLoginCB(Terminal *term) {
-    SSHReadCB(0, "Connected.\r\n");
+    SSHReadCB(0, StrCat(LS("connected"), ".\r\n"));
     if (savehost_cb) savehost_cb(fingerprint_type, fingerprint);
   }
 
@@ -561,7 +561,7 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
       *out = move(password);
       return true;
     } else {
-      passphrase_alert->ShowCB("Password", "Password", "",
+      passphrase_alert->ShowCB(LS("password"), LS("password"), "",
                                [=](const string &pw){ RFBClient::SendChallengeResponse(conn, pw); });
       return false;
     }
@@ -604,7 +604,7 @@ struct ShellTerminalController : public InteractiveTerminalController {
   ShellTerminalController(TerminalTabInterface *p, const string &msg, StringCB tcb, StringVecCB ecb, Callback rcb, bool commands) :
     InteractiveTerminalController(p), discon_msg(msg), telnet_cb(move(tcb)), reconnect_cb(move(rcb)) {
     if (!commands) { prompt.clear(); return; }
-    header = StrCat("LTerminal 1.0", ssh_usage, "\r\n\r\n");
+    header = StrCat(LS("app_name"), " ", app->GetVersion(), ssh_usage, "\r\n\r\n");
 #ifdef LFL_CRYPTO
     shell.Add("ssh",      bind(&ShellTerminalController::MySSHCmd,      this, _1));
 #endif
@@ -627,7 +627,7 @@ struct ShellTerminalController : public InteractiveTerminalController {
       if (reconnect_cb) {
         Callback r_cb;
         swap(r_cb, reconnect_cb);
-        string text ="[Reconnect]";
+        string text = StrCat("[", LS("reconnect"), "]");
         t->Write(StrCat("\r\n\x08\x1b[1;31m", text, "\x08\x1b[0m"));
         auto l = t->GetCursorLine();
         t->AddUrlBox(l, 0, l, text.size()-1, "", move(r_cb));
