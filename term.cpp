@@ -1,5 +1,5 @@
 /*
- * $Id: term.cpp 1336 2014-12-08 09:29:59Z justin $
+ * $Id$
  * Copyright (C) 2009 Lucid Fusion Labs
 
  * This program is free software: you can redistribute it and/or modify
@@ -89,7 +89,7 @@ struct MyAppState {
   int downscale_effects = 1, background_timeout = 180;
 
   virtual ~MyAppState();
-  MyAppState() : create_toolbar(bind(&ToolkitInterface::CreateToolbar, app->toolkit, _1, _2, _3)) {}
+  MyAppState() : create_toolbar(bind(&ToolkitInterface::CreateToolbar, app->system_toolkit, _1, _2, _3)) {}
 
   Shader *GetShader(const string &shader_name) { 
     auto shader = shader_map.find(shader_name);
@@ -112,7 +112,7 @@ struct MyTerminalTab : public TerminalTab {
     TerminalTab(W, W->AddView(make_unique<Terminal>(nullptr, W, W->default_font, FLAGS_dim)), host_id, hide_sb), parent(P), timer(W) {
     terminal->new_link_cb      = bind(&MyTerminalTab::NewLinkCB,   this, _1);
     terminal->hover_control_cb = bind(&MyTerminalTab::HoverLinkCB, this, _1);
-    if (terminal->bg_color) W->gd->clear_color = *terminal->bg_color;
+    if (terminal->bg_color) W->gd->clear_color = terminal->bg_color;
   }
 
   bool GetFocused() const { return parent->tabs.top == this; }
@@ -330,7 +330,7 @@ struct MyTerminalTab : public TerminalTab {
     else if (colors_name == "Solarized Light") terminal->SetColors(Singleton<Terminal::SolarizedLightColors>::Get());
     else                                       terminal->SetColors(Singleton<Terminal::StandardVGAColors>   ::Get());
     if (redraw) terminal->Redraw(true, true);
-    if (terminal->bg_color) root->gd->clear_color = *terminal->bg_color;
+    if (terminal->bg_color) root->gd->clear_color = terminal->bg_color;
     app->scheduler.Wakeup(root);
   }
 
@@ -647,21 +647,21 @@ extern "C" int MyAppMain() {
 
   my_app->image_browser = make_unique<Browser>();
   my_app->flash_timer = SystemToolkit::CreateTimer([=](){ my_app->flash_alert->Hide(); });
-  my_app->flash_alert = app->toolkit->CreateAlert(AlertItemVec{
+  my_app->flash_alert = app->system_toolkit->CreateAlert(AlertItemVec{
     { "style", "" }, { "", "" }, { "", "" }, { "", "" } });
-  my_app->info_alert = app->toolkit->CreateAlert(AlertItemVec{
+  my_app->info_alert = app->system_toolkit->CreateAlert(AlertItemVec{
     { "style", "" }, { "", "" }, { "", "" }, { LS("continue_"), "" } });
-  my_app->confirm_alert = app->toolkit->CreateAlert(AlertItemVec{
+  my_app->confirm_alert = app->system_toolkit->CreateAlert(AlertItemVec{
     { "style", "" }, { "", "" }, { LS("cancel"), "" }, { LS("continue_"), "" } });
-  my_app->text_alert = app->toolkit->CreateAlert(AlertItemVec{
+  my_app->text_alert = app->system_toolkit->CreateAlert(AlertItemVec{
     { "style", "textinput" }, { "", "" }, { LS("cancel"), "" }, { LS("continue_"), "" } });
-  my_app->passphrase_alert = app->toolkit->CreateAlert(AlertItemVec{
+  my_app->passphrase_alert = app->system_toolkit->CreateAlert(AlertItemVec{
     { "style", "pwinput" }, { LS("passphrase"), LS("passphrase") }, { LS("cancel"), "" }, { LS("continue_"), "" } });
-  my_app->passphraseconfirm_alert = app->toolkit->CreateAlert(AlertItemVec{
+  my_app->passphraseconfirm_alert = app->system_toolkit->CreateAlert(AlertItemVec{
     { "style", "pwinput" }, { LS("passphrase"), LS("confirm_passphrase") }, { LS("cancel"), "" }, { LS("continue_"), "" } });
 #ifndef LFL_TERMINAL_MENUS
-  my_app->edit_menu = app->toolkit->CreateEditMenu(vector<MenuItem>());
-  my_app->view_menu = app->toolkit->CreateMenu("View", MenuItemVec{
+  my_app->edit_menu = app->system_toolkit->CreateEditMenu(vector<MenuItem>());
+  my_app->view_menu = app->system_toolkit->CreateMenu("View", MenuItemVec{
 #ifdef __APPLE__
     MenuItem{ "=", "Zoom In" },
     MenuItem{ "-", "Zoom Out" },
@@ -675,7 +675,7 @@ extern "C" int MyAppMain() {
   if (FLAGS_term.empty()) FLAGS_term = BlankNull(getenv("TERM"));
 #endif
 
-  my_app->toys_menu = app->toolkit->CreateMenu(LS("toys"), vector<MenuItem>{
+  my_app->toys_menu = app->system_toolkit->CreateMenu(LS("toys"), vector<MenuItem>{
     MenuItem{ "", LS("none"), [=](){ if (auto t = GetActiveTab()) t->ChangeShader("none");     } },
     MenuItem{ "", "Warper",   [=](){ if (auto t = GetActiveTab()) t->ChangeShader("warper");   } },
     MenuItem{ "", "Water",    [=](){ if (auto t = GetActiveTab()) t->ChangeShader("water");    } },

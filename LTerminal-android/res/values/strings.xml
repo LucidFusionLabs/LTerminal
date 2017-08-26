@@ -33,6 +33,8 @@
     <string name="email">Email</string>
     <string name="twitter">Twitter</string>
     <string name="reference">Reference</string>
+    <string name="edit">Edit</string>
+    <string name="done">Done</string>
     <string name="light">Light</string>
     <string name="dark">Dark</string>
     <string name="login">Login</string>
@@ -42,6 +44,8 @@
     <string name="nickname">Nickname</string>
     <string name="credential">Credential</string>
     <string name="connected">Connected</string>
+    <string name="connecting">Connecting</string>
+    <string name="disconnected">Disconnected</string>
     <string name="connecting_to">Connecting to</string>
     <string name="global_settings">Global Settings</string>
     <string name="confirm_passphrase">Confirm Passphrase</string>

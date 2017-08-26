@@ -1,5 +1,5 @@
 /*
- * $Id: term.h 1336 2014-12-08 09:29:59Z justin $
+ * $Id$
  * Copyright (C) 2009 Lucid Fusion Labs
 
  * This program is free software: you can redistribute it and/or modify
@@ -87,8 +87,8 @@ struct MyHostSettingsModel {
     autocomplete_id = r.autocomplete_id();
     prompt = GetFlatBufferString(r.prompt_string());
     if (auto ti = r.toolbar_items())  for (auto i : *ti) toolbar.emplace_back(GetFlatBufferString(i->key()), GetFlatBufferString(i->value()));
-    if (auto lf = r.local_forward())  for (auto i : *lf) local_forward.push_back({ i->port(), GetFlatBufferString(i->target()), i->target_port() });
-    if (auto rf = r.remote_forward()) for (auto i : *rf) local_forward.push_back({ i->port(), GetFlatBufferString(i->target()), i->target_port() });
+    if (auto lf = r.local_forward())  for (auto i : *lf) local_forward .push_back({ i->port(), GetFlatBufferString(i->target()), i->target_port() });
+    if (auto rf = r.remote_forward()) for (auto i : *rf) remote_forward.push_back({ i->port(), GetFlatBufferString(i->target()), i->target_port() });
     hide_statusbar = flatbuffers::IsFieldPresent(&r, LTerminal::HostSettings::VT_HIDE_STATUSBAR) ? r.hide_statusbar() : !ANDROIDOS;
   }
 
@@ -188,9 +188,9 @@ struct MyCredentialModel {
   }
 
   static CredentialType GetCredentialType(const string &x) {
-    if      (x == "Password") return CredentialType_Password;
-    else if (x == "Key")      return CredentialType_PEM;
-    else                      return CredentialType_Ask;
+    if      (x == LS("password")) return CredentialType_Password;
+    else if (x == LS("key"))      return CredentialType_PEM;
+    else                          return CredentialType_Ask;
   }
 };
 
@@ -214,10 +214,10 @@ struct MyHostModel {
   }
 
   void SetProtocol(const string &p) {
-    if      (p == "SSH")         { protocol = LTerminal::Protocol_SSH; }
-    else if (p == "VNC")         { protocol = LTerminal::Protocol_RFB;        username.clear(); }
-    else if (p == "Telnet")      { protocol = LTerminal::Protocol_Telnet;     username.clear(); cred.Load(); }
-    else if (p == "Local Shell") { protocol = LTerminal::Protocol_LocalShell; username.clear(); cred.Load(); }
+    if      (p == LS("ssh"))         { protocol = LTerminal::Protocol_SSH; }
+    else if (p == LS("vnc"))         { protocol = LTerminal::Protocol_RFB;        username.clear(); }
+    else if (p == LS("telnet"))      { protocol = LTerminal::Protocol_Telnet;     username.clear(); cred.Load(); }
+    else if (p == LS("local_shell")) { protocol = LTerminal::Protocol_LocalShell; username.clear(); cred.Load(); }
     else { FATAL("unknown protocol '", p, "'"); }
   }
 
@@ -305,8 +305,12 @@ struct MyHostModel {
              MyHostDB *host_db, MyCredentialDB *cred_db, MySettingsDB *settings_db, bool update_date=0) const {
     int cred_row_id = prevhost.cred.cred_id;
     if (prevhost.cred.credtype == CredentialType_Password) {
-      if (cred.credtype != CredentialType_Password) cred_db->Erase(cred_row_id);
-      else MyCredentialModel(CredentialType_Password, cred.creddata).Save(cred_db, cred_row_id);
+      if (cred.credtype == CredentialType_Password) {
+        MyCredentialModel(CredentialType_Password, cred.creddata).Save(cred_db, cred_row_id);
+      } else {
+        cred_db->Erase(cred_row_id);
+        if (cred.credtype == CredentialType_PEM) cred_row_id = cred.cred_id;
+      }
     } else if (cred.credtype == CredentialType_Password) {
       cred_row_id = MyCredentialModel(CredentialType_Password, cred.creddata).Save(cred_db);
     } else if (cred.credtype == CredentialType_PEM) cred_row_id = cred.cred_id;
@@ -626,8 +630,8 @@ struct MyTerminalMenus {
     none_icon              (CheckNotNull(app->LoadSystemImage("none"))),
     icon_fb(app->focused->gd), theme(Application::GetSetting("theme")), green(76, 217, 100),
     sessions_update_timer(SystemToolkit::CreateTimer(bind(&MyTerminalMenus::UpdateMainMenuSessionsSectionTimer, this))),
-    hosts_nav(app->toolkit->CreateNavigationView("", theme)),
-    interfacesettings_nav(app->toolkit->CreateNavigationView("", theme)), addtoolbaritem(this),
+    hosts_nav(app->system_toolkit->CreateNavigationView("", theme)),
+    interfacesettings_nav(app->system_toolkit->CreateNavigationView("", theme)), addtoolbaritem(this),
     keyboardsettings(this), newkey(this), genkey(this), keyinfo(this), keys(this, &credential_db), about(this),
     support(this), privacy(this), settings(this), terminalinterfacesettings(this), rfbinterfacesettings(this),
     sshfingerprint(this), sshportforward(this), sshsettings(this), telnetsettings(this), vncsettings(this),
@@ -648,7 +652,7 @@ struct MyTerminalMenus {
 #endif
     if (!(pro_version = purchases->HavePurchase(pro_product_id))) {
       upgrade = make_unique<MyUpgradeViewController>(this, pro_product_id);
-      if ((upgrade_toolbar = app->toolkit->CreateToolbar(theme, MenuItemVec{
+      if ((upgrade_toolbar = app->system_toolkit->CreateToolbar(theme, MenuItemVec{
         { LS("upgrade_to"), "", [=](){ hosts_nav->PushTableView(upgrade->view.get()); } }
       }, 0))) hosts.view->SetToolbar(upgrade_toolbar.get());
       if ((advertising = SystemToolkit::CreateAdvertisingView
@@ -699,7 +703,7 @@ struct MyTerminalMenus {
     items.insert(items.begin(), { "", "", bind(&MyTerminalMenus::ShowMainMenu, this, true), stacked_squares_icon });
 #endif
     items.push_back({ "\U00002699", "", bind(&MyTerminalMenus::ShowInterfaceSettings, this) });
-    return app->toolkit->CreateToolbar(theme, move(items), flags);
+    return app->system_toolkit->CreateToolbar(theme, move(items), flags);
   }
 
   bool UnlockEncryptedDatabase(const string &pw) {
@@ -841,7 +845,7 @@ struct MyTerminalMenus {
     hosts_nav->PopView(1);
     TableViewInterface *host_menu = hosts_nav->Back();
     CHECK(host_menu);
-    int key_row = 2 + (host_menu->GetKey(0, 0) == "Nickname");
+    int key_row = 2 + (host_menu->GetKey(0, 0) == LS("nickname"));
     host_menu->BeginUpdates();
     if (cred_row_id) {
       MyCredentialModel cred(&credential_db, cred_row_id);
@@ -896,7 +900,7 @@ struct MyTerminalMenus {
 
       section.emplace_back
         (t->title, TableItem::Command,
-         t->networked ? (t->connected != Time::zero() ? StrCat(LS("connected"), " ", intervalminutes(now - t->connected)) : Connection::StateName(conn_state)) : "",
+         t->networked ? (t->connected != Time::zero() ? StrCat(LS("connected"), " ", intervalminutes(now - t->connected)) : LS(tolower(Connection::StateName(conn_state)).c_str())) : "",
          "", 0, t->thumbnail_system_image, ex_icon, [=](){
            HideMainMenu();
            tw->tabs.SelectTab(t);
@@ -907,7 +911,7 @@ struct MyTerminalMenus {
            hosts.view->SetHidden(0, section_ind, true);
            hosts.view->EndUpdates();
          }, TableItem::Flag::SubText | TableItem::Flag::ColoredSubText);
-      if (t->networked) section.back().SetFGColor(Connection::ConnectState(conn_state) ? Color(0,255,0) : Color(255,0,0));
+      if (t->networked) section.back().font.fg = Connection::ConnectState(conn_state) ? Color(0,255,0) : Color(255,0,0);
     }
 
     icon_fb.Release();
@@ -955,7 +959,7 @@ struct MyTerminalMenus {
         } else { 
           int conn_state = t->GetConnectionState();
           color.emplace_back(Connection::ConnectState(conn_state) ? Color(0,255,0) : Color(255,0,0));
-          val.emplace_back(Connection::StateName(conn_state));
+          val.emplace_back(LS(tolower(Connection::StateName(conn_state)).c_str()));
         }
       } else {
         color.push_back(Color::clear);
@@ -1113,8 +1117,6 @@ struct MyTerminalMenus {
     MyHostModel host = updatehost.prev_model;
     updatehost.UpdateModelFromView(&host, &credential_db);
     UpdateModelFromSettingsView(host.protocol, &host.settings, &host.folder);
-    if (host.cred.credtype == CredentialType_PEM)
-      if (!(host.cred.cred_id = updatehost.view->GetTag(0, 3))) host.cred.credtype = CredentialType_Ask;
     MenuConnect(host, [=](int fpt, const StringPiece &fpb) -> bool {
         string fp = fpb.str();
         return updatehost.prev_model.FingerprintMatch(fpt, fp) ? true : ShowAcceptFingerprintAlert(fp);
@@ -1235,9 +1237,9 @@ struct MyTerminalMenus {
       MyHostModel host;
       string prot, hosttext, port, path;
       if (!HTTP::ParseURL(url.c_str(), &prot, &hosttext, &port, &path)) return;
-      if      (prot == "ssh"    || prot == "lterm-ssh")    host.SetProtocol("SSH");
-      else if (prot == "vnc"    || prot == "lterm-vnc")    host.SetProtocol("VNC");
-      else if (prot == "telnet" || prot == "lterm-telnet") host.SetProtocol("Telnet");
+      if      (prot == "ssh"    || prot == "lterm-ssh")    host.SetProtocol(LS("ssh"));
+      else if (prot == "vnc"    || prot == "lterm-vnc")    host.SetProtocol(LS("vnc"));
+      else if (prot == "telnet" || prot == "lterm-telnet") host.SetProtocol(LS("telnet"));
       else return ERROR("unknown url protocol ", prot);
       auto userhost = Split(hosttext, '@');
       if      (userhost.size() == 1) { host.hostname = userhost[0]; }
