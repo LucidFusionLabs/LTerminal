@@ -96,7 +96,7 @@ struct TerminalTabInterface : public Dialog {
 
   virtual void ShowEffectsControls() { 
     root->shell->Run("slider shadertoy_blend 1.0 0.01");
-    app->scheduler.Wakeup(root);
+    root->Wakeup();
   }
 
   virtual int PrepareEffects(Box *draw_box, int downscale_effects, int extra_height=0) {
@@ -194,7 +194,7 @@ struct InteractiveTerminalController : public TerminalControllerInterface {
   };
 
   InteractiveTerminalController(TerminalTabInterface *p) :
-    TerminalControllerInterface(p), shell(nullptr), cmd(FontDesc::Default()) {
+    TerminalControllerInterface(p), shell(0,0,0,0,0,0,0,0,0,0,0,0,0), cmd(p->root, FontRef(0, FontDesc::Default())) {
     cmd.runcb = bind(&Shell::Run, &shell, _1);
     cmd.ReadHistory(app->savedir, "shell");
     frame_on_keyboard_input = true;
@@ -300,6 +300,11 @@ struct PTYTerminalController : public TerminalControllerInterface {
 
 #ifdef LFL_CRYPTO
 struct SSHTerminalController : public NetworkTerminalController {
+  struct RemoteForwardConnectionData : public Connection::Data {
+    SSHClient::Channel *chan;
+    RemoteForwardConnectionData(SSHClient::Channel *c=0) : chan(c) {}
+  };
+  
   typedef function<void(int, const string&)> SavehostCB;
   SSHClient::Params params;
   SavehostCB savehost_cb;
@@ -330,7 +335,7 @@ struct SSHTerminalController : public NetworkTerminalController {
     params.background_services = background_services;
     app->RunInNetworkThread([=](){
       success_cb = bind(&SSHTerminalController::SSHLoginCB, this, term);
-      conn = SSHClient::Open(params, SSHClient::ResponseCB
+      conn = SSHClient::Open(app, params, SSHClient::ResponseCB
                              (bind(&SSHTerminalController::SSHReadCB, this, _1, _2)), &detach_cb, &success_cb);
       if (!conn) { app->RunInMainThread(bind(&NetworkTerminalController::Dispose, this)); return; }
       SSHClient::SetTerminalWindowSize(conn, term->term_width, term->term_height);
@@ -419,14 +424,15 @@ struct SSHTerminalController : public NetworkTerminalController {
     INFO("Forwarding ", local_h, ":", local_p, " -> ", target_h, ":", target_p);
     chan->cb = bind(&SSHTerminalController::PortForwardRemoteReadCB, this, 0, _1, _2, _3);
     app->RunInNetworkThread([=](){
-      if (auto c = app->ConnectTCP(target_h, target_p, &remote_forward_detach_cb, false)) c->data = chan; 
+      if (auto c = app->ConnectTCP(target_h, target_p, &remote_forward_detach_cb, false))
+        c->data = make_unique<RemoteForwardConnectionData>(chan);
     });
   }
 
   void RemotePortForwardConnectCB(Connection *c) {
     unique_ptr<SocketConnection> conn(dynamic_cast<SocketConnection*>(c));
     Socket fd = conn->socket;
-    auto chan = static_cast<SSHClient::Channel*>(conn->data);
+    auto chan = dynamic_cast<RemoteForwardConnectionData*>(conn->data.get())->chan;
     chan->cb = bind(&SSHTerminalController::PortForwardRemoteReadCB, this, fd, _1, _2, _3);
     app->scheduler.AddMainWaitSocket
       (parent->root, fd, SocketSet::READABLE, bind(&SSHTerminalController::PortForwardLocalReadCB, this, fd, chan));
@@ -500,7 +506,7 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
     params.background_services = background_services;
     app->RunInNetworkThread([=](){
       success_cb = bind(&RFBTerminalController::RFBLoginCB, this);
-      conn = RFBClient::Open(params, bind(&RFBTerminalController::LoadPasswordCB, this, _1), 
+      conn = RFBClient::Open(app, params, bind(&RFBTerminalController::LoadPasswordCB, this, _1), 
                              bind(&RFBTerminalController::RFBUpdateCB, this, _1, _2, _3, _4),
                              bind(&RFBTerminalController::RFBCopyCB, this, _1, _2, _3),
                              &detach_cb, &success_cb);
@@ -583,8 +589,8 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
   void RFBCopyCB(Connection *c, const Box &b, point copy_from) {
     fb->Attach();
     fb->tex.Bind();
-    fb->gd->CopyTexSubImage2D(fb->tex.GLTexType(), 0, b.x, fb->tex.height - b.y - b.h,
-                              copy_from.x, copy_from.y, b.w, b.h);
+    fb->parent->GD()->CopyTexSubImage2D(fb->tex.GLTexType(), 0, b.x, fb->tex.height - b.y - b.h,
+                                        copy_from.x, copy_from.y, b.w, b.h);
     fb->Release();
   }
 };
@@ -759,7 +765,7 @@ template <class TerminalType> struct TerminalTabT : public TerminalTabInterface 
   void DrawScrollBar(const Box &draw_box) {
     if (Changed(&scrollbar_view.box, draw_box)) {
       scrollbar_view.ClearView();
-      scrollbar.LayoutAttached(draw_box.RelativeCoordinatesBox()); 
+      scrollbar.LayoutAttached(Box(draw_box.Dimension())); 
     }
     scrollbar.scrolled = 1.0 - terminal->v_scrolled;
     scrollbar.Update(true);

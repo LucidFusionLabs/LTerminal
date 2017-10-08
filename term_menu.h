@@ -496,6 +496,8 @@ struct MyUpgradeViewController : public MyTableViewController {
 struct MyTerminalMenus {
   typedef function<void(TerminalTabInterface*, int, const string&)> SavehostCB;
   bool pro_version = true, db_protected = false, db_opened = false, suspended_timer = false;
+  WindowHolder *win;
+  ToolkitInterface *toolkit;
   SQLite::Database db;
   MyHostDB host_db;
   MyCredentialDB credential_db;
@@ -545,16 +547,16 @@ struct MyTerminalMenus {
   int sessions_update_len = 0;
 
   unordered_map<string, Callback> mobile_key_cmd = {
-    { "[esc]",    bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->Escape();      if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
-    { "[tab]",    bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->Tab();         if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
-    { "[left]",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->CursorLeft();  if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
-    { "[right]",  bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->CursorRight(); if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
-    { "[up]",     bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->HistUp();      if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
-    { "[down]",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->HistDown();    if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
-    { "[pgup]",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->PageUp();      if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
-    { "[pgdown]", bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->PageDown();    if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
-    { "[home]",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->Home();        if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
-    { "[end]",    bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->End();         if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } }) },
+    { "[esc]",    bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->Escape();      if (t->controller->frame_on_keyboard_input) app->focused->Wakeup(); } }) },
+    { "[tab]",    bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->Tab();         if (t->controller->frame_on_keyboard_input) app->focused->Wakeup(); } }) },
+    { "[left]",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->CursorLeft();  if (t->controller->frame_on_keyboard_input) app->focused->Wakeup(); } }) },
+    { "[right]",  bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->CursorRight(); if (t->controller->frame_on_keyboard_input) app->focused->Wakeup(); } }) },
+    { "[up]",     bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->HistUp();      if (t->controller->frame_on_keyboard_input) app->focused->Wakeup(); } }) },
+    { "[down]",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->HistDown();    if (t->controller->frame_on_keyboard_input) app->focused->Wakeup(); } }) },
+    { "[pgup]",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->PageUp();      if (t->controller->frame_on_keyboard_input) app->focused->Wakeup(); } }) },
+    { "[pgdown]", bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->PageDown();    if (t->controller->frame_on_keyboard_input) app->focused->Wakeup(); } }) },
+    { "[home]",   bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->Home();        if (t->controller->frame_on_keyboard_input) app->focused->Wakeup(); } }) },
+    { "[end]",    bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->End();         if (t->controller->frame_on_keyboard_input) app->focused->Wakeup(); } }) },
     { "[paste]",  bind([=]{ if (auto t = GetActiveTerminalTab()) { t->terminal->InputString(app->GetClipboardText()); } }) },
     { "[console]",bind([=]{ if (auto w = GetActiveWindow()) { if (!w->root->console) w->root->InitConsole(bind(&MyTerminalWindow::ConsoleAnimatingCB, w)); w->root->shell->console(StringVec()); } }) },
   };
@@ -593,7 +595,8 @@ struct MyTerminalMenus {
   };
 
   ~MyTerminalMenus() { SQLite::Close(db); }
-  MyTerminalMenus() : db(SQLite::Open(StrCat(app->savedir, "lterm.db"))),
+  MyTerminalMenus(WindowHolder *w, ToolkitInterface *t) : win(w), toolkit(t),
+    db(SQLite::Open(StrCat(app->savedir, "lterm.db"))),
     key_icon               (CheckNotNull(app->LoadSystemImage("key"))),
     host_icon              (CheckNotNull(app->LoadSystemImage("host"))),
     host_locked_icon       (CheckNotNull(app->LoadSystemImage("host_locked"))),
@@ -628,10 +631,10 @@ struct MyTerminalMenus {
     stacked_squares_icon   (CheckNotNull(app->LoadSystemImage("stacked_squares_blue"))),
     ex_icon                (CheckNotNull(app->LoadSystemImage("ex"))),
     none_icon              (CheckNotNull(app->LoadSystemImage("none"))),
-    icon_fb(app->focused->gd), theme(Application::GetSetting("theme")), green(76, 217, 100),
+    icon_fb(app->focused), theme(Application::GetSetting("theme")), green(76, 217, 100),
     sessions_update_timer(SystemToolkit::CreateTimer(bind(&MyTerminalMenus::UpdateMainMenuSessionsSectionTimer, this))),
-    hosts_nav(app->system_toolkit->CreateNavigationView("", theme)),
-    interfacesettings_nav(app->system_toolkit->CreateNavigationView("", theme)), addtoolbaritem(this),
+    hosts_nav(app->system_toolkit->CreateNavigationView(app->focused, "", theme)),
+    interfacesettings_nav(app->system_toolkit->CreateNavigationView(app->focused, "", theme)), addtoolbaritem(this),
     keyboardsettings(this), newkey(this), genkey(this), keyinfo(this), keys(this, &credential_db), about(this),
     support(this), privacy(this), settings(this), terminalinterfacesettings(this), rfbinterfacesettings(this),
     sshfingerprint(this), sshportforward(this), sshsettings(this), telnetsettings(this), vncsettings(this),
@@ -641,10 +644,10 @@ struct MyTerminalMenus {
 #if defined(LFL_IOS) || defined(LFL_ANDROID)
     INFO("Loading in-app purchases");
 #if defined(LFL_IOS)
-    purchases = SystemToolkit::CreatePurchases("");
+    purchases = SystemToolkit::CreatePurchases(app, "");
 #elif defined(LFL_ANDROID)
     purchases = SystemToolkit::CreatePurchases
-      ("MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAm0qPVsRM2qpu87og/8y72CFMbtj+/IciLTaeUgIB60x+vCD"
+      (app, "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAm0qPVsRM2qpu87og/8y72CFMbtj+/IciLTaeUgIB60x+vCD"
        "/F+O3sr+/Vf/tHUVOmKLb+wfyupcEqP1H6lbIGWi4/XqqIAMG7opqoxUBY8P6OShxAK0IKE204Rei3pupr9NSQV53q6"
        "r7qsYKpGNSztzhYJVMmV8/PxwWF/j//sFyvNn0duuLOdYXGDiIHyrSgzjoHdMXhGb28ZDjGYV4jeeS+x4rK6lpaswfJ"
        "PX6UZS7JLEho/CqlsP4OuhiPjayYcrA0kqsjpW+K7/nBsv0Y+qN3I1DcrxySusXLgC7UgtEQ30iOkU4o1GyrrYWPnTQ"
@@ -652,7 +655,7 @@ struct MyTerminalMenus {
 #endif
     if (!(pro_version = purchases->HavePurchase(pro_product_id))) {
       upgrade = make_unique<MyUpgradeViewController>(this, pro_product_id);
-      if ((upgrade_toolbar = app->system_toolkit->CreateToolbar(theme, MenuItemVec{
+      if ((upgrade_toolbar = app->system_toolkit->CreateToolbar(app->focused, theme, MenuItemVec{
         { LS("upgrade_to"), "", [=](){ hosts_nav->PushTableView(upgrade->view.get()); } }
       }, 0))) hosts.view->SetToolbar(upgrade_toolbar.get());
       if ((advertising = SystemToolkit::CreateAdvertisingView
@@ -691,7 +694,7 @@ struct MyTerminalMenus {
     for (auto &i : v) {
       if      (Contains(mobile_key_cmd,       i.second)) ret.push_back({ i.first, "",       bind(&MyTerminalMenus::PressKey,  this, i.second) });
       else if (Contains(mobile_togglekey_cmd, i.second)) ret.push_back({ i.first, "toggle", bind(&MyTerminalMenus::ToggleKey, this, i.second) });
-      else ret.push_back({ i.first, "", [=](){ if (auto t = GetActiveTerminalTab()) { t->terminal->InputString(i.second); if (t->controller->frame_on_keyboard_input) app->scheduler.Wakeup(app->focused); } } });
+      else ret.push_back({ i.first, "", [=](){ if (auto t = GetActiveTerminalTab()) { t->terminal->InputString(i.second); if (t->controller->frame_on_keyboard_input) app->focused->Wakeup(); } } });
     }
     return CreateToolbar(kb_theme, move(ret), ToolbarViewInterface::BORDERLESS_BUTTONS);
   }
@@ -703,7 +706,7 @@ struct MyTerminalMenus {
     items.insert(items.begin(), { "", "", bind(&MyTerminalMenus::ShowMainMenu, this, true), stacked_squares_icon });
 #endif
     items.push_back({ "\U00002699", "", bind(&MyTerminalMenus::ShowInterfaceSettings, this) });
-    return app->system_toolkit->CreateToolbar(theme, move(items), flags);
+    return app->system_toolkit->CreateToolbar(app->focused, theme, move(items), flags);
   }
 
   bool UnlockEncryptedDatabase(const string &pw) {
@@ -904,7 +907,7 @@ struct MyTerminalMenus {
          "", 0, t->thumbnail_system_image, ex_icon, [=](){
            HideMainMenu();
            tw->tabs.SelectTab(t);
-           app->scheduler.Wakeup(tw->root);
+           tw->root->Wakeup();
          }, [=](const string&){
            t->deleted_cb();
            hosts.view->BeginUpdates();
@@ -928,7 +931,7 @@ struct MyTerminalMenus {
     if (!b.w || !b.h) return;
     icon_fb.Resize(b.w, b.h, FrameBuffer::Flag::CreateGL | FrameBuffer::Flag::CreateTexture);
 
-    Texture screen_tex, icon_tex;
+    Texture screen_tex(app->focused), icon_tex(app->focused);
     GraphicsContext gc(app->focused->gd);
     gc.gd->Clear();
     t->DrawBox(gc.gd, b, false);
@@ -985,7 +988,7 @@ struct MyTerminalMenus {
     app->OpenTouchKeyboard();
     hosts_nav->PopToRoot();
     hosts_nav->Show(false);
-    app->scheduler.Wakeup(app->focused);
+    app->focused->Wakeup();
   }
 
   void ShowToysMenu() {
@@ -998,7 +1001,7 @@ struct MyTerminalMenus {
     app->OpenTouchKeyboard();
     interfacesettings_nav->PopAll();
     interfacesettings_nav->Show(false);
-    app->scheduler.Wakeup(app->focused);
+    app->focused->Wakeup();
   }
 
   void ShowInterfaceSettings() {
@@ -1132,7 +1135,7 @@ struct MyTerminalMenus {
     app->OpenTouchKeyboard();
     hosts_nav->PopToRoot();
     hosts_nav->Show(false);
-    app->scheduler.Wakeup(app->focused);
+    app->focused->Wakeup();
   }
 
   shared_ptr<SSHClient::Identity> LoadIdentity(const MyCredentialModel &cred) {
@@ -1264,7 +1267,7 @@ struct MyTerminalMenus {
       interfacesettings_nav->PopAll();
       interfacesettings_nav->Show(false);
     }
-    app->scheduler.Wakeup(app->focused);
+    app->focused->Wakeup();
   }
 };
 

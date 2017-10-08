@@ -19,9 +19,9 @@
 	<key>CFBundleSignature</key>
 	<string>????</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.36.0</string>
+	<string>1.37.0</string>
 	<key>CFBundleVersion</key>
-	<string>1.36.0</string>
+	<string>1.37.0</string>
   <key>CFBundleSupportedPlatforms</key>
   <array>
     <string>iPhoneOS</string>
@@ -85,15 +85,10 @@
   <key>UISupportedInterfaceOrientations</key>
   <array>
     <string>UIInterfaceOrientationPortrait</string>
-    <string>UIInterfaceOrientationLandscapeLeft</string>
-    <string>UIInterfaceOrientationLandscapeRight</string>
   </array>
   <key>UISupportedInterfaceOrientations~ipad</key>
   <array>
     <string>UIInterfaceOrientationPortrait</string>
-    <string>UIInterfaceOrientationPortraitUpsideDown</string>
-    <string>UIInterfaceOrientationLandscapeLeft</string>
-    <string>UIInterfaceOrientationLandscapeRight</string>
   </array>
   <key>UIBackgroundModes</key>
   <array>

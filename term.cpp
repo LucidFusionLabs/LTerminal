@@ -26,6 +26,7 @@
 #include "core/app/gl/view.h"
 #include "core/app/gl/terminal.h"
 #include "core/app/ipc.h"
+#include "core/app/shell.h"
 #include "core/app/net/resolver.h"
 #include "core/web/browser.h"
 #include "core/web/document.h"
@@ -38,6 +39,13 @@
 #ifdef LFL_FLATBUFFERS
 #include "LTerminal/term_generated.h"
 #endif
+
+namespace LFL {
+Application *app = nullptr;
+inline string   LS  (const char *n) { return app->GetLocalizedString(n); }
+inline String16 LS16(const char *n) { return app->GetLocalizedString16(n); }
+};
+
 #include "term.h"
 
 #if defined(__APPLE__) && !defined(LFL_TERMINAL_MENUS) && !defined(LFL_QT)
@@ -89,12 +97,12 @@ struct MyAppState {
   int downscale_effects = 1, background_timeout = 180;
 
   virtual ~MyAppState();
-  MyAppState() : create_toolbar(bind(&ToolkitInterface::CreateToolbar, app->system_toolkit, _1, _2, _3)) {}
+  MyAppState() : create_toolbar(bind(&ToolkitInterface::CreateToolbar, app->system_toolkit, app->focused, _1, _2, _3)) {}
 
   Shader *GetShader(const string &shader_name) { 
     auto shader = shader_map.find(shader_name);
     if (shader == shader_map.end()) return nullptr;
-    if (!shader->second.ID) Shader::CreateShaderToy(shader_name, Asset::FileContents(StrCat(shader_name, ".frag")), &shader->second);
+    if (!shader->second.ID) Shader::CreateShaderToy(app, shader_name, app->FileContents(StrCat(shader_name, ".frag")), &shader->second);
     return &shader->second;
   }
 } *my_app = nullptr;
@@ -146,7 +154,7 @@ struct MyTerminalTab : public TerminalTab {
   void SetFontSize(int n) {
     bool drew = false;
     root->default_font.desc.size = n;
-    CHECK((terminal->style.font = root->default_font.Load()));
+    CHECK((terminal->style.font = root->default_font.Load(root)));
     int font_width  = terminal->style.font->FixedWidth(), new_width  = font_width  * terminal->term_width;
     int font_height = terminal->style.font->Height(),     new_height = font_height * terminal->term_height;
     if (FLAGS_resize_grid) root->SetResizeIncrements(font_width, font_height);
@@ -322,16 +330,16 @@ struct MyTerminalTab : public TerminalTab {
     if (arg.size() > 2) FLAGS_font_flag = atoi(arg[2]);
     root->default_font.desc.name = arg[0];
     SetFontSize(atof(arg[1]));
-    app->scheduler.Wakeup(root);
+    root->Wakeup();
   }
 
   void ChangeColors(const string &colors_name, bool redraw=true) {
-    if      (colors_name == "Solarized Dark")  terminal->SetColors(Singleton<Terminal::SolarizedDarkColors> ::Get());
-    else if (colors_name == "Solarized Light") terminal->SetColors(Singleton<Terminal::SolarizedLightColors>::Get());
-    else                                       terminal->SetColors(Singleton<Terminal::StandardVGAColors>   ::Get());
+    if      (colors_name == "Solarized Dark")  terminal->SetColors(Singleton<Terminal::SolarizedDarkColors> ::Set());
+    else if (colors_name == "Solarized Light") terminal->SetColors(Singleton<Terminal::SolarizedLightColors>::Set());
+    else                                       terminal->SetColors(Singleton<Terminal::StandardVGAColors>   ::Set());
     if (redraw) terminal->Redraw(true, true);
     if (terminal->bg_color) root->gd->clear_color = terminal->bg_color;
-    app->scheduler.Wakeup(root);
+    root->Wakeup();
   }
 
   void ChangeShader(const string &shader_name) {
@@ -350,7 +358,7 @@ struct MyRFBTab : public TerminalTabInterface {
 
   MyRFBTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P, int host_id, bool hide_sb,
            RFBClient::Params a, string pw, TerminalTabCB scb) :
-    TerminalTabInterface(W, 1.0, 1.0, 0, host_id, hide_sb), parent(P), fb(root->gd) {
+    TerminalTabInterface(W, 1.0, 1.0, 0, host_id, hide_sb), parent(P), fb(root) {
     networked = true;
     title = StrCat(LS("vnc"), ": ", a.hostport);
     auto c = make_unique<RFBTerminalController>(this, move(a), [=](){ closed_cb(); }, &fb);
@@ -426,7 +434,7 @@ struct MyTerminalWindow : public TerminalWindowInterface<TerminalTabInterface> {
   int Frame(Window *W, unsigned clicks, int flag) {
     if (tabs.top) tabs.top->Draw();
     W->DrawDialogs();
-    if (FLAGS_draw_fps) W->default_font->Draw(StringPrintf("FPS = %.2f", app->focused->fps.FPS()), point(W->gl_w*.85, 0));
+    if (FLAGS_draw_fps) W->default_font->Draw(W->gd, StringPrintf("FPS = %.2f", app->focused->fps.FPS()), point(W->gl_w*.85, 0));
     if (FLAGS_screenshot.size()) ONCE(W->shell->screenshot(vector<string>(1, FLAGS_screenshot)); app->run=0;);
     return 0;
   }
@@ -448,7 +456,7 @@ struct MyTerminalWindow : public TerminalWindowInterface<TerminalTabInterface> {
   void ShowTransparencyControls() {
     SliderDialog::UpdatedCB cb(bind([=](Widget::Slider *s){ root->SetTransparency(s->Percent()); }, _1));
     root->AddDialog(make_unique<SliderDialog>(root, "window transparency", cb, 0, 1.0, .025));
-    app->scheduler.Wakeup(root);
+    root->Wakeup();
   }
 };
 
@@ -509,7 +517,7 @@ void MyTerminalWindow::InitTab(TerminalTabInterface *t) {
     my_app->menus->ShowMainMenu(false);
   };
 #else
-  t->closed_cb = [](){ LFAppShutdown(); };
+  t->closed_cb = [](){ app->Shutdown(); };
 #endif
   t->deleted_cb = [=](){ tabs.DelTab(t); /*XXX*/ app->RunInMainThread([=]{ delete t; }); };
   tabs.AddTab(t);
@@ -529,7 +537,8 @@ void MyWindowStart(Window *W) {
   W->frame_cb = bind(&MyTerminalWindow::Frame, tw, _1, _2, _3);
   W->default_controller = [=]() -> MouseController* { if (auto t = GetActiveTab()) return t->GetMouseTarget();    return nullptr; };
   W->default_textbox = [=]() -> KeyboardController* { if (auto t = GetActiveTab()) return t->GetKeyboardTarget(); return nullptr; };
-  W->shell = make_unique<Shell>(W);
+  W->shell = make_unique<Shell>(W, app, app, app, app, app, app->net.get(), app, app, app->audio.get(),
+                                app, app, app->fonts.get());
   if (my_app->image_browser) W->shell->AddBrowserCommands(my_app->image_browser.get());
   app->scheduler.AddMainWaitMouse(W);
 
@@ -548,11 +557,11 @@ void MyWindowStart(Window *W) {
   binds->Add('n',       Key::Modifier::Cmd, Bind::CB(bind(&Application::CreateNewWindow, app)));
 #endif                  
   binds->Add('t',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->AddTerminalTab(0)->UseDefaultTerminalController(); })));
-  binds->Add('w',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->CloseActiveTab();      app->scheduler.Wakeup(W); })));
-  binds->Add(']',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->tabs.SelectNextTab();  app->scheduler.Wakeup(W); })));
-  binds->Add('[',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->tabs.SelectPrevTab();  app->scheduler.Wakeup(W); })));
-  binds->Add(Key::Up,   Key::Modifier::Cmd, Bind::CB(bind([=](){ t->ScrollUp();             app->scheduler.Wakeup(W); })));
-  binds->Add(Key::Down, Key::Modifier::Cmd, Bind::CB(bind([=](){ t->ScrollDown();           app->scheduler.Wakeup(W); })));
+  binds->Add('w',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->CloseActiveTab();      W->Wakeup(); })));
+  binds->Add(']',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->tabs.SelectNextTab();  W->Wakeup(); })));
+  binds->Add('[',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->tabs.SelectPrevTab();  W->Wakeup(); })));
+  binds->Add(Key::Up,   Key::Modifier::Cmd, Bind::CB(bind([=](){ t->ScrollUp();             W->Wakeup(); })));
+  binds->Add(Key::Down, Key::Modifier::Cmd, Bind::CB(bind([=](){ t->ScrollDown();           W->Wakeup(); })));
   binds->Add('=',       Key::Modifier::Cmd, Bind::CB(bind([=](){ t->SetFontSize(W->default_font.desc.size + 1); })));
   binds->Add('-',       Key::Modifier::Cmd, Bind::CB(bind([=](){ t->SetFontSize(W->default_font.desc.size - 1); })));
   binds->Add('6',       Key::Modifier::Cmd, Bind::CB(bind([=](){ W->shell->console(StringVec()); })));
@@ -564,7 +573,7 @@ void MyWindowClosed(Window *W) { delete W; }
 }; // naemspace LFL
 using namespace LFL;
 
-extern "C" void MyAppCreate(int argc, const char* const* argv) {
+extern "C" LFApp *MyAppCreate(int argc, const char* const* argv) {
 #ifdef LFL_TERMINAL_MENUS
   SystemToolkit::DisableAdvertisingCrashReporting();
   Application::LoadDefaultSettings(StringPairVec{
@@ -585,9 +594,9 @@ extern "C" void MyAppCreate(int argc, const char* const* argv) {
   }
 #endif
   FLAGS_enable_video = FLAGS_enable_input = 1;
-  app = CreateApplication(argc, argv);
+  app = CreateApplication(argc, argv).release();
   my_app = new MyAppState();
-  app->focused = Window::Create();
+  app->focused = CreateWindow(app).release();
   app->name = LS("app_name");
   app->exit_cb = []() { delete my_app; };
   app->window_closed_cb = MyWindowClosed;
@@ -610,12 +619,13 @@ extern "C" void MyAppCreate(int argc, const char* const* argv) {
 #ifdef LFL_IOS
   app->SetExtendedBackgroundTask([=](){ MSleep(my_app->background_timeout * 1000); });
 #endif
+  return app;
 }
 
 extern "C" int MyAppMain() {
   if (app->Create(__FILE__)) return -1;
-  SettingsFile::Load();
-  Terminal::Colors *colors = Singleton<Terminal::SolarizedDarkColors>::Get();
+  SettingsFile::Load(app);
+  Terminal::Colors *colors = Singleton<Terminal::SolarizedDarkColors>::Set();
   app->splash_color = colors->GetColor(colors->background_index);
   bool start_network_thread = !(FLAGS_enable_network_.override && !FLAGS_enable_network);
 
@@ -645,23 +655,22 @@ extern "C" int MyAppMain() {
   app->input->paste_bind = Bind(Mouse::Button::_2);
 #endif
 
-  my_app->image_browser = make_unique<Browser>();
   my_app->flash_timer = SystemToolkit::CreateTimer([=](){ my_app->flash_alert->Hide(); });
-  my_app->flash_alert = app->system_toolkit->CreateAlert(AlertItemVec{
+  my_app->flash_alert = app->system_toolkit->CreateAlert(app->focused, AlertItemVec{
     { "style", "" }, { "", "" }, { "", "" }, { "", "" } });
-  my_app->info_alert = app->system_toolkit->CreateAlert(AlertItemVec{
+  my_app->info_alert = app->system_toolkit->CreateAlert(app->focused, AlertItemVec{
     { "style", "" }, { "", "" }, { "", "" }, { LS("continue_"), "" } });
-  my_app->confirm_alert = app->system_toolkit->CreateAlert(AlertItemVec{
+  my_app->confirm_alert = app->system_toolkit->CreateAlert(app->focused, AlertItemVec{
     { "style", "" }, { "", "" }, { LS("cancel"), "" }, { LS("continue_"), "" } });
-  my_app->text_alert = app->system_toolkit->CreateAlert(AlertItemVec{
+  my_app->text_alert = app->system_toolkit->CreateAlert(app->focused, AlertItemVec{
     { "style", "textinput" }, { "", "" }, { LS("cancel"), "" }, { LS("continue_"), "" } });
-  my_app->passphrase_alert = app->system_toolkit->CreateAlert(AlertItemVec{
+  my_app->passphrase_alert = app->system_toolkit->CreateAlert(app->focused, AlertItemVec{
     { "style", "pwinput" }, { LS("passphrase"), LS("passphrase") }, { LS("cancel"), "" }, { LS("continue_"), "" } });
-  my_app->passphraseconfirm_alert = app->system_toolkit->CreateAlert(AlertItemVec{
+  my_app->passphraseconfirm_alert = app->system_toolkit->CreateAlert(app->focused, AlertItemVec{
     { "style", "pwinput" }, { LS("passphrase"), LS("confirm_passphrase") }, { LS("cancel"), "" }, { LS("continue_"), "" } });
 #ifndef LFL_TERMINAL_MENUS
-  my_app->edit_menu = app->system_toolkit->CreateEditMenu(vector<MenuItem>());
-  my_app->view_menu = app->system_toolkit->CreateMenu("View", MenuItemVec{
+  my_app->edit_menu = app->system_toolkit->CreateEditMenu(app->focused, vector<MenuItem>());
+  my_app->view_menu = app->system_toolkit->CreateMenu(app->focused, "View", MenuItemVec{
 #ifdef __APPLE__
     MenuItem{ "=", "Zoom In" },
     MenuItem{ "-", "Zoom Out" },
@@ -675,7 +684,7 @@ extern "C" int MyAppMain() {
   if (FLAGS_term.empty()) FLAGS_term = BlankNull(getenv("TERM"));
 #endif
 
-  my_app->toys_menu = app->system_toolkit->CreateMenu(LS("toys"), vector<MenuItem>{
+  my_app->toys_menu = app->system_toolkit->CreateMenu(app->focused, LS("toys"), vector<MenuItem>{
     MenuItem{ "", LS("none"), [=](){ if (auto t = GetActiveTab()) t->ChangeShader("none");     } },
     MenuItem{ "", "Warper",   [=](){ if (auto t = GetActiveTab()) t->ChangeShader("warper");   } },
     MenuItem{ "", "Water",    [=](){ if (auto t = GetActiveTab()) t->ChangeShader("water");    } },
@@ -693,11 +702,16 @@ extern "C" int MyAppMain() {
 #endif
   });
 
-  MakeValueTuple(&my_app->shader_map, "warper", "water", "twistery");
-  MakeValueTuple(&my_app->shader_map, "warper", "water", "twistery");
-  MakeValueTuple(&my_app->shader_map, "fire",   "waves", "emboss");
-  MakeValueTuple(&my_app->shader_map, "stormy", "alien", "fractal");
-  MakeValueTuple(&my_app->shader_map, "darkly");
+  my_app->shader_map.insert(make_pair("warper",   Shader(app)));
+  my_app->shader_map.insert(make_pair("water",    Shader(app)));
+  my_app->shader_map.insert(make_pair("twistery", Shader(app)));
+  my_app->shader_map.insert(make_pair("fire",     Shader(app)));
+  my_app->shader_map.insert(make_pair("waves",    Shader(app)));
+  my_app->shader_map.insert(make_pair("emboss",   Shader(app)));
+  my_app->shader_map.insert(make_pair("stormy",   Shader(app)));
+  my_app->shader_map.insert(make_pair("alien",    Shader(app)));
+  my_app->shader_map.insert(make_pair("fractal",  Shader(app)));
+  my_app->shader_map.insert(make_pair("darkly",   Shader(app)));
 
 #ifdef LFL_CRYPTO
   INFO("Using ", Crypto::LibraryName(), " cryptography");
@@ -714,20 +728,22 @@ extern "C" int MyAppMain() {
 #endif
 
   if (start_network_thread) {
-    app->net = make_unique<SocketServices>();
+    app->net = make_unique<SocketServices>(app, app);
 #if !defined(LFL_MOBILE)
     app->log_pid = true;
-    app->render_process = make_unique<ProcessAPIClient>();
+    app->render_process = make_unique<ProcessAPIClient>(app, app, app->net.get(), app, app->fonts.get());
     app->render_process->StartServerProcess(StrCat(app->bindir, "lterm-render-sandbox", LocalFile::ExecutableSuffix));
 #endif
     CHECK(app->CreateNetworkThread(false, true));
   }
 
+  my_app->image_browser = make_unique<Browser>(app, app->focused, app, app->fonts.get(),
+                                               app->net.get(), app->render_process.get(), app);
   app->StartNewWindow(app->focused);
   app->SetPinchRecognizer(true);
 #ifdef LFL_TERMINAL_MENUS
   app->SetPanRecognizer(true);
-  my_app->menus = make_unique<MyTerminalMenus>();
+  my_app->menus = make_unique<MyTerminalMenus>(app, app->toolkit);
   my_app->menus->hosts_nav->PushTableView(my_app->menus->hosts.view.get());
   my_app->menus->hosts_nav->Show(true);
   my_app->create_toolbar = bind(&MyTerminalMenus::CreateToolbar, my_app->menus.get(), _1, _2, _3);

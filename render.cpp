@@ -24,15 +24,15 @@
 #endif
 
 namespace LFL {
+Application *app;
 unique_ptr<ProcessAPIServer> process_api;
-}; // namespace LFL
-using namespace LFL;
 
-extern "C" void MyAppCreate(int argc, const char* const* argv) {
-  app = new Application(argc, argv);
-  app->focused = Window::Create();
+extern "C" LFApp *MyAppCreate(int argc, const char* const* argv) {
+  app = CreateApplication(argc, argv).release();
+  app->focused = CreateWindow(app).release();
   app->name = "LTerminalRenderSandbox";
   app->log_pid = true;
+  return app;
 }
 
 extern "C" int MyAppMain() {
@@ -40,13 +40,13 @@ extern "C" int MyAppMain() {
   int optind = Singleton<FlagMap>::Get()->optind;
   if (optind >= app->argc) { fprintf(stderr, "Usage: %s [-flags] <socket-name>\n", app->argv[0]); return -1; }
   // if (app->Init()) return -1;
-  app->focused->gd = CreateGraphicsDevice(app->focused, 2).release();
-  app->net = make_unique<SocketServices>();
-  (app->asset_loader = make_unique<AssetLoader>())->Init();
+  app->focused->gd = CreateGraphicsDevice(app->focused, app->shaders.get(), 2).release();
+  app->net = make_unique<SocketServices>(app, app);
+  (app->asset_loader = make_unique<AssetLoader>(app))->Init();
 
   // to cleanup crash leaked shm: for i in $( ipcs -m | grep "^m " | awk '{print $2}' ); do ipcrm -m $i; done
   const string socket_name = StrCat(app->argv[optind]);
-  process_api = make_unique<ProcessAPIServer>();
+  process_api = make_unique<ProcessAPIServer>(app, app, app->input.get(), app->net.get(), app);
   process_api->OpenSocket(StrCat(app->argv[optind]));
 
 #ifdef __APPLE__
@@ -60,3 +60,5 @@ extern "C" int MyAppMain() {
   delete process_api->conn;
   return 0;
 }
+
+}; // namespace LFL

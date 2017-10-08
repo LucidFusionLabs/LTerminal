@@ -1,5 +1,6 @@
 #include "gtest/gtest.h"
 #include "core/app/app.h"
+#include "core/app/shell.h"
 #include "core/app/gl/view.h"
 #include "core/app/gl/terminal.h"
 #include "core/web/browser.h"
@@ -9,6 +10,13 @@
 #include "core/app/net/rfb.h"
 #include "core/app/db/sqlite.h"
 #include "LTerminal/term_generated.h"
+
+namespace LFL {
+Application *app = nullptr;
+inline string   LS  (const char *n) { return app->GetLocalizedString(n); }
+inline String16 LS16(const char *n) { return app->GetLocalizedString16(n); }
+};
+
 #include "term.h"
 
 namespace LFL {
@@ -66,16 +74,17 @@ inline MyTerminalTab *GetActiveTerminalTab() { return dynamic_cast<MyTerminalTab
 namespace LFL {
 void ResetTerminalMenus() {
   LocalFile::unlink(StrCat(app->savedir, "lterm.db"));
-  my_app->menus = make_unique<MyTerminalMenus>();
+  my_app->menus = make_unique<MyTerminalMenus>(app, app->system_toolkit);
 }
 
 }; // namespace LFL
 using namespace LFL;
 
-extern "C" void MyAppCreate(int argc, const char* const* argv) {
-  app = new Application(argc, argv);
-  app->focused = Window::Create();
+extern "C" LFApp *MyAppCreate(int argc, const char* const* argv) {
+  app = CreateApplication(argc, argv).release();
+  app->focused = CreateWindow(app).release();
   my_app = new MyAppState();
+  return app;
 }
 
 extern "C" int MyAppMain() {
