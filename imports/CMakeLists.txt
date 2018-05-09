@@ -1,4 +1,4 @@
-# $Id: CMakeLists.txt 1325 2014-10-29 06:08:31Z justin $
+# $Id$
 
 if(LFL_MOSH)
   set(CONFIG_OPTS ${CONFIGURE_OPTIONS})
