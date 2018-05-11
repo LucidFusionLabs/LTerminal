@@ -26,6 +26,8 @@
   <array>
     <string>iPhoneOS</string>
   </array>
+  <key>CFBundleIconName</key>
+  <string>AppIcon</string>
   <key>CFBundleIcons</key>
   <dict>
     <key>CFBundlePrimaryIcon</key>
