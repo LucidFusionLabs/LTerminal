@@ -39,17 +39,15 @@ extern "C" int MyAppMain() {
   if (app->Create(__FILE__)) return -1;
   int optind = Singleton<FlagMap>::Get()->optind;
   if (optind >= app->argc) { fprintf(stderr, "Usage: %s [-flags] <socket-name>\n", app->argv[0]); return -1; }
-  // if (app->Init()) return -1;
   app->focused->gd = CreateGraphicsDevice(app->focused, app->shaders.get(), 2).release();
   app->net = make_unique<SocketServices>(app, app);
   (app->asset_loader = make_unique<AssetLoader>(app))->Init();
 
-  // to cleanup crash leaked shm: for i in $( ipcs -m | grep "^m " | awk '{print $2}' ); do ipcrm -m $i; done
   const string socket_name = StrCat(app->argv[optind]);
   process_api = make_unique<ProcessAPIServer>(app, app, app->input.get(), app->net.get(), app);
   process_api->OpenSocket(StrCat(app->argv[optind]));
 
-#ifdef __APPLE__
+#if 0 // def __APPLE__
   char *sandbox_error=0;
   sandbox_init(kSBXProfilePureComputation, SANDBOX_NAMED, &sandbox_error);
   INFO("render: sandbox init: ", sandbox_error ? sandbox_error : "success");
