@@ -587,7 +587,7 @@ extern "C" LFApp *MyAppCreate(int argc, const char* const* argv) {
     FLAGS_loglevel = 7;
   }
 #endif
-#if defined(LFL_IOS) && !defined(LFL_IOS_SIM)
+#if defined(__APPLE__) && !defined(LFL_IOS_SIM)
   if (atoi(Application::GetSetting("send_crash_reports"))) {
     InitCrashReporting("", Application::GetSetting("crash_report_name"),
                        Application::GetSetting("crash_report_email"));
@@ -732,7 +732,7 @@ extern "C" int MyAppMain() {
 #if !defined(LFL_MOBILE)
     app->log_pid = true;
     app->render_process = make_unique<ProcessAPIClient>(app, app, app->net.get(), app, app->fonts.get());
-    app->render_process->StartServerProcess(StrCat(app->bindir, "lterm-render-sandbox", LocalFile::ExecutableSuffix));
+    app->render_process->StartServerProcess(StrCat(app->bindir, "LTerminal-render-sandbox", LocalFile::ExecutableSuffix));
 #endif
     CHECK(app->CreateNetworkThread(false, true));
   }
