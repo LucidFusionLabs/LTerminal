@@ -28,7 +28,7 @@ Application *app;
 unique_ptr<ProcessAPIServer> process_api;
 
 extern "C" LFApp *MyAppCreate(int argc, const char* const* argv) {
-  app = CreateApplication(argc, argv).release();
+  app = make_unique<Application>(argc, argv).release();
   app->focused = CreateWindow(app).release();
   app->name = "LTerminalRenderSandbox";
   app->log_pid = true;
@@ -47,7 +47,7 @@ extern "C" int MyAppMain() {
   process_api = make_unique<ProcessAPIServer>(app, app, app->input.get(), app->net.get(), app);
   process_api->OpenSocket(StrCat(app->argv[optind]));
 
-#if 0 // def __APPLE__
+#ifdef __APPLE__
   char *sandbox_error=0;
   sandbox_init(kSBXProfilePureComputation, SANDBOX_NAMED, &sandbox_error);
   INFO("render: sandbox init: ", sandbox_error ? sandbox_error : "success");

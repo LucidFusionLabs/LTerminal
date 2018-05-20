@@ -235,8 +235,8 @@ MyPrivacyViewController::MyPrivacyViewController(MyTerminalMenus *m) :
 MyAppSettingsViewController::MyAppSettingsViewController(MyTerminalMenus *m) :
   MyTableViewController(m, m->toolkit->CreateTableView(m->win->focused, LS("global_settings"), "", m->theme, vector<TableItem>{
     TableItem(LS("local_encryption_type"), TableItem::Command, "", StrCat(LS("disabled")," >"), 0, m->unlocked_icon, 0,
-              bind(&AlertViewInterface::ShowCB, my_app->passphrase_alert.get(), LS("enable_encryption"), LS("passphrase"), "", [=](const string &pw){
-                   my_app->passphraseconfirm_alert->ShowCB(LS("confirm_enable_encryption"), LS("passphrase"), "", StringCB(bind(&MyTerminalMenus::EnableLocalEncryption, m, pw, _1))); })),
+              bind(&AlertViewInterface::ShowCB, app->passphrase_alert.get(), LS("enable_encryption"), LS("passphrase"), "", [=](const string &pw){
+                   app->passphraseconfirm_alert->ShowCB(LS("confirm_enable_encryption"), LS("passphrase"), "", StringCB(bind(&MyTerminalMenus::EnableLocalEncryption, m, pw, _1))); })),
     TableItem(LS("local_encryption_type"), TableItem::Command, "", StrCat(LS("enabled")," >"), 0, m->locked_icon, 0, bind(&MyTerminalMenus::DisableLocalEncryption, m)),
     TableItem(LS("theme"),           TableItem::Selector, StrCat(LS("light"),",",LS("dark")), "", 0, m->eye_icon, 0, Callback(), [=](const string &n){ view->SetSelected(0, 2, n != LS("light")); m->ChangeTheme(n == LS("light") ? "Light" : "Dark"); }),
     TableItem(LS("keep_display_on"), TableItem::Toggle,  ""),
@@ -253,7 +253,7 @@ MyAppSettingsViewController::MyAppSettingsViewController(MyTerminalMenus *m) :
     view->SetHidden(0, 1, !m->db_opened || !m->db_protected);
     view->SetSelected(0, 2, m->theme == "Dark");
 #ifdef LFL_IOS
-    view->SetValue(0, 4, StrCat(my_app->background_timeout));
+    view->SetValue(0, 4, StrCat(app->background_timeout));
 #endif
     view->EndUpdates();
     view->changed = false;
@@ -704,7 +704,7 @@ void MyHostsViewController::LoadLockedUI(MyHostDB *model) {
   view->BeginUpdates();
   view->ReplaceSection(0, TableItem(), 0, TableItemVec{
     TableItem(LS("unlock"), TableItem::Command, "", ">", 0, menus->unlocked_icon, 0, [=](){
-      my_app->passphrase_alert->ShowCB(LS("unlock"), LS("passphrase"), "", [=](const string &pw){
+      app->passphrase_alert->ShowCB(LS("unlock"), LS("passphrase"), "", [=](const string &pw){
         if (menus->UnlockEncryptedDatabase(pw)) { LoadUnlockedUI(model); view->show_cb(); }
       }); })
   });

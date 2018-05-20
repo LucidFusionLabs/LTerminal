@@ -729,7 +729,7 @@ struct MyTerminalMenus {
   }
 
   void EnableLocalEncryption(const string &pw, const string &confirm_pw) {
-    if (pw != confirm_pw) return my_app->info_alert->ShowCB(LS("invalid_passphrase"), LS("passphrase_failed"), "", StringCB());
+    if (pw != confirm_pw) return app->info_alert->ShowCB(LS("invalid_passphrase"), LS("passphrase_failed"), "", StringCB());
     SQLite::ChangePassphrase(db, pw);
     db_protected = true;
     settings.view->show_cb();
@@ -737,7 +737,7 @@ struct MyTerminalMenus {
 
   void ApplyGlobalSettings() {
     MyAppSettingsModel global_settings(&settings_db);
-    my_app->background_timeout = global_settings.background_timeout;
+    app->background_timeout = global_settings.background_timeout;
     app->SetKeepScreenOn(global_settings.keep_display_on);
   }
 
@@ -809,7 +809,7 @@ struct MyTerminalMenus {
       int row_id = MyCredentialModel(CredentialType_PEM, pem, pemtype).Save(&credential_db);
       keys.view->show_cb();
     } else {
-      my_app->info_alert->ShowCB(LS("paste_key_failed"), LS("load_key_failed"), "", StringCB());
+      app->info_alert->ShowCB(LS("paste_key_failed"), LS("load_key_failed"), "", StringCB());
     }
   }
   
@@ -825,7 +825,7 @@ struct MyTerminalMenus {
     if (cred.credtype == CredentialType_PEM) {
       if (private_key) {
         app->SetClipboardText(cred.creddata);
-        my_app->info_alert->ShowCB(LS("copied_to_clipboard"), LS("copied_private_key_to_clipboard"), "", StringCB());
+        app->info_alert->ShowCB(LS("copied_to_clipboard"), LS("copied_private_key_to_clipboard"), "", StringCB());
       } else {
         shared_ptr<SSHClient::Identity> identity = LoadIdentity(cred);
         if (!identity) return LoadNewIdentity
@@ -841,7 +841,7 @@ struct MyTerminalMenus {
     else if (identity->ec)      app->SetClipboardText(ECDSAOpenSSHPublicKey  (identity->ec,      comment));
     else if (identity->rsa)     app->SetClipboardText(RSAOpenSSHPublicKey    (identity->rsa,     comment));
     else if (identity->dsa)     app->SetClipboardText(DSAOpenSSHPublicKey    (identity->dsa,     comment));
-    my_app->info_alert->ShowCB(LS("copied_to_clipboard"), LS("copied_public_key_to_clipboard"), "", StringCB());
+    app->info_alert->ShowCB(LS("copied_to_clipboard"), LS("copied_public_key_to_clipboard"), "", StringCB());
   }
 
   void ChooseKey(int cred_row_id) {
@@ -993,7 +993,7 @@ struct MyTerminalMenus {
 
   void ShowToysMenu() {
     HideInterfaceSettings();
-    my_app->toys_menu->Show();
+    app->toys_menu->Show();
   }
 
   void HideInterfaceSettings() {
@@ -1152,7 +1152,7 @@ struct MyTerminalMenus {
   }
 
   void LoadNewIdentity(const MyCredentialModel &cred, SSHClient::IdentityCB success_cb) {
-    my_app->passphrase_alert->ShowCB
+    app->passphrase_alert->ShowCB
       (LS("identity_passphrase"), LS("passphrase"), "", [=](const string &v) {
          shared_ptr<SSHClient::Identity> new_identity = make_shared<SSHClient::Identity>();
          if (!Crypto::ParsePEM(cred.creddata.c_str(), &new_identity->rsa, &new_identity->dsa,
@@ -1183,7 +1183,7 @@ struct MyTerminalMenus {
       ApplyTerminalSettings(host.settings);
       if (host.username.empty()) {
         ssh->identity_cb = [=](shared_ptr<SSHClient::Identity> *out) { 
-          my_app->text_alert->ShowCB
+          app->text_alert->ShowCB
             (LS("login"), LS("username"), "", [=](const string &v) {
               SSHClient::SendAuthenticationRequest(ssh->conn, shared_ptr<SSHClient::Identity>(), &v);
             });
@@ -1219,7 +1219,7 @@ struct MyTerminalMenus {
   }
 
   bool ShowAcceptFingerprintAlert(const string &fp) {
-    my_app->confirm_alert->ShowCB
+    app->confirm_alert->ShowCB
       (LS("host_key_changed"), StrCat(LS("accept_new_key"), " Fingerprint MD5: ",
                                       fp.size() ? HexEscape(Crypto::MD5(fp), ":").substr(1) : ""),
        "", bind(&MyTerminalMenus::AcceptFingerprintCB, this, _1));

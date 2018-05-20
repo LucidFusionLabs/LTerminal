@@ -12,25 +12,26 @@
 #include "LTerminal/term_generated.h"
 
 namespace LFL {
-Application *app = nullptr;
-inline string   LS  (const char *n) { return app->GetLocalizedString(n); }
-inline String16 LS16(const char *n) { return app->GetLocalizedString16(n); }
-};
-
-#include "term.h"
-
-namespace LFL {
 struct MyTerminalTab;
 struct MyTerminalMenus;
 
-struct MyAppState {
-  unique_ptr<AlertViewInterface> info_alert, confirm_alert, text_alert, passphrase_alert, passphraseconfirm_alert, passphrasefailed_alert;
-  unique_ptr<MenuViewInterface> toys_menu;
+struct MyApp : public Application {
+  using Application::Application;
+  unique_ptr<Browser> image_browser;
+  unique_ptr<TimerInterface> flash_timer;
+  unique_ptr<AlertViewInterface> flash_alert, info_alert, confirm_alert, text_alert, passphrase_alert, passphraseconfirm_alert;
+  unique_ptr<MenuViewInterface> edit_menu, view_menu, toys_menu;
   unique_ptr<MyTerminalMenus> menus;
   int background_timeout = 180;
-  virtual ~MyAppState() {}
   Shader *GetShader(const string &shader_name) { return 0; }
-} *my_app = nullptr;
+} *app;
+
+inline string   LS  (const char *n) { return app->GetLocalizedString(n); }
+inline String16 LS16(const char *n) { return app->GetLocalizedString16(n); }
+
+}; // namespace LFL
+#include "term.h"
+namespace LFL {
   
 struct MyTerminalWindow : public TerminalWindowInterface<TerminalTabInterface> {
   MyTerminalWindow(Window *W) : TerminalWindowInterface(W) {}
@@ -74,16 +75,15 @@ inline MyTerminalTab *GetActiveTerminalTab() { return dynamic_cast<MyTerminalTab
 namespace LFL {
 void ResetTerminalMenus() {
   LocalFile::unlink(StrCat(app->savedir, "lterm.db"));
-  my_app->menus = make_unique<MyTerminalMenus>(app, app->system_toolkit);
+  app->menus = make_unique<MyTerminalMenus>(app, app->system_toolkit);
 }
 
 }; // namespace LFL
 using namespace LFL;
 
 extern "C" LFApp *MyAppCreate(int argc, const char* const* argv) {
-  app = CreateApplication(argc, argv).release();
+  app = make_unique<MyApp>(argc, argv).release();
   app->focused = CreateWindow(app).release();
-  my_app = new MyAppState();
   return app;
 }
 
@@ -97,14 +97,14 @@ extern "C" int MyAppMain() {
 
 TEST(MenusTest, GenerateKey) {
   { // RSA
-    my_app->menus->genkey.view->SetSectionValues(1, StringVec{"RSA"});
-    my_app->menus->genkey.view->SetSectionValues(2, StringVec{"2048"});
-    int row1_id = my_app->menus->GenerateKey();
-    int row2_id = my_app->menus->GenerateKey();
+    app->menus->genkey.view->SetSectionValues(1, StringVec{"RSA"});
+    app->menus->genkey.view->SetSectionValues(2, StringVec{"2048"});
+    int row1_id = app->menus->GenerateKey();
+    int row2_id = app->menus->GenerateKey();
     EXPECT_NE(0, row2_id);
     EXPECT_NE(row1_id, row2_id);
-    MyCredentialModel cred1(&my_app->menus->credential_db, row1_id);
-    MyCredentialModel cred2(&my_app->menus->credential_db, row2_id);
+    MyCredentialModel cred1(&app->menus->credential_db, row1_id);
+    MyCredentialModel cred2(&app->menus->credential_db, row2_id);
     EXPECT_EQ(row1_id, cred1.cred_id);
     EXPECT_EQ(row2_id, cred2.cred_id);
     EXPECT_EQ(CredentialType_PEM, cred1.credtype);
@@ -115,8 +115,8 @@ TEST(MenusTest, GenerateKey) {
     EXPECT_NE(string(), cred2.gentype);
     EXPECT_NE(string(), cred1.gendate);
     EXPECT_NE(string(), cred2.gendate);
-    auto identity1 = FindOrNull(my_app->menus->identity_loaded, row1_id);
-    auto identity2 = FindOrNull(my_app->menus->identity_loaded, row2_id);
+    auto identity1 = FindOrNull(app->menus->identity_loaded, row1_id);
+    auto identity2 = FindOrNull(app->menus->identity_loaded, row2_id);
     EXPECT_NE(nullptr, identity1);
     EXPECT_NE(nullptr, identity2);
     string pk1 = RSAOpenSSHPublicKey(identity1->rsa, "");
@@ -127,14 +127,14 @@ TEST(MenusTest, GenerateKey) {
   }
 
   { // ECDSA
-    my_app->menus->genkey.view->SetSectionValues(1, StringVec{"ECDSA"});
-    my_app->menus->genkey.view->SetSectionValues(2, StringVec{"256"});
-    int row1_id = my_app->menus->GenerateKey();
-    int row2_id = my_app->menus->GenerateKey();
+    app->menus->genkey.view->SetSectionValues(1, StringVec{"ECDSA"});
+    app->menus->genkey.view->SetSectionValues(2, StringVec{"256"});
+    int row1_id = app->menus->GenerateKey();
+    int row2_id = app->menus->GenerateKey();
     EXPECT_NE(0, row2_id);
     EXPECT_NE(row1_id, row2_id);
-    MyCredentialModel cred1(&my_app->menus->credential_db, row1_id);
-    MyCredentialModel cred2(&my_app->menus->credential_db, row2_id);
+    MyCredentialModel cred1(&app->menus->credential_db, row1_id);
+    MyCredentialModel cred2(&app->menus->credential_db, row2_id);
     EXPECT_EQ(row1_id, cred1.cred_id);
     EXPECT_EQ(row2_id, cred2.cred_id);
     EXPECT_EQ(CredentialType_PEM, cred1.credtype);
@@ -145,8 +145,8 @@ TEST(MenusTest, GenerateKey) {
     EXPECT_NE(string(), cred2.gentype);
     EXPECT_NE(string(), cred1.gendate);
     EXPECT_NE(string(), cred2.gendate);
-    auto identity1 = FindOrNull(my_app->menus->identity_loaded, row1_id);
-    auto identity2 = FindOrNull(my_app->menus->identity_loaded, row2_id);
+    auto identity1 = FindOrNull(app->menus->identity_loaded, row1_id);
+    auto identity2 = FindOrNull(app->menus->identity_loaded, row2_id);
     EXPECT_NE(nullptr, identity1);
     EXPECT_NE(nullptr, identity2);
     string pk1 = ECDSAOpenSSHPublicKey(identity1->ec, "");
@@ -157,14 +157,14 @@ TEST(MenusTest, GenerateKey) {
   }
 
   { // Ed25519
-    my_app->menus->genkey.view->SetSectionValues(1, StringVec{"Ed25519"});
-    my_app->menus->genkey.view->SetSectionValues(2, StringVec{"256"});
-    int row1_id = my_app->menus->GenerateKey();
-    int row2_id = my_app->menus->GenerateKey();
+    app->menus->genkey.view->SetSectionValues(1, StringVec{"Ed25519"});
+    app->menus->genkey.view->SetSectionValues(2, StringVec{"256"});
+    int row1_id = app->menus->GenerateKey();
+    int row2_id = app->menus->GenerateKey();
     EXPECT_NE(0, row2_id);
     EXPECT_NE(row1_id, row2_id);
-    MyCredentialModel cred1(&my_app->menus->credential_db, row1_id);
-    MyCredentialModel cred2(&my_app->menus->credential_db, row2_id);
+    MyCredentialModel cred1(&app->menus->credential_db, row1_id);
+    MyCredentialModel cred2(&app->menus->credential_db, row2_id);
     EXPECT_EQ(row1_id, cred1.cred_id);
     EXPECT_EQ(row2_id, cred2.cred_id);
     EXPECT_EQ(CredentialType_PEM, cred1.credtype);
@@ -175,8 +175,8 @@ TEST(MenusTest, GenerateKey) {
     EXPECT_NE(string(), cred2.gentype);
     EXPECT_NE(string(), cred1.gendate);
     EXPECT_NE(string(), cred2.gendate);
-    auto identity1 = FindOrNull(my_app->menus->identity_loaded, row1_id);
-    auto identity2 = FindOrNull(my_app->menus->identity_loaded, row2_id);
+    auto identity1 = FindOrNull(app->menus->identity_loaded, row1_id);
+    auto identity2 = FindOrNull(app->menus->identity_loaded, row2_id);
     EXPECT_NE(nullptr, identity1);
     EXPECT_NE(nullptr, identity2);
     string pk1 = Ed25519OpenSSHPublicKey(identity1->ed25519, "");
