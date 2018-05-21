@@ -49,7 +49,10 @@ extern "C" int MyAppMain() {
 
 #ifdef __APPLE__
   char *sandbox_error=0;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
   sandbox_init(kSBXProfilePureComputation, SANDBOX_NAMED, &sandbox_error);
+#pragma clang diagnostic pop
   INFO("render: sandbox init: ", sandbox_error ? sandbox_error : "success");
 #endif
 

@@ -85,10 +85,10 @@ struct MyApp : public Application {
   virtual ~MyApp();
   MyApp(int ac, const char* const* av) :
     Application(ac, av), create_toolbar(bind(&ToolkitInterface::CreateToolbar, system_toolkit, focused, _1, _2, _3)) {}
-  
+
   void OnWindowInit(Window *W);
   void OnWindowStart(Window *W);
-  void OnWindowClosed(Window *W);
+  void OnWindowClosed(Window *W) { delete W; }
 
   Shader *GetShader(const string &shader_name) { 
     auto shader = shader_map.find(shader_name);
@@ -96,10 +96,11 @@ struct MyApp : public Application {
     if (!shader->second.ID) Shader::CreateShaderToy(this, shader_name, FileContents(StrCat(shader_name, ".frag")), &shader->second);
     return &shader->second;
   }
-} *app = nullptr;
+} *app;
 
 inline string   LS  (const char *n) { return app->GetLocalizedString(n); }
 inline String16 LS16(const char *n) { return app->GetLocalizedString16(n); }
+
 inline MyTerminalWindow *GetActiveWindow() {
   if (auto w = app->focused) return w->GetOwnView<MyTerminalWindow>(0);
   else                       return nullptr;
@@ -474,8 +475,6 @@ namespace LFL {
 struct MyTerminalMenus { int unused; };
 #endif
 
-MyApp::~MyApp() {}
-  
 MyTerminalTab *MyTerminalWindow::AddTerminalTab(int host_id, bool hide_statusbar, unique_ptr<ToolbarViewInterface> tb) {
   auto t = new MyTerminalTab(root, this, host_id, hide_statusbar);
   t->toolbar = move(tb);
@@ -525,6 +524,8 @@ void MyTerminalWindow::InitTab(TerminalTabInterface *t) {
   tabs.AddTab(t);
 }
 
+MyApp::~MyApp() {}
+
 void MyApp::OnWindowInit(Window *W) {
   W->gl_w = app->new_win_width;
   W->gl_h = app->new_win_height;
@@ -569,8 +570,6 @@ void MyApp::OnWindowStart(Window *W) {
   binds->Add('6',       Key::Modifier::Cmd, Bind::CB(bind([=](){ W->shell->console(StringVec()); })));
 #endif
 }
-
-void MyApp::OnWindowClosed(Window *W) { delete W; }
 
 }; // naemspace LFL
 using namespace LFL;
