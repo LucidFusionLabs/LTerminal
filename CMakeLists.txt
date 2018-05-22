@@ -2,6 +2,8 @@
 
 if(LFL_IOS OR LFL_OSX)
   set(CRASHREPORTING_LIB app_fabric_crashreporting)
+elseif(LFL_WINDOWS)
+  set(CRASHREPORTING_LIB app_hockeyapp_crashreporting)
 else()
   set(CRASHREPORTING_LIB app_null_crashreporting)
 endif()
@@ -45,18 +47,6 @@ else()
   set(CRYPTO_LIB app_null_crypto)
 endif()
 
-if(NOT LFL_MOBILE)
-  lfl_project(LTerminal-render-sandbox)
-  lfl_add_target(LTerminal-render-sandbox EXECUTABLE SOURCES render.cpp
-                 LINK_LIBRARIES ${LFL_APP_LIB} app_null_framework app_null_graphics
-                 app_null_audio app_null_camera app_null_matrix app_null_fft
-                 app_simple_resampler app_simple_loader ${LFL_APP_CONVERT} app_libpng_png
-                 app_libjpeg_jpeg app_giflib_gif app_null_ogg app_null_css ${LFL_APP_FONT}
-                 app_null_ssl app_null_js app_null_tu
-                 app_null_crypto app_null_dh ${CRASHREPORTING_LIB} app_null_toolkit ${LFL_APP_OS})
-  lfl_post_build_copy_bin(LTerminal-render-sandbox LTerminal)
-endif()
-
 lfl_project(LTerminal com.lucidfusionlabs.LTerminal)
 lfl_add_package(LTerminal SOURCES term.cpp term.rc ${FLATBUFFERS_SRC_OUTPUTS}
                 COMPILE_DEFINITIONS ${CRYPTO_DEF} ${MENUS_DEF} ${PTY_DEF}
@@ -73,11 +63,21 @@ lfl_add_package(LTerminal SOURCES term.cpp term.rc ${FLATBUFFERS_SRC_OUTPUTS}
                 ${LFL_SOURCE_DIR}/core/app/assets/VeraMoBd.*)
 lfl_post_build_start(LTerminal)
 #add_dependencies(LTerminal mosh)
+
 if(NOT LFL_MOBILE)
-  add_dependencies(LTerminal-render-sandbox LTerminal)
+  lfl_project(LTerminal-render-sandbox)
+  lfl_add_target(LTerminal-render-sandbox EXECUTABLE SOURCES render.cpp
+                 LINK_LIBRARIES ${LFL_APP_LIB} app_null_framework app_null_graphics
+                 app_null_audio app_null_camera app_null_matrix app_null_fft
+                 app_simple_resampler app_simple_loader ${LFL_APP_CONVERT} app_libpng_png
+                 app_libjpeg_jpeg app_giflib_gif app_null_ogg app_null_css ${LFL_APP_FONT}
+                 app_null_ssl app_null_js app_null_tu
+                 app_null_crypto app_null_dh ${CRASHREPORTING_LIB} app_null_toolkit ${LFL_APP_OS})
+  lfl_post_build_copy_bin(LTerminal LTerminal-render-sandbox)
+  add_dependencies(LTerminal LTerminal-render-sandbox)
 endif()
 
-if(NOT TERMINAL_MENUS)
+if(FALSE AND NOT TERMINAL_MENUS)
   lfl_add_target(lssh EXECUTABLE SOURCES term.cpp term.rc ${FLATBUFFERS_SRC_OUTPUTS}
                  COMPILE_DEFINITIONS ${TERMINAL_CRYPTO_DEF} -DLFL_TERMINAL_MENUS
                  LINK_LIBRARIES ${LFL_APP_LIB} ${TERMINAL_FRAMEWORK} ${TERMINAL_GRAPHICS}
@@ -86,8 +86,8 @@ if(NOT TERMINAL_MENUS)
                  app_null_jpeg app_null_gif app_null_ogg app_null_css ${LFL_APP_FONT}
                  ${LFL_APP_SSL} app_null_js app_null_tu app_null_advertising
                  ${TERMINAL_DB_LIB} ${TERMINAL_CRYPTO_LIB} ${CRASHREPORTING_LIB} ${TERMINAL_TOOLKIT} ${LFL_APP_OS})
-  lfl_post_build_copy_bin(lssh LTerminal)
-  add_dependencies(lssh LTerminal)
+  lfl_post_build_copy_bin(LTerminal lssh)
+  add_dependencies(LTerminal lssh)
 endif()
 
 if(NOT LFL_MOBILE)
