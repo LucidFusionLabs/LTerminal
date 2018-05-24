@@ -3,6 +3,6 @@
 
 * **[LTerminal-ios](https://github.com/LucidFusionLabs/LTerminal-ios)**:
 * **[LTerminal-android](https://github.com/LucidFusionLabs/LTerminal-android)**:
-* **[LTerminal-osx](https://github.com/LucidFusionLabs/LTerminal-osx)**:
+* **[LTerminal-mac](https://github.com/LucidFusionLabs/LTerminal-mac)**:
 
 See external [project page](http://www.lucidfusionlabs.com/LTerminal)

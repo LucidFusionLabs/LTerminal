@@ -1,10 +1,13 @@
 # $Id$
 
 if(LFL_IOS OR LFL_OSX)
+  set(RESOURECE_FILES)
   set(CRASHREPORTING_LIB app_fabric_crashreporting)
 elseif(LFL_WINDOWS)
+  set(RESOURECE_FILES LTerminal-windows/term.rc)
   set(CRASHREPORTING_LIB app_hockeyapp_crashreporting)
 else()
+  set(RESOURECE_FILES)
   set(CRASHREPORTING_LIB app_null_crashreporting)
 endif()
 
@@ -48,7 +51,7 @@ else()
 endif()
 
 lfl_project(LTerminal com.lucidfusionlabs.LTerminal)
-lfl_add_package(LTerminal SOURCES term.cpp term.rc ${FLATBUFFERS_SRC_OUTPUTS}
+lfl_add_package(LTerminal SOURCES term.cpp ${RESOURCE_FILES} ${FLATBUFFERS_SRC_OUTPUTS}
                 COMPILE_DEFINITIONS ${CRYPTO_DEF} ${MENUS_DEF} ${PTY_DEF}
                 LINK_LIBRARIES ${LFL_APP_LIB} ${TERMINAL_FRAMEWORK} ${TERMINAL_GRAPHICS}
                 app_null_audio app_null_camera app_null_matrix app_null_fft
