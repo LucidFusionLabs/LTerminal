@@ -651,7 +651,7 @@ extern "C" int MyAppMain() {
 
   if (app->Init()) return -1;
 #ifdef WIN32
-  app->input->paste_bind = Bind(Mouse::Button::_2);
+  app->paste_bind = Bind(Mouse::Button::_2);
 #endif
 
   app->flash_timer = SystemToolkit::CreateTimer([=](){ app->flash_alert->Hide(); });

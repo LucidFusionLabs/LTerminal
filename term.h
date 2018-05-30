@@ -540,7 +540,7 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
   }
 
   int SendMouseEvent(InputEvent::Id id, const point &p, const point &d, int down, int flag) override {
-    uint8_t buttons = app->input->MouseButton1Down() | app->input->MouseButton2Down()<<2;
+    uint8_t buttons = uint8_t(app->input->MouseButton1Down()) | uint8_t(app->input->MouseButton2Down())<<2;
     if (down && id == Mouse::Event::Motion) AddViewportOffset(point(-d.x, d.y));
     if (conn && conn->state == Connection::Connected) {
       point fp = MouseToFramebufferCoords(p);
