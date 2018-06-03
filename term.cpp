@@ -596,7 +596,7 @@ extern "C" LFApp *MyAppCreate(int argc, const char* const* argv) {
 #endif
   FLAGS_enable_video = FLAGS_enable_input = 1;
   app = make_unique<MyApp>(argc, argv).release();
-  app->focused = CreateWindow(app).release();
+  app->focused = app->framework->ConstructWindow(app).release();
   app->name = LS("app_name");
   app->window_closed_cb = bind(&MyApp::OnWindowClosed, app, _1);
   app->window_start_cb = bind(&MyApp::OnWindowStart, app, _1);

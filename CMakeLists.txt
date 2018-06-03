@@ -35,9 +35,11 @@ set(TERMINAL_CRYPTO_LIB app_net_ssh app_net_rfb
 
 if(LFL_MOBILE OR LFL_WINDOWS)
   set(TERMINAL_MENUS 1)
+  set(MENUS_SRC term_menu.h)
   set(MENUS_DEF -DLFL_TERMINAL_MENUS)
   set(DB_LIB ${TERMINAL_DB_LIB})
 else()
+  set(MENUS_SRC)
   set(MENUS_DEF)
   set(DB_LIB app_null_sqlite)
 endif()
@@ -51,7 +53,7 @@ else()
 endif()
 
 lfl_project(LTerminal com.lucidfusionlabs.LTerminal)
-lfl_add_package(LTerminal SOURCES term.cpp ${RESOURCE_FILES} ${FLATBUFFERS_SRC_OUTPUTS}
+lfl_add_package(LTerminal SOURCES term.cpp term.h ${MENUS_SRC} ${RESOURCE_FILES} ${FLATBUFFERS_SRC_OUTPUTS}
                 COMPILE_DEFINITIONS ${CRYPTO_DEF} ${MENUS_DEF} ${PTY_DEF}
                 LINK_LIBRARIES ${LFL_APP_LIB} ${TERMINAL_FRAMEWORK} ${TERMINAL_GRAPHICS}
                 app_null_audio app_null_camera app_null_matrix app_null_fft
