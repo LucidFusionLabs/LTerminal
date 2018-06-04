@@ -179,7 +179,7 @@ struct MyTerminalTab : public TerminalTab {
       title = LS("interactive_shell");
     }
     auto c = make_unique<ShellTerminalController>
-      (this, m, [=](const string &h){ UseTelnetTerminalController(h, true); },
+      (this, &root->parent->localfs, m, [=](const string &h){ UseTelnetTerminalController(h, true); },
        [=](const StringVec&) { closed_cb(); }, move(reconnect_cb), commands);
     c->ssh_term = FLAGS_term;
 #ifdef LFL_CRYPTO
@@ -268,7 +268,7 @@ struct MyTerminalTab : public TerminalTab {
       if (!FLAGS_keyfile.empty()) {
         INFO("Load keyfile ", FLAGS_keyfile);
         auto identity = make_shared<SSHClient::Identity>();
-        if (!Crypto::ParsePEM(&LocalFile::FileContents(FLAGS_keyfile)[0], &identity->rsa, &identity->dsa, &identity->ec, &identity->ed25519,
+        if (!Crypto::ParsePEM(&LocalFile(FLAGS_keyfile, "r").Contents()[0], &identity->rsa, &identity->dsa, &identity->ec, &identity->ed25519,
                               [&](string v) { return app->passphrase_alert->RunModal(v); })) identity.reset();
         if (identity) identity_cb = [=](shared_ptr<SSHClient::Identity> *out) { *out = identity; return true; };
       }
@@ -540,8 +540,7 @@ void MyApp::OnWindowStart(Window *W) {
   W->frame_cb = bind(&MyTerminalWindow::Frame, tw, _1, _2, _3);
   W->default_controller = [=]() -> MouseController* { if (auto t = GetActiveTab()) return t->GetMouseTarget();    return nullptr; };
   W->default_textbox = [=]() -> KeyboardController* { if (auto t = GetActiveTab()) return t->GetKeyboardTarget(); return nullptr; };
-  W->shell = make_unique<Shell>(W, app, app, app, app, app, app->net.get(), app, app, app->audio.get(),
-                                app, app, app->fonts.get());
+  W->shell = make_unique<Shell>(W);
   if (app->image_browser) W->shell->AddBrowserCommands(app->image_browser.get());
   app->scheduler.AddMainWaitMouse(W);
 
@@ -621,9 +620,9 @@ extern "C" LFApp *MyAppCreate(int argc, const char* const* argv) {
   return app;
 }
 
-extern "C" int MyAppMain() {
+extern "C" int MyAppMain(LFApp*) {
   if (app->Create(__FILE__)) return -1;
-  SettingsFile::Load(app);
+  SettingsFile::Load(&app->localfs, app);
   Terminal::Colors *colors = Singleton<Terminal::SolarizedDarkColors>::Set();
   app->splash_color = colors->GetColor(colors->background_index);
   bool start_network_thread = !(FLAGS_enable_network_.override && !FLAGS_enable_network);
@@ -719,8 +718,8 @@ extern "C" int MyAppMain() {
     string pw = app->passphrase_alert->RunModal(""), fn="identity", pubkey, privkey;
     if (!Crypto::GenerateKey(FLAGS_keygen, FLAGS_bits, pw, "", &pubkey, &privkey))
       return ERRORv(-1, "keygen ", FLAGS_keygen, " bits=", FLAGS_bits, ": failed");
-    LocalFile::WriteFile(fn, privkey);
-    LocalFile::WriteFile(StrCat(fn, ".pub"), pubkey);
+    LocalFile(fn, "w").WriteString(privkey);
+    LocalFile(StrCat(fn, ".pub"), "w").WriteString(pubkey);
     INFO("Wrote ", fn, " and ", fn, ".pub");
     return 1;
   }
@@ -731,7 +730,7 @@ extern "C" int MyAppMain() {
 #if !defined(LFL_MOBILE)
     app->log_pid = true;
     app->render_process = make_unique<ProcessAPIClient>(app, app, app->net.get(), app, app->fonts.get());
-    app->render_process->StartServerProcess(StrCat(app->bindir, "LTerminal-render-sandbox", LocalFile::ExecutableSuffix));
+    app->render_process->StartServerProcess(StrCat(app->bindir, "LTerminal-render-sandbox", app->localfs.executable_suffix));
 #endif
     CHECK(app->CreateNetworkThread(false, true));
   }

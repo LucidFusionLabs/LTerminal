@@ -74,7 +74,7 @@ inline MyTerminalTab *GetActiveTerminalTab() { return dynamic_cast<MyTerminalTab
 
 namespace LFL {
 void ResetTerminalMenus() {
-  LocalFile::unlink(StrCat(app->savedir, "lterm.db"));
+  app->localfs.unlink(StrCat(app->savedir, "lterm.db"));
   app->menus = make_unique<MyTerminalMenus>(app, app->system_toolkit);
 }
 
@@ -83,11 +83,11 @@ using namespace LFL;
 
 extern "C" LFApp *MyAppCreate(int argc, const char* const* argv) {
   app = make_unique<MyApp>(argc, argv).release();
-  app->focused = CreateWindow(app).release();
+  app->focused = app->framework->ConstructWindow(app).release();
   return app;
 }
 
-extern "C" int MyAppMain() {
+extern "C" int MyAppMain(LFApp*) {
   testing::InitGoogleTest(&app->argc, const_cast<char**>(app->argv));
   LFL::FLAGS_font = LFL::FakeFontEngine::Filename();
   CHECK_EQ(0, LFL::app->Create(__FILE__));

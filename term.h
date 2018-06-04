@@ -193,10 +193,10 @@ struct InteractiveTerminalController : public TerminalControllerInterface {
     { "OD", bind([&] { if (cmd.cursor.i.x)                       { WriteText("\x08");                                       cmd.CursorLeft();  } }) },
   };
 
-  InteractiveTerminalController(TerminalTabInterface *p) :
-    TerminalControllerInterface(p), shell(0,0,0,0,0,0,0,0,0,0,0,0,0), cmd(p->root, FontRef(0, FontDesc::Default())) {
+  InteractiveTerminalController(TerminalTabInterface *p, FileSystem *fs) :
+    TerminalControllerInterface(p), shell(0,0,0,0,0,0,0,0,0,0,0,0,0,0), cmd(p->root, FontRef(0, FontDesc::Default())) {
     cmd.runcb = bind(&Shell::Run, &shell, _1);
-    cmd.ReadHistory(app->savedir, "shell");
+    cmd.ReadHistory(fs, app->savedir, "shell");
     frame_on_keyboard_input = true;
   }
   virtual ~InteractiveTerminalController() { cmd.WriteHistory(app->savedir, "shell", ""); }
@@ -607,8 +607,8 @@ struct ShellTerminalController : public InteractiveTerminalController {
 #endif
   Callback reconnect_cb;
 
-  ShellTerminalController(TerminalTabInterface *p, const string &msg, StringCB tcb, StringVecCB ecb, Callback rcb, bool commands) :
-    InteractiveTerminalController(p), discon_msg(msg), telnet_cb(move(tcb)), reconnect_cb(move(rcb)) {
+  ShellTerminalController(TerminalTabInterface *p, FileSystem *fs, const string &msg, StringCB tcb, StringVecCB ecb, Callback rcb, bool commands) :
+    InteractiveTerminalController(p, fs), discon_msg(msg), telnet_cb(move(tcb)), reconnect_cb(move(rcb)) {
     if (!commands) { prompt.clear(); return; }
     header = StrCat(LS("app_name"), " ", app->GetVersion(), ssh_usage, "\r\n\r\n");
 #ifdef LFL_CRYPTO
