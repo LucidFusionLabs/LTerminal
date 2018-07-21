@@ -27,8 +27,8 @@
 #include "core/app/ipc.h"
 #include "core/app/shell.h"
 #include "core/app/net/resolver.h"
-#include "core/web/browser.h"
-#include "core/web/document.h"
+#include "core/web/browser/browser.h"
+#include "core/web/browser/document.h"
 #ifdef LFL_CRYPTO
 #include "core/app/crypto.h"
 #include "core/app/net/ssh.h"

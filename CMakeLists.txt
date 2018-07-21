@@ -27,11 +27,7 @@ if(LFL_OSX OR LFL_LINUX)
   set(PTY_DEF -DLFL_PTY)
 endif()
 
-if(LFL_QT)
-  lfl_set_qt_toolkit(TERMINAL)
-else()
-  lfl_set_os_toolkit(TERMINAL)
-endif()
+lfl_set_os_toolkit(TERMINAL)
 set(TERMINAL_DB_LIB app_sqlcipher_sqlite)
 set(TERMINAL_CRYPTO_DEF -DLFL_CRYPTO)
 set(TERMINAL_CRYPTO_LIB app_net_ssh app_net_rfb
