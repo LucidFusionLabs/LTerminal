@@ -65,6 +65,9 @@ DEFINE_string(playback,        "",     "Playback recorded session file");
 DEFINE_bool  (draw_fps,        false,  "Draw FPS");
 DEFINE_bool  (resize_grid,     true,   "Resize window in glyph bound increments");
 DEFINE_FLAG(dim, point, point(80,25),  "Initial terminal dimensions");
+#ifndef LFL_MOBILE
+DEFINE_bool  (single_instance, LINUXOS||WINDOWSOS, "Run a single instance of LTerminal");
+#endif
 extern FlagOfType<bool> FLAGS_enable_network_;
 
 struct MyTerminalMenus;
@@ -555,9 +558,7 @@ void MyApp::OnWindowStart(Window *W) {
                              tt->terminal->style.font->Height());
 
   BindMap *binds = W->AddInputController(make_unique<BindMap>());
-#ifndef WIN32
   binds->Add('n',       Key::Modifier::Cmd, Bind::CB(bind(&Application::CreateNewWindow, app)));
-#endif                  
   binds->Add('t',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->AddTerminalTab(0)->UseDefaultTerminalController(); })));
   binds->Add('w',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->CloseActiveTab();      W->Wakeup(); })));
   binds->Add(']',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->tabs.SelectNextTab();  W->Wakeup(); })));
@@ -626,6 +627,17 @@ extern "C" int MyAppMain(LFApp*) {
   Terminal::Colors *colors = Singleton<Terminal::SolarizedDarkColors>::Set();
   app->splash_color = colors->GetColor(colors->background_index);
   bool start_network_thread = !(FLAGS_enable_network_.override && !FLAGS_enable_network);
+
+  if (FLAGS_single_instance) {
+    string endpoint = StrCat("/tmp/LTerminal.", getuid()), path = "/api/CreateNewWindow";
+    (app->net = make_unique<SocketServices>(app, app))->Init();
+    auto httpd = app->net->AddService(make_unique<HTTPServer>(app->net.get(), endpoint, false));
+    if (!SingleProcess::RunLocalHTTPServerOrPost(app, app->net.get(), httpd, endpoint, path, "{}")) return -1;
+    httpd->AddURL(path, new HTTPServer::FunctionResource([=](Connection*, int, const char*, const char*, const char*, const char*, int){
+      app->RunInMainThread(bind(&Application::CreateNewWindow, app));
+      return HTTPServer::Response("application/json", "{}");
+    }));
+  }
 
 #ifdef WIN32
   app->asset_cache["MenuAtlas,0,255,255,255,0.0000.glyphs.matrix"] = app->LoadResource(200);
@@ -726,17 +738,17 @@ extern "C" int MyAppMain(LFApp*) {
 #endif
 
   if (start_network_thread) {
-    app->net = make_unique<SocketServices>(app, app);
+    if (!app->net) app->net = make_unique<SocketServices>(app, app);
 #if !defined(LFL_MOBILE)
     app->log_pid = true;
     app->render_process = make_unique<ProcessAPIClient>(app, app, app->net.get(), app, app->fonts.get());
     app->render_process->StartServerProcess(StrCat(app->bindir, "LTerminal-render-sandbox", app->localfs.executable_suffix));
 #endif
-    CHECK(app->CreateNetworkThread(false, true));
+    CHECK(app->CreateNetworkThread(FLAGS_single_instance, true));
   }
 
   app->image_browser = make_unique<Browser>(app, app->focused, app, app->fonts.get(),
-                                               app->net.get(), app->render_process.get(), app);
+                                            app->net.get(), app->render_process.get(), app);
   app->StartNewWindow(app->focused);
   app->SetPinchRecognizer(true);
 #ifdef LFL_TERMINAL_MENUS

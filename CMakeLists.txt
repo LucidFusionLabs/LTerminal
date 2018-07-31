@@ -52,13 +52,19 @@ else()
   set(CRYPTO_LIB app_null_crypto)
 endif()
 
+if(LFL_LINUX OR LFL_WINDOWS)
+  set(JSON_LIB app_jsoncpp_json)
+else()
+  set(JSON_LIB)
+endif()
+
 lfl_project(LTerminal com.lucidfusionlabs.LTerminal)
 lfl_add_package(LTerminal SOURCES term.cpp term.h ${MENUS_SRC} ${RESOURCE_FILES} ${FLATBUFFERS_SRC_OUTPUTS}
                 COMPILE_DEFINITIONS ${CRYPTO_DEF} ${MENUS_DEF} ${PTY_DEF}
                 LINK_LIBRARIES ${LFL_APP_LIB} ${TERMINAL_FRAMEWORK} ${TERMINAL_GRAPHICS}
                 app_null_audio app_null_camera app_null_matrix app_null_fft
                 app_simple_resampler app_simple_loader ${LFL_APP_CONVERT} app_libpng_png
-                app_null_jpeg app_null_gif app_null_ogg app_null_css ${LFL_APP_FONT}
+                app_null_jpeg app_null_gif app_null_ogg app_null_css ${LFL_APP_FONT} ${JSON_LIB}
                 ${LFL_APP_SSL} app_null_js ${BILLING_LIB} ${ADVERTISING_LIB} ${LFL_APP_NAG}
                 ${DB_LIB} ${CRYPTO_LIB} ${CRASHREPORTING_LIB} ${TERMINAL_TOOLKIT} ${LFL_APP_OS}
                 LIB_FILES ${LFL_APP_LIB_FILES}
