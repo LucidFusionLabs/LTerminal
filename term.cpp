@@ -299,7 +299,7 @@ struct MyTerminalTab : public TerminalTab {
       }
 #endif
     }
-    return GetFocused();
+    return GetFocused() && read_size > 0;
   }
 
   void NewLinkCB(const shared_ptr<TextBox::Control> &link) {

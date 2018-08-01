@@ -59,7 +59,7 @@ struct TerminalTabInterface : public Dialog {
       (controller ? controller->GetConnectionState() : Connection::Error);
   }
 
-  virtual bool ControllerReadableCB() { ReadAndUpdateTerminalFramebuffer(); return true; }
+  virtual bool ControllerReadableCB() { return ReadAndUpdateTerminalFramebuffer() > 0; }
   virtual int ReadAndUpdateTerminalFramebuffer() = 0;
   virtual void SetFontSize(int) = 0;
   virtual void ScrollUp() = 0;

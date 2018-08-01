@@ -39,7 +39,7 @@ extern "C" int MyAppMain(LFApp*) {
   if (app->Create(__FILE__)) return -1;
   int optind = Singleton<FlagMap>::Get()->optind;
   if (optind >= app->argc) { fprintf(stderr, "Usage: %s [-flags] <socket-name>\n", app->argv[0]); return -1; }
-  app->focused->gd = GraphicsDevice::Create(app->focused, app->shaders.get(), 2).release();
+  app->focused->gd = GraphicsDevice::Create(app->focused, app->shaders.get()).release();
   app->net = make_unique<SocketServices>(app, app);
   (app->asset_loader = make_unique<AssetLoader>(app))->Init();
 
