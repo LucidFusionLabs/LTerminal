@@ -661,7 +661,7 @@ extern "C" int MyAppMain(LFApp*) {
 #endif
 
   if (app->Init()) return -1;
-#ifdef WIN32
+#if defined(LFL_WINDOWS) or defined(LFL_LINUX)
   app->paste_bind = Bind(Mouse::Button::_2);
 #endif
 
