@@ -629,7 +629,7 @@ extern "C" int MyAppMain(LFApp*) {
   bool start_network_thread = !(FLAGS_enable_network_.override && !FLAGS_enable_network);
 
   if (FLAGS_single_instance) {
-    string endpoint = StrCat("/tmp/LTerminal.", getuid()), path = "/api/CreateNewWindow";
+    string endpoint = SingleProcess::GetEndpointName(app->name), path = "/api/CreateNewWindow";
     (app->net = make_unique<SocketServices>(app, app))->Init();
     auto httpd = app->net->AddService(make_unique<HTTPServer>(app->net.get(), endpoint, false));
     if (!SingleProcess::RunLocalHTTPServerOrPost(app, app->net.get(), httpd, endpoint, path, "{}")) return -1;
@@ -686,7 +686,7 @@ extern "C" int MyAppMain(LFApp*) {
     MenuItem{ "-", "Zoom Out" },
 #endif
     MenuItem{ "", "Fonts",        [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeFont(StringVec()); } },
-    MenuItem{ "", "Transparency", [=](){ if (auto w = GetActiveWindow()) w->ShowTransparencyControls(); } },
+    MenuItem{ "", "Transparency", [=](){ if (auto w = LFL::GetActiveWindow()) w->ShowTransparencyControls(); } },
     MenuItem{ "", "VGA Colors",             [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeColors("VGA");             } },
     MenuItem{ "", "Solarized Dark Colors",  [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeColors("Solarized Dark");  } },
     MenuItem{ "", "Solarized Light Colors", [=](){ if (auto t = GetActiveTerminalTab()) t->ChangeColors("Solarized Light"); } }
@@ -760,7 +760,7 @@ extern "C" int MyAppMain(LFApp*) {
 #else
   app->SetVerticalSwipeRecognizer(2);
   app->SetHorizontalSwipeRecognizer(2);
-  auto tw = GetActiveWindow();
+  auto tw = LFL::GetActiveWindow();
   if (auto t = dynamic_cast<MyTerminalTab*>(tw->tabs.top)) {
     app->new_win_width  = t->terminal->style.font->FixedWidth() * t->terminal->term_width;
     app->new_win_height = t->terminal->style.font->Height()     * t->terminal->term_height;

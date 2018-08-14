@@ -589,7 +589,7 @@ struct RFBTerminalController : public NetworkTerminalController, public Keyboard
   void RFBCopyCB(Connection *c, const Box &b, point copy_from) {
     fb->Attach();
     fb->tex.Bind();
-    fb->parent->GD()->CopyTexSubImage2D(fb->tex.GLTexType(), 0, b.x, fb->tex.height - b.y - b.h,
+    fb->parent->GD()->CopyTexSubImage2D(fb->tex.GDTexType(app->GD()), 0, b.x, fb->tex.height - b.y - b.h,
                                         copy_from.x, copy_from.y, b.w, b.h);
     fb->Release();
   }

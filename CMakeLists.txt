@@ -33,7 +33,7 @@ set(TERMINAL_CRYPTO_DEF -DLFL_CRYPTO)
 set(TERMINAL_CRYPTO_LIB app_net_ssh app_net_rfb
     ${LFL_APP_CRYPTO} app_openssl_pk app_openssl_dh app_ref10_25519 app_bcrypt_pbkdf)
 
-if(LFL_MOBILE OR LFL_WINDOWS)
+if(LFL_MOBILE)
   set(TERMINAL_MENUS 1)
   set(MENUS_SRC term_menu.h)
   set(MENUS_DEF -DLFL_TERMINAL_MENUS)
