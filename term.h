@@ -51,7 +51,7 @@ struct TerminalTabInterface : public Dialog {
   int connected_host_id = 0, thumbnail_system_image = 0;
   bool networked = 0, reconnect_toolbar = 1, hide_statusbar;
   TerminalTabInterface(Window *W, float w, float h, int flag, int host_id, bool hide_sb) : Dialog(W,w,h,flag), connected_host_id(host_id), hide_statusbar(hide_sb) {}
-  virtual ~TerminalTabInterface() { if (thumbnail_system_image) app->UnloadSystemImage(thumbnail_system_image); }
+  virtual ~TerminalTabInterface() { if (thumbnail_system_image) app->system_toolkit->UnloadImage(thumbnail_system_image); }
 
   virtual bool GetFocused() const = 0;
   virtual int GetConnectionState() const { 
@@ -769,7 +769,7 @@ template <class TerminalType> struct TerminalTabT : public TerminalTabInterface 
     }
     scrollbar.scrolled = 1.0 - terminal->v_scrolled;
     scrollbar.Update(true);
-    scrollbar_view.Draw();
+    scrollbar_view.Draw(draw_box.TopLeft());
   }
 };
 typedef TerminalTabT<Terminal> TerminalTab;

@@ -81,13 +81,13 @@ struct MyApp : public Application {
   unique_ptr<AlertViewInterface> flash_alert, info_alert, confirm_alert, text_alert, passphrase_alert, passphraseconfirm_alert;
   unique_ptr<MenuViewInterface> edit_menu, view_menu, toys_menu;
   unique_ptr<MyTerminalMenus> menus;
-  function<unique_ptr<ToolbarViewInterface>(const string&, MenuItemVec, int)> create_toolbar;
+  function<unique_ptr<ToolbarViewInterface>(Window*, const string&, MenuItemVec, int)> create_toolbar;
   int new_win_width = FLAGS_dim.x*Fonts::InitFontWidth(), new_win_height = FLAGS_dim.y*Fonts::InitFontHeight();
   int downscale_effects = 1, background_timeout = 180;
 
   virtual ~MyApp();
   MyApp(int ac, const char* const* av) :
-    Application(ac, av), create_toolbar(bind(&ToolkitInterface::CreateToolbar, system_toolkit, focused, _1, _2, _3)) {}
+    Application(ac, av), create_toolbar(bind(&ToolkitInterface::CreateToolbar, system_toolkit.get(), _1, _2, _3, _4)) {}
 
   void OnWindowInit(Window *W);
   void OnWindowStart(Window *W);
@@ -129,15 +129,15 @@ struct MyTerminalTab : public TerminalTab {
     if (terminal->bg_color) W->gd->clear_color = terminal->bg_color;
   }
 
-  bool GetFocused() const { return parent->tabs.top == this; }
-  void Draw() {
+  bool GetFocused() const override { return parent->tabs.top == this; }
+  void Draw(const point &p) override {
 #ifdef LFL_TERMINAL_JOIN_READS
     timer.ClearWakeupIn();
 #endif
     DrawBox(root->gd, root->Box(), true);
   }
 
-  void DrawBox(GraphicsDevice *gd, Box draw_box, bool check_resized) {
+  void DrawBox(GraphicsDevice *gd, Box draw_box, bool check_resized) override {
     Box orig_draw_box = draw_box;
     int effects = PrepareEffects(&draw_box, app->downscale_effects, terminal->extra_height);
     if (check_resized) terminal->CheckResized(orig_draw_box);
@@ -155,9 +155,9 @@ struct MyTerminalTab : public TerminalTab {
     if (terminal->scrolled_lines) DrawScrollBar(draw_box);
   }
 
-  void UpdateTargetFPS() { parent->UpdateTargetFPS(); }
+  void UpdateTargetFPS() override { parent->UpdateTargetFPS(); }
 
-  void SetFontSize(int n) {
+  void SetFontSize(int n) override {
     bool drew = false;
     root->default_font.desc.size = n;
     CHECK((terminal->style.font = root->default_font.Load(root)));
@@ -198,7 +198,7 @@ struct MyTerminalTab : public TerminalTab {
     if (!from_shell && reconnect_toolbar && reconnect_cb) {
       string tb_theme = toolbar ? toolbar->GetTheme() : "Light";
       last_toolbar = ChangeToolbar(app->create_toolbar
-                                   (tb_theme, MenuItemVec{ { LS("reconnect"), "", move(reconnect_cb) } }, 0));
+                                   (parent->root, tb_theme, MenuItemVec{ { LS("reconnect"), "", move(reconnect_cb) } }, 0));
       reconnect_cb = Callback();
     }
     UseShellTerminalController(m, from_shell, move(reconnect_cb));
@@ -282,11 +282,11 @@ struct MyTerminalTab : public TerminalTab {
     else                          return UseDefaultTerminalController();
   }
 
-  void OpenedController() {
+  void OpenedController() override {
     if (FLAGS_command.size()) CHECK_EQ(FLAGS_command.size()+1, controller->Write(StrCat(FLAGS_command, "\n")));
   }
 
-  bool ControllerReadableCB() {
+  bool ControllerReadableCB() override {
     int read_size = ReadAndUpdateTerminalFramebuffer();
     if (!parent->root->animating) {
 #ifdef LFL_TERMINAL_JOIN_READS
@@ -348,7 +348,7 @@ struct MyTerminalTab : public TerminalTab {
     root->Wakeup();
   }
 
-  void ChangeShader(const string &shader_name) {
+  void ChangeShader(const string &shader_name) override {
     auto shader = app->GetShader(shader_name);
     activeshader = shader ? shader : &app->shaders->shader_default;
     parent->UpdateTargetFPS();
@@ -385,7 +385,7 @@ struct MyRFBTab : public TerminalTabInterface {
   void ScrollDown()      override {}
   void ScrollUp()        override {}
 
-  void Draw() override { DrawBox(root->gd, root->Box(), true); }
+  void Draw(const point &p) override { DrawBox(root->gd, root->Box(), true); }
   void DrawBox(GraphicsDevice *gd, Box draw_box, bool check_resized) override {
     float tex[4];
     int effects = PrepareEffects(&draw_box, app->downscale_effects, 0);
@@ -438,7 +438,7 @@ struct MyTerminalWindow : public TerminalWindowInterface<TerminalTabInterface> {
   }
 
   int Frame(Window *W, unsigned clicks, int flag) {
-    if (tabs.top) tabs.top->Draw();
+    if (tabs.top) tabs.top->Draw(point());
     W->DrawDialogs();
     if (FLAGS_draw_fps) W->default_font->Draw(W->gd, StringPrintf("FPS = %.2f", app->focused->fps.FPS()), point(W->gl_w*.85, 0));
     if (FLAGS_screenshot.size()) ONCE(W->shell->screenshot(vector<string>(1, FLAGS_screenshot)); app->run=0;);
