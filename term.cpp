@@ -105,7 +105,7 @@ inline string   LS  (const char *n) { return app->GetLocalizedString(n); }
 inline String16 LS16(const char *n) { return app->GetLocalizedString16(n); }
 
 inline MyTerminalWindow *GetActiveWindow() {
-  if (auto w = app->focused) return w->GetOwnView<MyTerminalWindow>(0);
+  if (auto w = app->focused) return w->GetOwnView<MyTerminalWindow>(1);
   else                       return nullptr;
 }
 
@@ -123,7 +123,7 @@ struct MyTerminalTab : public TerminalTab {
 
   virtual ~MyTerminalTab() { root->DelView(terminal); }
   MyTerminalTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P, int host_id, bool hide_sb) :
-    TerminalTab(W, W->AddView(make_unique<Terminal>(nullptr, W, W->default_font, FLAGS_dim)), host_id, hide_sb), parent(P), timer(W) {
+    TerminalTab(W, "MyTerminalTab", W->AddView(make_unique<Terminal>(nullptr, W, W->default_font, FLAGS_dim)), host_id, hide_sb), parent(P), timer(W) {
     terminal->new_link_cb      = bind(&MyTerminalTab::NewLinkCB,   this, _1);
     terminal->hover_control_cb = bind(&MyTerminalTab::HoverLinkCB, this, _1);
     if (terminal->bg_color) W->gd->clear_color = terminal->bg_color;
@@ -423,7 +423,7 @@ struct MyRFBTab : public TerminalTabInterface {
 #endif // LFL_RFB
 
 struct MyTerminalWindow : public TerminalWindowInterface<TerminalTabInterface> {
-  MyTerminalWindow(Window *W) : TerminalWindowInterface(W) {}
+  MyTerminalWindow(Window *W) : TerminalWindowInterface(W, "MyTerminalWindow") {}
   virtual ~MyTerminalWindow() { for (auto t : tabs.tabs) delete t; }
 
   MyTerminalTab *AddTerminalTab(int host_id, bool hide_sb=!ANDROIDOS, unique_ptr<ToolbarViewInterface> tb=unique_ptr<ToolbarViewInterface>());
@@ -538,7 +538,7 @@ void MyApp::OnWindowInit(Window *W) {
 void MyApp::OnWindowStart(Window *W) {
   CHECK(W->gd->have_framebuffer);
   CHECK_EQ(0, W->NewView());
-  auto tw = W->ReplaceView(0, make_unique<MyTerminalWindow>(W));
+  auto tw = W->AddView(make_unique<MyTerminalWindow>(W));
   if (FLAGS_console) W->InitConsole(bind(&MyTerminalWindow::ConsoleAnimatingCB, tw));
   W->frame_cb = bind(&MyTerminalWindow::Frame, tw, _1, _2, _3);
   W->default_controller = [=]() -> MouseController* { if (auto t = GetActiveTab()) return t->GetMouseTarget();    return nullptr; };
@@ -557,7 +557,7 @@ void MyApp::OnWindowStart(Window *W) {
       W->SetResizeIncrements(tt->terminal->style.font->FixedWidth(),
                              tt->terminal->style.font->Height());
 
-  BindMap *binds = W->AddInputController(make_unique<BindMap>());
+  auto binds = W->ReplaceView(0, make_unique<BindMap>(W));
   binds->Add('n',       Key::Modifier::Cmd, Bind::CB(bind(&Application::CreateNewWindow, app)));
   binds->Add('t',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->AddTerminalTab(0)->UseDefaultTerminalController(); })));
   binds->Add('w',       Key::Modifier::Cmd, Bind::CB(bind([=](){ tw->CloseActiveTab();      W->Wakeup(); })));
