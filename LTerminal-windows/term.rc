@@ -1,4 +1,4 @@
-IDI_APP_ICON           ICON           "assets\\icon.ico"
+IDI_APP_ICON           ICON           "icon.ico"
 200                    900            "..\\core\\app\\assets\\MenuAtlas,0,255,255,255,0.0000.glyphs.matrix"
 201                    900            "..\\core\\app\\assets\\MenuAtlas,0,255,255,255,0.0000.png"
 202                    900            "..\\core\\app\\shaders\\default.vert"

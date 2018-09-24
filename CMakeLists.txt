@@ -1,13 +1,13 @@
 # $Id$
 
 if(LFL_IOS OR LFL_OSX)
-  set(RESOURECE_FILES)
+  set(RESOURCE_FILES)
   set(CRASHREPORTING_LIB app_fabric_crashreporting)
 elseif(LFL_WINDOWS)
-  set(RESOURECE_FILES LTerminal-windows/term.rc)
+  set(RESOURCE_FILES LTerminal-windows/term.rc)
   set(CRASHREPORTING_LIB app_null_crashreporting)
 else()
-  set(RESOURECE_FILES)
+  set(RESOURCE_FILES)
   set(CRASHREPORTING_LIB app_null_crashreporting)
 endif()
 

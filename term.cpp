@@ -364,7 +364,7 @@ struct MyRFBTab : public TerminalTabInterface {
 
   MyRFBTab(Window *W, TerminalWindowInterface<TerminalTabInterface> *P, int host_id, bool hide_sb,
            RFBClient::Params a, string pw, TerminalTabCB scb) :
-    TerminalTabInterface(W, 1.0, 1.0, 0, host_id, hide_sb), parent(P), fb(root) {
+    TerminalTabInterface(W, "MyRFBTab", 1.0, 1.0, 0, host_id, hide_sb), parent(P), fb(root) {
     networked = true;
     title = StrCat(LS("vnc"), ": ", a.hostport);
     auto c = make_unique<RFBTerminalController>(this, move(a), [=](){ closed_cb(); }, &fb);
@@ -394,7 +394,7 @@ struct MyRFBTab : public TerminalTabInterface {
     gc.gd->DisableBlend();
     if (effects) {
       float scale = activeshader->scale;
-      glShadertoyShader(gc.gd, activeshader);
+      ShaderToyAsset(activeshader).Draw(gc.gd);
       activeshader->SetUniform1i("iChannelFlip", 1);
       activeshader->SetUniform2f("iChannelScroll", 0, 0);
       activeshader->SetUniform3f("iChannelResolution", XY_or_Y(activeshader->scale, gc.gd->TextureDim(fb.tex.width)),
